@@ -1,0 +1,5 @@
+strata
+strata.exe
+dist/
+coverage.out
+.DS_Store
