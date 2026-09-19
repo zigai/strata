@@ -1,5 +1,23 @@
-strata
-strata.exe
-dist/
+# Coverage and profile outputs
+*.out
 coverage.out
+*.prof
+*.pprof
+
 .DS_Store
+.cache/
+
+# Local workspace file. The nested modules already carry replace directives,
+# so a checked-in go.work would only make builds differ between machines.
+go.work
+go.work.sum
+
+# Binaries produced by building the example (from root or example dir)
+/cli
+/cli.exe
+/examples/cli/cli
+/examples/cli/cli.exe
+
+# Test binaries produced by `go test -c` or debugging
+*.test
+*.test.exe

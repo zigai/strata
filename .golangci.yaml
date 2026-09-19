@@ -118,6 +118,8 @@ linters:
       check:
         - switch
         - map
+    gomoddirectives:
+      replace-local: true # bridge submodules replace the root module during development
     gochecksumtype:
       default-signifies-exhaustive: false
     cyclop:
@@ -203,16 +205,12 @@ linters:
         - "github.com/urfave/cli\\..*"
         - "github.com/spf13/cobra\\..*"
         - "github.com/spf13/pflag\\..*"
+        - "gopkg.in/yaml.v3\\..*"
+        - "github.com/invopop/jsonschema\\..*"
 
   exclusions:
     warn-unused: false
     presets: []
     rules:
-      - path: "main\\.go"
-        linters: [mnd]
-
-      - path: "internal/cli/root\\.go"
-        linters: [exhaustruct_v5]
-
       - path: ".*_test\\.go"
-        linters: [decorder, funcorder, exhaustruct_v5]
+        linters: [decorder, funcorder, exhaustruct_v5, gocognit, cyclop, gosec, mnd, tagliatelle, tagalign, err113]
