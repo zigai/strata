@@ -4,8 +4,8 @@ go 1.27.0
 
 require (
 	github.com/spf13/cobra v1.10.2
-	github.com/zigai/strata v0.0.0
-	github.com/zigai/strata/bridge/cobra v0.0.0
+	github.com/zigai/strata v0.1.0
+	github.com/zigai/strata/bridge/cobra v0.1.0
 )
 
 require (

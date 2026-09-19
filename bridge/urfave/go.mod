@@ -6,7 +6,7 @@ replace github.com/zigai/strata => ../..
 
 require (
 	github.com/urfave/cli/v3 v3.12.0
-	github.com/zigai/strata v0.0.0
+	github.com/zigai/strata v0.1.0
 )
 
 require (
