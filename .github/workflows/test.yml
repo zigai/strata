@@ -2,8 +2,14 @@ name: Test
 
 on:
   push:
-    branches: []
+    branches: [master]
   pull_request:
+
+permissions:
+  contents: read
+
+env:
+  GO_VERSION: "1.27.x"
 
 jobs:
   test:
@@ -12,10 +18,13 @@ jobs:
       - uses: actions/checkout@v7
       - uses: actions/setup-go@v6
         with:
-          go-version: "1.27.0"
+          go-version: ${{ env.GO_VERSION }}
           cache: true
-      - name: Check Go module files
-        run: |
-          go mod tidy
-          git diff --exit-code -- go.mod go.sum
-      - run: go test ./...
+
+      - uses: taiki-e/install-action@v2
+        with:
+          tool: just
+
+      # Every module is checked, not just the root: the workspace here has four.
+      - run: just mod-check
+      - run: just test
