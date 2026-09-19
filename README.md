@@ -300,19 +300,6 @@ if errors.Is(err, strata.ErrMalformed) {
 }
 ```
 
-Common sentinels include `ErrMalformed`, `ErrNoCodec`, `ErrFileTooLarge`, `ErrFileExists`, and `ErrUnsupportedFormat`. See the [Go Reference](https://pkg.go.dev/github.com/zigai/strata) for the complete list.
-
-## Development
-
-Requires Go 1.27, [just](https://github.com/casey/just), and [golangci-lint](https://golangci-lint.run/).
-
-```sh
-just check      # Module checks, tests, lint, build, and format check
-just test       # Unit and integration tests across all modules
-just coverage   # Statement coverage across packages
-just build      # Compiles all packages, bridges, and example
-```
-
 ## License
 
 [MIT](LICENSE)
