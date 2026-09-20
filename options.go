@@ -32,7 +32,6 @@ type loadOptions struct {
 	cwd           string
 	stdinReader   io.Reader
 	codecReg      *codec.Registry
-	envLookup     func(string) (string, bool)
 	defaultsFunc  func(any) error
 	maxFileSize   int64
 	withoutFiles  bool
@@ -350,7 +349,6 @@ func defaultLoadOptions() *loadOptions {
 		cwd:           "",
 		stdinReader:   os.Stdin,
 		codecReg:      codec.NewRegistry(),
-		envLookup:     os.LookupEnv,
 		defaultsFunc:  nil,
 		maxFileSize:   stream.DefaultMaxFileSize,
 		withoutFiles:  false,

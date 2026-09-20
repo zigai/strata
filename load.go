@@ -98,7 +98,7 @@ func LoadInto[T any](target *T, opts ...Option) (*Metadata, error) {
 	// 3. Bind environment variables. These rank above every file.
 	err = env.Apply(target, env.Options{
 		Prefix: options.envPrefix,
-		Lookup: options.envLookup,
+		Lookup: os.LookupEnv,
 		OnBind: func(key, envVar, rawVal string) {
 			meta.Record(Origin{
 				Key:      key,
@@ -185,11 +185,16 @@ func applyLayer(target any, layer cascade.Layer, opts *loadOptions, meta *Metada
 		}
 	}
 
-	ext := filepath.Ext(layer.Path)
+	ext := normalizeExt(filepath.Ext(layer.Path))
 
 	codecInstance, ok := opts.codecReg.Get(ext)
+
+	syntaxExt := ext
+
 	if !ok || ext == "" {
-		codecInstance = detectCodec(data, opts)
+		// The layer names no registered format, so the document decides one, and
+		// provenance is recorded by the reader for that format.
+		codecInstance, syntaxExt = detectCodec(data, opts)
 	}
 
 	if codecInstance == nil {
@@ -202,8 +207,7 @@ func applyLayer(target any, layer cascade.Layer, opts *loadOptions, meta *Metada
 
 	meta.AddActiveFile(layer.Path)
 
-	syntaxExt := ext
-	if aliasTarget, ok := opts.formatAliases[ext]; ok {
+	if aliasTarget, ok := opts.formatAliases[syntaxExt]; ok {
 		syntaxExt = aliasTarget
 	}
 
@@ -215,41 +219,43 @@ func applyLayer(target any, layer cascade.Layer, opts *loadOptions, meta *Metada
 // detectCodec selects a codec from the shape of the data, for a layer whose
 // extension is absent or unregistered. An empty layer is TOML, a leading brace
 // or bracket selects JSON, a layer that decodes as TOML is TOML, and anything
-// else is YAML. It returns nil when the registry holds none of those.
-func detectCodec(data []byte, opts *loadOptions) Codec {
+// else is YAML. It reports the extension the selected codec is registered under
+// alongside it, and nil with an empty extension when the registry holds none of
+// those.
+func detectCodec(data []byte, opts *loadOptions) (Codec, string) {
 	trimmed := bytes.TrimSpace(data)
 	if len(trimmed) == 0 {
 		if c, ok := opts.codecReg.Get(".toml"); ok {
-			return c
+			return c, ".toml"
 		}
 
 		exts := opts.codecReg.Extensions()
 		if len(exts) > 0 {
 			c, _ := opts.codecReg.Get(exts[0])
-			return c
+			return c, exts[0]
 		}
 
-		return nil
+		return nil, ""
 	}
 
 	if trimmed[0] == '{' || trimmed[0] == '[' {
 		if c, ok := opts.codecReg.Get(".json"); ok {
-			return c
+			return c, ".json"
 		}
 	}
 
 	if c, ok := opts.codecReg.Get(".toml"); ok {
 		var dummy any
 		if err := c.Decode(data, &dummy); err == nil {
-			return c
+			return c, ".toml"
 		}
 	}
 
 	if c, ok := opts.codecReg.Get(".yaml"); ok {
-		return c
+		return c, ".yaml"
 	}
 
-	return nil
+	return nil, ""
 }
 
 func applyFormats(formats []string, reg *codec.Registry) ([]string, error) {
@@ -275,8 +281,7 @@ func applyFormats(formats []string, reg *codec.Registry) ([]string, error) {
 			continue
 		}
 
-		lowered := strings.ToLower(trimmed)
-		if lowered == "yaml" {
+		if strings.EqualFold(trimmed, "yaml") {
 			if err := add(".yaml", f); err != nil {
 				return nil, err
 			}
@@ -288,11 +293,7 @@ func applyFormats(formats []string, reg *codec.Registry) ([]string, error) {
 			continue
 		}
 
-		if !strings.HasPrefix(lowered, ".") {
-			lowered = "." + lowered
-		}
-
-		if err := add(lowered, f); err != nil {
+		if err := add(normalizeExt(trimmed), f); err != nil {
 			return nil, err
 		}
 	}
