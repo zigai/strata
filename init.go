@@ -8,9 +8,7 @@ import (
 	"io/fs"
 	"os"
 	"path/filepath"
-	"strings"
 
-	"github.com/zigai/strata/codec"
 	"github.com/zigai/strata/internal/atomicfile"
 	"github.com/zigai/strata/internal/defaulter"
 )
@@ -59,7 +57,8 @@ func WithOverwrite(overwrite bool) InitOption {
 //
 // An existing file is left untouched and reported as [ErrFileExists], unless
 // [WithOverwrite] is set. An extension that matches no supported format is
-// reported as [ErrUnsupportedFormat].
+// reported as [ErrUnsupportedFormat]. A codec bound for one load with [WithCodec]
+// takes part in loading, not in writing.
 //
 // The write is atomic. The file is staged beside the target and renamed into
 // place. A failure does not leave a partial template.
@@ -90,9 +89,7 @@ func Init[T any](targetPath string, opts ...InitOption) error {
 		return fmt.Errorf("apply defaults for template: %w", err)
 	}
 
-	ext := strings.ToLower(filepath.Ext(targetPath))
-
-	data, err := formatInitData(target, ext, options.schemaURL)
+	data, err := formatInitData(target, filepath.Ext(targetPath), options.schemaURL)
 	if err != nil {
 		return err
 	}
@@ -105,54 +102,36 @@ func Init[T any](targetPath string, opts ...InitOption) error {
 }
 
 func formatInitData(target any, ext string, schemaURL string) ([]byte, error) {
-	switch ext {
+	normalized := normalizeExt(ext)
+
+	c, ok := builtinFormats.Get(normalized)
+	if !ok {
+		return nil, fmt.Errorf("%w: %s", ErrUnsupportedFormat, normalized)
+	}
+
+	encoded, err := c.Encode(target)
+	if err != nil {
+		return nil, fmt.Errorf("encode %s template: %w", formatName(normalized), err)
+	}
+
+	switch normalized {
 	case ".toml":
-		c := codec.NewTOMLCodec()
-
-		encoded, err := c.Encode(target)
-		if err != nil {
-			return nil, fmt.Errorf("encode toml template: %w", err)
-		}
-
 		if schemaURL != "" {
 			header := fmt.Sprintf("#:schema %s\n\n", schemaURL)
 			return append([]byte(header), encoded...), nil
 		}
-
-		return encoded, nil
-
 	case ".yaml", ".yml":
-		c := codec.NewYAMLCodec()
-
-		encoded, err := c.Encode(target)
-		if err != nil {
-			return nil, fmt.Errorf("encode yaml template: %w", err)
-		}
-
 		if schemaURL != "" {
 			header := fmt.Sprintf("# yaml-language-server: $schema=%s\n\n", schemaURL)
 			return append([]byte(header), encoded...), nil
 		}
-
-		return encoded, nil
-
 	case ".json":
-		c := codec.NewJSONCodec()
-
-		encoded, err := c.Encode(target)
-		if err != nil {
-			return nil, fmt.Errorf("encode json template: %w", err)
-		}
-
 		if schemaURL != "" {
 			return injectJSONSchema(encoded, schemaURL)
 		}
-
-		return encoded, nil
-
-	default:
-		return nil, fmt.Errorf("%w: %s", ErrUnsupportedFormat, ext)
 	}
+
+	return encoded, nil
 }
 
 func injectJSONSchema(data []byte, schemaURL string) ([]byte, error) {

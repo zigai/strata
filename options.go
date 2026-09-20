@@ -12,6 +12,11 @@ import (
 	"github.com/zigai/strata/internal/stream"
 )
 
+// builtinFormats is the registry of formats this package writes on its own: the
+// TOML, YAML, and JSON codecs [codec.NewRegistry] serves. It is never mutated,
+// so a shared instance is safe.
+var builtinFormats = codec.NewRegistry()
+
 // Codec defines the decoding and encoding operations for one configuration
 // format. It is an alias for [codec.Codec].
 type Codec = codec.Codec
@@ -324,6 +329,15 @@ func normalizeExt(ext string) string {
 	}
 
 	return trimmed
+}
+
+// formatName reports the display name of a built-in extension.
+func formatName(ext string) string {
+	if ext == ".yml" {
+		return "yaml"
+	}
+
+	return strings.TrimPrefix(ext, ".")
 }
 
 // defaultLoadOptions returns the option set a load starts from when the caller

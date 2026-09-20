@@ -44,11 +44,7 @@ import (
 // boolean inference recognizes only the full words "true" and "false".
 func SetBytes(format string, data []byte, dottedKey string, value any) ([]byte, error) {
 	val := inferCLIValue(value)
-	ext := strings.ToLower(strings.TrimSpace(format))
-
-	if !strings.HasPrefix(ext, ".") && ext != "" {
-		ext = "." + ext
-	}
+	ext := normalizeExt(format)
 
 	switch ext {
 	case ".yaml", ".yml":

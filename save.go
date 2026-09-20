@@ -4,9 +4,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
-	"strings"
 
-	"github.com/zigai/strata/codec"
 	"github.com/zigai/strata/internal/atomicfile"
 )
 
@@ -32,9 +30,10 @@ func WithFileMode(mode os.FileMode) SaveOption {
 // intended for files the application owns outright; [Set] is intended for files
 // a human maintains.
 //
-// The file extension selects the codec. An extension that matches no supported
-// format is reported as [ErrUnsupportedFormat]. The file is created with mode
-// 0o644 unless [WithFileMode] sets another one.
+// The file extension selects one of the built-in codecs; a codec bound for one
+// load with [WithCodec] takes part in loading, not in writing. An extension that
+// matches no supported format is reported as [ErrUnsupportedFormat]. The file is
+// created with mode 0o644 unless [WithFileMode] sets another one.
 func Save[T any](targetPath string, cfg T, opts ...SaveOption) error {
 	options := &saveOptions{
 		mode: 0o644,
@@ -43,24 +42,14 @@ func Save[T any](targetPath string, cfg T, opts ...SaveOption) error {
 		opt(options)
 	}
 
-	ext := strings.ToLower(filepath.Ext(targetPath))
+	ext := normalizeExt(filepath.Ext(targetPath))
 
-	var (
-		encoded []byte
-		err     error
-	)
-
-	switch ext {
-	case ".toml":
-		encoded, err = codec.NewTOMLCodec().Encode(cfg)
-	case ".yaml", ".yml":
-		encoded, err = codec.NewYAMLCodec().Encode(cfg)
-	case ".json":
-		encoded, err = codec.NewJSONCodec().Encode(cfg)
-	default:
+	c, ok := builtinFormats.Get(ext)
+	if !ok {
 		return fmt.Errorf("%w: %s", ErrUnsupportedFormat, ext)
 	}
 
+	encoded, err := c.Encode(cfg)
 	if err != nil {
 		return fmt.Errorf("encode configuration for %s: %w", targetPath, err)
 	}
