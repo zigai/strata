@@ -29,6 +29,14 @@
 // supplies defaults, [Validator] checks the merged result, and
 // [MetadataValidator] checks it while reporting which key failed.
 //
+// A format is an extension point as well: [WithCodec], [WithDecoder], and
+// [WithDecoderFunc] bind a codec or a decode function to a file extension for
+// one load.
+//
+// Writing is not extensible that way. [Save], [Init], and [Set] serve the
+// built-in TOML, YAML, and JSON formats only: [Set] edits a document's layout
+// rather than re-encoding it, and [Init] writes a format-specific schema header.
+//
 // # Errors
 //
 // Every error this package raises for a condition it names is classifiable
