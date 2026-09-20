@@ -183,6 +183,59 @@ func TestProvenancePreservesExactIntegers(t *testing.T) {
 	}
 }
 
+// Provenance MUST be recorded by a reader for the format that decoded the layer.
+// It once ran its own detection cascade instead, so a JSON document read from
+// standard input was reported by the YAML reader.
+func TestProvenanceReaderFollowsDetectedFormat(t *testing.T) {
+	t.Parallel()
+
+	t.Run("json", func(t *testing.T) {
+		t.Parallel()
+
+		_, meta, err := strata.Load[stdinFormatConfig](
+			strata.WithExplicitPath("-"),
+			strata.WithStdin(strings.NewReader(`{"alpha": 7}`)),
+		)
+		if err != nil {
+			t.Fatalf("Load: %v", err)
+		}
+
+		origin, ok := meta.Where("alpha")
+		if !ok {
+			t.Fatal("Where(alpha) not found")
+		}
+
+		if origin.Line != 0 {
+			t.Errorf("origin.Line = %d, want 0: the JSON reader reports no line", origin.Line)
+		}
+	})
+
+	t.Run("yaml", func(t *testing.T) {
+		t.Parallel()
+
+		_, meta, err := strata.Load[stdinFormatConfig](
+			strata.WithExplicitPath("-"),
+			strata.WithStdin(strings.NewReader("alpha: 7\n")),
+		)
+		if err != nil {
+			t.Fatalf("Load: %v", err)
+		}
+
+		origin, ok := meta.Where("alpha")
+		if !ok {
+			t.Fatal("Where(alpha) not found")
+		}
+
+		if origin.Line != 1 {
+			t.Errorf("origin.Line = %d, want 1: the YAML reader reports the line", origin.Line)
+		}
+	})
+}
+
+type stdinFormatConfig struct {
+	Alpha int `strata:"alpha"`
+}
+
 type secretConfig struct {
 	Token string `strata:"token,secret" env:"SECRET_TOKEN"`
 }
