@@ -1,8 +1,6 @@
 package strataurfave
 
 import (
-	"encoding"
-	"errors"
 	"fmt"
 	"reflect"
 	"time"
@@ -31,7 +29,9 @@ var (
 	// the same shorthand.
 	//
 	// No flags are generated when this error is returned.
-	ErrDuplicateFlag = errors.New("two fields map to the same flag")
+	//
+	// The error value is declared by internal/plan, which reports the condition.
+	ErrDuplicateFlag = plan.ErrDuplicateFlag
 
 	// ErrUnsupportedFieldType is returned when a tagged field has no flag
 	// mapping, and when a value cannot pass through the mapping the field does
@@ -57,7 +57,9 @@ var (
 	// is reported here when a CLI value is written back into the field, and when
 	// Apply writes such a slice into a generated flag. The seeding path reports the
 	// same condition as ErrUnsupportedFieldType.
-	ErrValueOverflow = errors.New("value does not fit the destination field")
+	//
+	// The error value is declared by internal/plan, which reports the condition.
+	ErrValueOverflow = plan.ErrValueOverflow
 )
 
 // flagConfig carries the options accepted by GenerateFlags, RegisterFlags, and
@@ -130,7 +132,7 @@ func WithMetadata(meta *strata.Metadata) FlagOption {
 // built. Options are accepted for symmetry with RegisterFlags and
 // SyncFlagsToStruct; none of them affect generation.
 func GenerateFlags(cfg any, _ ...FlagOption) ([]cli.Flag, error) {
-	root, err := structTarget(cfg)
+	root, err := plan.StructTarget(cfg)
 	if err != nil {
 		return nil, err
 	}
@@ -145,7 +147,7 @@ func GenerateFlags(cfg any, _ ...FlagOption) ([]cli.Flag, error) {
 		return nil, err
 	}
 
-	if err := validateUnique(pending); err != nil {
+	if err := plan.ValidateUniqueTargets(targets); err != nil {
 		return nil, err
 	}
 
@@ -221,24 +223,6 @@ func resolveFlagOptions(opts []FlagOption) *flagConfig {
 	return config
 }
 
-func structTarget(cfg any) (reflect.Value, error) {
-	if cfg == nil {
-		return reflect.Value{}, fmt.Errorf("%w: cfg is nil", ErrNotStruct)
-	}
-
-	val := reflect.ValueOf(cfg)
-	if val.Kind() != reflect.Pointer || val.IsNil() {
-		return reflect.Value{}, fmt.Errorf("%w: cfg must be a non-nil pointer", ErrNotStruct)
-	}
-
-	elem := val.Elem()
-	if elem.Kind() != reflect.Struct {
-		return reflect.Value{}, fmt.Errorf("%w: %s is not a struct", ErrNotStruct, elem.Type())
-	}
-
-	return elem, nil
-}
-
 func prepareFlags(targets []plan.Target, root reflect.Value) ([]pendingFlag, error) {
 	pending := make([]pendingFlag, 0, len(targets))
 
@@ -249,7 +233,7 @@ func prepareFlags(targets []plan.Target, root reflect.Value) ([]pendingFlag, err
 		// A secret field is seeded like any other field, and the flag suppresses
 		// the value in help output through HideDefault. The value is not
 		// discarded.
-		if err := seedStorage(storage, root, target); err != nil {
+		if err := plan.SeedStorage(storage, root, target); err != nil {
 			return nil, err
 		}
 
@@ -257,139 +241,6 @@ func prepareFlags(targets []plan.Target, root reflect.Value) ([]pendingFlag, err
 	}
 
 	return pending, nil
-}
-
-func seedStorage(storage reflect.Value, root reflect.Value, target *plan.Target) error {
-	source, ok := plan.ResolveField(root, target.IndexPath)
-	if !ok {
-		return nil
-	}
-
-	if source.Kind() == reflect.Pointer {
-		if source.IsNil() {
-			return nil
-		}
-
-		source = source.Elem()
-	}
-
-	if err := encodeLeaf(storage.Elem(), source, target.Kind); err != nil {
-		return fmt.Errorf("seed %s: %w", target.Display, err)
-	}
-
-	return nil
-}
-
-func encodeLeaf(dst, src reflect.Value, kind plan.Kind) error {
-	//nolint:exhaustive // plan.KindUnsupported never reaches storage seeding
-	switch kind {
-	case plan.KindText:
-		text, err := marshalLeaf(src)
-		if err != nil {
-			return err
-		}
-
-		dst.SetString(text)
-
-		return nil
-	case plan.KindString:
-		dst.SetString(src.String())
-
-		return nil
-	case plan.KindBool:
-		dst.SetBool(src.Bool())
-
-		return nil
-	case plan.KindInt, plan.KindInt64, plan.KindDuration:
-		dst.SetInt(src.Int())
-
-		return nil
-	case plan.KindUint, plan.KindUint64:
-		dst.SetUint(src.Uint())
-
-		return nil
-	case plan.KindFloat32, plan.KindFloat64:
-		dst.SetFloat(src.Float())
-
-		return nil
-	case plan.KindStringSlice, plan.KindIntSlice, plan.KindInt64Slice:
-		return cloneSlice(dst, src)
-	default:
-		return fmt.Errorf("%w: %s", ErrUnsupportedFieldType, src.Type())
-	}
-}
-
-func cloneSlice(dst, src reflect.Value) error {
-	out := reflect.MakeSlice(dst.Type(), src.Len(), src.Len())
-
-	for i := range src.Len() {
-		element := src.Index(i)
-		targetType := out.Index(i).Type()
-
-		switch {
-		case element.Type().AssignableTo(targetType):
-			out.Index(i).Set(element)
-		case element.Type().ConvertibleTo(targetType):
-			out.Index(i).Set(element.Convert(targetType))
-		default:
-			return fmt.Errorf("%w: %s into %s", ErrUnsupportedFieldType, element.Type(), targetType)
-		}
-	}
-
-	dst.Set(out)
-
-	return nil
-}
-
-func marshalLeaf(src reflect.Value) (string, error) {
-	if marshaller, ok := reflect.TypeAssert[encoding.TextMarshaler](src); ok {
-		text, err := marshaller.MarshalText()
-		if err != nil {
-			return "", fmt.Errorf("marshal %s: %w", src.Type(), err)
-		}
-
-		return string(text), nil
-	}
-
-	if src.CanAddr() {
-		if marshaller, ok := reflect.TypeAssert[encoding.TextMarshaler](src.Addr()); ok {
-			text, err := marshaller.MarshalText()
-			if err != nil {
-				return "", fmt.Errorf("marshal %s: %w", src.Type(), err)
-			}
-
-			return string(text), nil
-		}
-	}
-
-	return fmt.Sprint(src.Interface()), nil
-}
-
-func validateUnique(pending []pendingFlag) error {
-	names := make(map[string]string, len(pending))
-	shorthands := make(map[string]string, len(pending))
-
-	for i := range pending {
-		target := &pending[i].target
-
-		if previous, duplicate := names[target.Name]; duplicate {
-			return fmt.Errorf("%w: %q is claimed by %s and %s", ErrDuplicateFlag, target.Name, previous, target.Display)
-		}
-
-		names[target.Name] = target.Display
-
-		if target.Shorthand == "" {
-			continue
-		}
-
-		if previous, duplicate := shorthands[target.Shorthand]; duplicate {
-			return fmt.Errorf("%w: shorthand %q is claimed by %s and %s", ErrDuplicateFlag, target.Shorthand, previous, target.Display)
-		}
-
-		shorthands[target.Shorthand] = target.Display
-	}
-
-	return nil
 }
 
 func bindFlag(p *pendingFlag) (cli.Flag, error) {

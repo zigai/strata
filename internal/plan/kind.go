@@ -137,6 +137,12 @@ func Classify(typ reflect.Type) (Kind, reflect.Type, error) {
 	return KindUnsupported, nil, fmt.Errorf("%w: type %s has no flag mapping", ErrUnsupportedFieldType, typ)
 }
 
+// IsSlice reports whether the kind carries a slice value, which a write path
+// replaces as a whole rather than rendering as one scalar.
+func (k Kind) IsSlice() bool {
+	return k == KindStringSlice || k == KindIntSlice || k == KindInt64Slice
+}
+
 // StorageTypeFor reports the canonical type that detached storage holds for a
 // flag kind. A kind with no entry in storageTypes falls back to the leaf type.
 func StorageTypeFor(kind Kind, leaf reflect.Type) reflect.Type {

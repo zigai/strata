@@ -3,7 +3,6 @@ package stratacobra
 import (
 	"fmt"
 	"reflect"
-	"strings"
 
 	"github.com/spf13/cobra"
 	"github.com/spf13/pflag"
@@ -29,44 +28,14 @@ func Apply(cmd *cobra.Command, cfg any) error {
 		return nil
 	}
 
-	root, ok := optionalStructTarget(cfg)
+	root, ok := plan.OptionalStructTarget(cfg)
 	if !ok {
 		return nil
 	}
 
-	targets, err := plan.Build(root.Type(), plan.Apply)
-	if err != nil {
-		return fmt.Errorf("build field plan: %w", err)
-	}
-
-	for i := range targets {
-		if err := applyTarget(cmd, root, &targets[i]); err != nil {
-			return err
-		}
-	}
-
-	return nil
-}
-
-func optionalStructTarget(cfg any) (reflect.Value, bool) {
-	if cfg == nil {
-		return reflect.Value{}, false
-	}
-
-	val := reflect.ValueOf(cfg)
-	if val.Kind() == reflect.Pointer {
-		if val.IsNil() {
-			return reflect.Value{}, false
-		}
-
-		val = val.Elem()
-	}
-
-	if val.Kind() != reflect.Struct {
-		return reflect.Value{}, false
-	}
-
-	return val, true
+	return plan.ForEachTarget(root, plan.Apply, func(root reflect.Value, target *plan.Target) error {
+		return applyTarget(cmd, root, target)
+	})
 }
 
 func applyTarget(cmd *cobra.Command, root reflect.Value, target *plan.Target) error {
@@ -112,7 +81,7 @@ func findFlag(cmd *cobra.Command, target *plan.Target) *pflag.Flag {
 		return nil
 	}
 
-	for _, candidate := range candidateNames(target.Name) {
+	for _, candidate := range plan.CandidateFlagNames(target.Name) {
 		if flag := cmd.Flag(candidate); flag != nil {
 			return flag
 		}
@@ -127,21 +96,12 @@ func findFlag(cmd *cobra.Command, target *plan.Target) *pflag.Flag {
 	return nil
 }
 
-func candidateNames(name string) []string {
-	parts := strings.Split(name, ".")
-	kebab := strings.Join(parts, "-")
-	snake := strings.Join(parts, "_")
-	leaf := parts[len(parts)-1]
-
-	return []string{name, kebab, snake, leaf}
-}
-
 func writeFlagValue(flag *pflag.Flag, kind plan.Kind, source reflect.Value) error {
-	if isSliceKind(kind) {
+	if kind.IsSlice() {
 		return replaceSliceValue(flag, source)
 	}
 
-	text, err := encodeScalar(source, kind)
+	text, err := plan.EncodeScalar(source, kind)
 	if err != nil {
 		return err
 	}
@@ -151,12 +111,6 @@ func writeFlagValue(flag *pflag.Flag, kind plan.Kind, source reflect.Value) erro
 	}
 
 	return nil
-}
-
-// isSliceKind reports whether a kind carries a slice value, which the write path
-// replaces as a whole rather than rendering as one scalar.
-func isSliceKind(kind plan.Kind) bool {
-	return kind == plan.KindStringSlice || kind == plan.KindIntSlice || kind == plan.KindInt64Slice
 }
 
 // replaceSliceValue writes source into flag through pflag's typed replacement
@@ -182,19 +136,4 @@ func replaceSliceValue(flag *pflag.Flag, source reflect.Value) error {
 	}
 
 	return nil
-}
-
-// encodeScalar renders a configuration value as the string form the flag's
-// parser accepts. A text codec is rendered by its own marshaller, which keeps the
-// round trip exact; every other kind uses the natural Go representation.
-func encodeScalar(source reflect.Value, kind plan.Kind) (string, error) {
-	//nolint:exhaustive // every non-text, non-string kind uses its natural Go representation
-	switch kind {
-	case plan.KindText:
-		return marshalLeaf(source)
-	case plan.KindString:
-		return source.String(), nil
-	default:
-		return fmt.Sprint(source.Interface()), nil
-	}
 }
