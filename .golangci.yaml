@@ -207,6 +207,12 @@ linters:
         - "github.com/spf13/pflag\\..*"
         - "gopkg.in/yaml.v3\\..*"
         - "github.com/invopop/jsonschema\\..*"
+    wrapcheck:
+      # The bridge modules are separate Go modules, so the linter reads this
+      # module's internal packages as external. Their failures are wrapped at
+      # the bridge's public boundary instead of again at every call site.
+      ignore-package-globs:
+        - "github.com/zigai/strata/internal/*"
 
   exclusions:
     warn-unused: false
