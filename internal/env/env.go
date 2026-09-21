@@ -126,6 +126,7 @@ func bindEnvStruct(
 	if slices.Contains(activeTypes, typ) {
 		return nil
 	}
+
 	activeTypes = append(activeTypes, typ)
 	defer func() { activeTypes = activeTypes[:len(activeTypes)-1] }()
 
@@ -203,6 +204,7 @@ func bindPointerStructField(
 		if slices.Contains(activePtrs, ptr) {
 			return nil
 		}
+
 		activePtrs = append(activePtrs, ptr)
 		defer func() { activePtrs = activePtrs[:len(activePtrs)-1] }()
 
@@ -230,7 +232,6 @@ func bindPointerStructField(
 
 	return nil
 }
-
 
 func bindLeafField(
 	field reflect.Value,
@@ -319,7 +320,9 @@ func isEnvSkipped(sf reflect.StructField) bool {
 	if tag == "" {
 		return false
 	}
+
 	name, _, _ := strings.Cut(tag, ",")
+
 	return strings.TrimSpace(name) == "-"
 }
 

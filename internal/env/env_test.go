@@ -256,18 +256,24 @@ func TestEnvironmentRecursiveType(t *testing.T) {
 	t.Parallel()
 
 	var cfg recursiveNode
+
 	lookups := 0
+
 	var panicked any
+
 	func() {
 		defer func() { panicked = recover() }()
+
 		_ = env.Apply(&cfg, env.Options{Lookup: func(name string) (string, bool) {
 			lookups++
 			if lookups == 40 {
 				panic("probe safety guard: 40 lookups reached with no matching environment variables")
 			}
+
 			return "", false
 		}})
 	}()
+
 	if panicked != nil {
 		t.Errorf("environment traversal did not terminate; %v", panicked)
 	}
@@ -279,10 +285,12 @@ func TestExplicitEnvExclusion(t *testing.T) {
 	cfg := struct {
 		Token string `env:"-"`
 	}{Token: "original"}
+
 	err := env.Apply(&cfg, env.Options{Lookup: func(name string) (string, bool) { return "unexpected", name == "TOKEN" }})
 	if err != nil {
 		t.Fatal(err)
 	}
+
 	if cfg.Token != "original" {
 		t.Errorf("env:\"-\" still binds the derived variable: %q", cfg.Token)
 	}

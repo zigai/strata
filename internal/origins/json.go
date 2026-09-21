@@ -5,6 +5,7 @@ import (
 	"encoding/json/jsontext"
 	"encoding/json/v2"
 )
+
 // readJSON emits one Record per leaf key of a JSON document.
 //
 // It reports nothing, unlike the TOML and YAML readers: JSON is the last resort
