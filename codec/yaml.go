@@ -18,6 +18,11 @@ import (
 // A YAMLCodec is stateless and safe for concurrent use.
 type YAMLCodec struct{}
 
+type yamlFieldBinding struct {
+	Name string
+	Type reflect.Type
+}
+
 // NewYAMLCodec returns a codec that decodes and encodes YAML documents.
 func NewYAMLCodec() *YAMLCodec {
 	return &YAMLCodec{}
@@ -75,24 +80,22 @@ func (c *YAMLCodec) Decode(data []byte, target any) error {
 	return nil
 }
 
-type yamlFieldBinding struct {
-	Name string
-	Type reflect.Type
-}
-
 func yamlTagName(field reflect.StructField) (string, bool) {
 	tag := field.Tag.Get("yaml")
 	if tag == "" {
 		return "", false
 	}
+
 	name, _, _ := strings.Cut(tag, ",")
 	name = strings.TrimSpace(name)
+
 	return name, name != ""
 }
 
 func yamlBindings(typ reflect.Type) map[string]yamlFieldBinding {
 	bindings := make(map[string]yamlFieldBinding)
 	collectYAMLBindings(bindings, typ, make(map[reflect.Type]bool))
+
 	return bindings
 }
 
@@ -100,26 +103,30 @@ func collectYAMLBindings(bindings map[string]yamlFieldBinding, typ reflect.Type,
 	if path[typ] {
 		return
 	}
+
 	path[typ] = true
 	defer delete(path, typ)
 
-	for i := range typ.NumField() {
-		field := typ.Field(i)
+	for field := range typ.Fields() {
 		if field.Anonymous {
 			collectYAMLBindings(bindings, derefType(field.Type), path)
 			continue
 		}
+
 		name, named := yamlTagName(field)
 		if !field.IsExported() || (named && name == "-") {
 			continue
 		}
+
 		key := defaulter.FieldKey(field)
 		if key == "-" {
 			continue
 		}
+
 		if !named {
 			name = strings.ToLower(field.Name)
 		}
+
 		binding := yamlFieldBinding{Name: name, Type: field.Type}
 		bindings[name] = binding
 		bindings[field.Name] = binding
@@ -129,10 +136,56 @@ func collectYAMLBindings(bindings map[string]yamlFieldBinding, typ reflect.Type,
 	}
 }
 
+func rewriteYAMLMapping(node *yaml.Node, targetType reflect.Type) error {
+	if targetType.Kind() != reflect.Struct {
+		return nil
+	}
+
+	bindings := yamlBindings(targetType)
+	named := make(map[string]string)
+
+	for i := 0; i+1 < len(node.Content); i += 2 {
+		keyNode := node.Content[i]
+		valNode := node.Content[i+1]
+
+		binding, ok := bindings[keyNode.Value]
+		if !ok {
+			continue
+		}
+
+		if first, seen := named[binding.Name]; seen && first != keyNode.Value {
+			return fmt.Errorf("%w: %q and %q", errMemberConflict, first, keyNode.Value)
+		}
+
+		named[binding.Name] = keyNode.Value
+		keyNode.Value = binding.Name
+
+		if err := rewriteYAMLNode(valNode, binding.Type); err != nil {
+			return err
+		}
+	}
+
+	return nil
+}
+
+func rewriteYAMLSequence(node *yaml.Node, targetType reflect.Type) error {
+	if targetType.Kind() == reflect.Slice || targetType.Kind() == reflect.Array {
+		elemType := targetType.Elem()
+		for _, content := range node.Content {
+			if err := rewriteYAMLNode(content, elemType); err != nil {
+				return err
+			}
+		}
+	}
+
+	return nil
+}
+
 func rewriteYAMLNode(node *yaml.Node, targetType reflect.Type) error {
 	if node == nil {
 		return nil
 	}
+
 	targetType = derefType(targetType)
 	if targetType == nil {
 		return nil
@@ -146,41 +199,13 @@ func rewriteYAMLNode(node *yaml.Node, targetType reflect.Type) error {
 			}
 		}
 	case yaml.MappingNode:
-		if targetType.Kind() != reflect.Struct {
-			return nil
-		}
-		bindings := yamlBindings(targetType)
-		named := make(map[string]string)
-
-		for i := 0; i+1 < len(node.Content); i += 2 {
-			keyNode := node.Content[i]
-			valNode := node.Content[i+1]
-
-			binding, ok := bindings[keyNode.Value]
-			if !ok {
-				continue
-			}
-
-			if first, seen := named[binding.Name]; seen && first != keyNode.Value {
-				return fmt.Errorf("two members name the same field: %q and %q", first, keyNode.Value)
-			}
-			named[binding.Name] = keyNode.Value
-			keyNode.Value = binding.Name
-
-			if err := rewriteYAMLNode(valNode, binding.Type); err != nil {
-				return err
-			}
-		}
+		return rewriteYAMLMapping(node, targetType)
 	case yaml.SequenceNode:
-		if targetType.Kind() == reflect.Slice || targetType.Kind() == reflect.Array {
-			elemType := targetType.Elem()
-			for _, content := range node.Content {
-				if err := rewriteYAMLNode(content, elemType); err != nil {
-					return err
-				}
-			}
-		}
+		return rewriteYAMLSequence(node, targetType)
+	case yaml.ScalarNode, yaml.AliasNode:
+		// Scalar and alias nodes contain no child nodes to rewrite.
 	}
+
 	return nil
 }
 
@@ -188,6 +213,7 @@ func derefType(typ reflect.Type) reflect.Type {
 	for typ != nil && typ.Kind() == reflect.Pointer {
 		typ = typ.Elem()
 	}
+
 	return typ
 }
 

@@ -15,6 +15,11 @@ import (
 // A TOMLCodec is stateless and safe for concurrent use.
 type TOMLCodec struct{}
 
+type tomlFieldBinding struct {
+	Name string
+	Type reflect.Type
+}
+
 // NewTOMLCodec returns a codec that decodes and encodes TOML documents.
 func NewTOMLCodec() *TOMLCodec {
 	return &TOMLCodec{}
@@ -37,6 +42,7 @@ func (c *TOMLCodec) Decode(data []byte, target any) error {
 		if err := toml.Unmarshal(data, target); err != nil {
 			return fmt.Errorf("%w: toml unmarshal: %w", ErrMalformed, err)
 		}
+
 		return nil
 	}
 
@@ -44,6 +50,7 @@ func (c *TOMLCodec) Decode(data []byte, target any) error {
 	if err := toml.Unmarshal(data, &doc); err != nil {
 		return fmt.Errorf("%w: toml unmarshal: %w", ErrMalformed, err)
 	}
+
 	if doc == nil {
 		return nil
 	}
@@ -65,24 +72,22 @@ func (c *TOMLCodec) Decode(data []byte, target any) error {
 	return nil
 }
 
-type tomlFieldBinding struct {
-	Name string
-	Type reflect.Type
-}
-
 func tomlTagName(field reflect.StructField) (string, bool) {
 	tag := field.Tag.Get("toml")
 	if tag == "" {
 		return "", false
 	}
+
 	name, _, _ := strings.Cut(tag, ",")
 	name = strings.TrimSpace(name)
+
 	return name, name != ""
 }
 
 func tomlBindings(typ reflect.Type) map[string]tomlFieldBinding {
 	bindings := make(map[string]tomlFieldBinding)
 	collectTOMLBindings(bindings, typ, make(map[reflect.Type]bool))
+
 	return bindings
 }
 
@@ -90,26 +95,30 @@ func collectTOMLBindings(bindings map[string]tomlFieldBinding, typ reflect.Type,
 	if path[typ] {
 		return
 	}
+
 	path[typ] = true
 	defer delete(path, typ)
 
-	for i := range typ.NumField() {
-		field := typ.Field(i)
+	for field := range typ.Fields() {
 		if field.Anonymous {
 			collectTOMLBindings(bindings, derefType(field.Type), path)
 			continue
 		}
+
 		name, named := tomlTagName(field)
 		if !field.IsExported() || (named && name == "-") {
 			continue
 		}
+
 		key := defaulter.FieldKey(field)
 		if key == "-" {
 			continue
 		}
+
 		if !named {
 			name = field.Name
 		}
+
 		binding := tomlFieldBinding{Name: name, Type: field.Type}
 		bindings[name] = binding
 		bindings[field.Name] = binding
@@ -119,74 +128,88 @@ func collectTOMLBindings(bindings map[string]tomlFieldBinding, typ reflect.Type,
 	}
 }
 
+func rewriteTOMLStruct(m map[string]any, targetType reflect.Type) (any, error) {
+	bindings := tomlBindings(targetType)
+	rewritten := make(map[string]any, len(m))
+	named := make(map[string]string, len(m))
+
+	for k, v := range m {
+		binding, ok := bindings[k]
+		if !ok {
+			rewritten[k] = v
+			continue
+		}
+
+		if first, seen := named[binding.Name]; seen && first != k {
+			return nil, fmt.Errorf("%w: %q and %q", errMemberConflict, first, k)
+		}
+
+		named[binding.Name] = k
+
+		nested, err := rewriteTOMLValue(v, binding.Type)
+		if err != nil {
+			return nil, err
+		}
+
+		rewritten[binding.Name] = nested
+	}
+
+	return rewritten, nil
+}
+
+func rewriteTOMLSlice(slice []any, elemType reflect.Type) (any, error) {
+	rewritten := make([]any, len(slice))
+	for i, item := range slice {
+		nested, err := rewriteTOMLValue(item, elemType)
+		if err != nil {
+			return nil, err
+		}
+
+		rewritten[i] = nested
+	}
+
+	return rewritten, nil
+}
+
+func rewriteTOMLMap(m map[string]any, elemType reflect.Type) (any, error) {
+	rewritten := make(map[string]any, len(m))
+	for k, v := range m {
+		nested, err := rewriteTOMLValue(v, elemType)
+		if err != nil {
+			return nil, err
+		}
+
+		rewritten[k] = nested
+	}
+
+	return rewritten, nil
+}
+
 func rewriteTOMLValue(val any, targetType reflect.Type) (any, error) {
 	targetType = derefType(targetType)
 	if targetType == nil {
 		return val, nil
 	}
 
+	//nolint:exhaustive // reflect.Kind is an external standard-library enum; non-container kinds require no rewriting
 	switch targetType.Kind() {
 	case reflect.Struct:
-		m, ok := val.(map[string]any)
-		if !ok {
-			return val, nil
+		if m, ok := val.(map[string]any); ok {
+			return rewriteTOMLStruct(m, targetType)
 		}
-		bindings := tomlBindings(targetType)
-		rewritten := make(map[string]any, len(m))
-		named := make(map[string]string, len(m))
-
-		for k, v := range m {
-			binding, ok := bindings[k]
-			if !ok {
-				rewritten[k] = v
-				continue
-			}
-
-			if first, seen := named[binding.Name]; seen && first != k {
-				return nil, fmt.Errorf("two members name the same field: %q and %q", first, k)
-			}
-			named[binding.Name] = k
-
-			nested, err := rewriteTOMLValue(v, binding.Type)
-			if err != nil {
-				return nil, err
-			}
-			rewritten[binding.Name] = nested
-		}
-		return rewritten, nil
 	case reflect.Slice, reflect.Array:
-		slice, ok := val.([]any)
-		if !ok {
-			return val, nil
+		if slice, ok := val.([]any); ok {
+			return rewriteTOMLSlice(slice, targetType.Elem())
 		}
-		elemType := targetType.Elem()
-		rewritten := make([]any, len(slice))
-		for i, item := range slice {
-			nested, err := rewriteTOMLValue(item, elemType)
-			if err != nil {
-				return nil, err
-			}
-			rewritten[i] = nested
-		}
-		return rewritten, nil
 	case reflect.Map:
-		m, ok := val.(map[string]any)
-		if !ok {
-			return val, nil
+		if m, ok := val.(map[string]any); ok {
+			return rewriteTOMLMap(m, targetType.Elem())
 		}
-		elemType := targetType.Elem()
-		rewritten := make(map[string]any, len(m))
-		for k, v := range m {
-			nested, err := rewriteTOMLValue(v, elemType)
-			if err != nil {
-				return nil, err
-			}
-			rewritten[k] = nested
-		}
-		return rewritten, nil
 	default:
 		return val, nil
 	}
+
+	return val, nil
 }
 
 // Encode encodes value as TOML bytes.
