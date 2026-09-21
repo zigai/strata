@@ -64,6 +64,12 @@ func OptionalStructTarget(cfg any) (reflect.Value, bool) {
 		return reflect.Value{}, false
 	}
 
+	if !val.CanAddr() {
+		tmp := reflect.New(val.Type()).Elem()
+		tmp.Set(val)
+		val = tmp
+	}
+
 	return val, true
 }
 
@@ -179,15 +185,20 @@ func MarshalLeaf(src reflect.Value) (string, error) {
 		return string(text), nil
 	}
 
-	if src.CanAddr() {
-		if marshaller, ok := reflect.TypeAssert[encoding.TextMarshaler](src.Addr()); ok {
-			text, err := marshaller.MarshalText()
-			if err != nil {
-				return "", fmt.Errorf("marshal %s: %w", src.Type(), err)
-			}
+	target := src
+	if !target.CanAddr() {
+		tmp := reflect.New(src.Type()).Elem()
+		tmp.Set(src)
+		target = tmp
+	}
 
-			return string(text), nil
+	if marshaller, ok := reflect.TypeAssert[encoding.TextMarshaler](target.Addr()); ok {
+		text, err := marshaller.MarshalText()
+		if err != nil {
+			return "", fmt.Errorf("marshal %s: %w", src.Type(), err)
 		}
+
+		return string(text), nil
 	}
 
 	return fmt.Sprint(src.Interface()), nil

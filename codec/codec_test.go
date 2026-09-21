@@ -340,3 +340,39 @@ func TestRegistryConcurrentOperations(t *testing.T) {
 
 	wg.Wait()
 }
+
+type strataNamingTestConfig struct {
+	ListenPort int    `strata:"port"`
+	APIKey     string
+}
+
+func TestCrossFormatStrataKeyNaming(t *testing.T) {
+	t.Parallel()
+
+	cases := []struct {
+		format string
+		codec  codec.Codec
+		input  string
+	}{
+		{"json", codec.NewJSONCodec(), `{"port": 9000, "api_key": "secret123"}`},
+		{"toml", codec.NewTOMLCodec(), "port = 9000\napi_key = \"secret123\"\n"},
+		{"yaml", codec.NewYAMLCodec(), "port: 9000\napi_key: secret123\n"},
+	}
+
+	for _, tc := range cases {
+		t.Run(tc.format, func(t *testing.T) {
+			t.Parallel()
+
+			var cfg strataNamingTestConfig
+			if err := tc.codec.Decode([]byte(tc.input), &cfg); err != nil {
+				t.Fatalf("%s decode failed: %v", tc.format, err)
+			}
+			if cfg.ListenPort != 9000 {
+				t.Errorf("%s ListenPort = %d, want 9000", tc.format, cfg.ListenPort)
+			}
+			if cfg.APIKey != "secret123" {
+				t.Errorf("%s APIKey = %q, want \"secret123\"", tc.format, cfg.APIKey)
+			}
+		})
+	}
+}

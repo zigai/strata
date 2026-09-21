@@ -38,6 +38,7 @@ type loadOptions struct {
 	formats       []string
 	formatsSet    bool
 	formatAliases map[string]string
+	excludedExts  map[string]bool
 }
 
 // DecoderFunc decodes data into a target struct.

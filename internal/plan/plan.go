@@ -142,14 +142,14 @@ func Build(root reflect.Type, policy Policy) ([]Target, error) {
 		targets: make([]Target, 0, root.NumField()),
 	}
 
-	if err := w.walkType(root, nil, "", "", ""); err != nil {
+	if err := w.walkType(root, nil, "", "", "", false); err != nil {
 		return nil, err
 	}
 
 	return w.targets, nil
 }
 
-func (w *walker) walkType(typ reflect.Type, indexPath []int, flagPrefix, configPrefix, displayPrefix string) error {
+func (w *walker) walkType(typ reflect.Type, indexPath []int, flagPrefix, configPrefix, displayPrefix string, inheritedSecret bool) error {
 	if slices.Contains(w.active, typ) {
 		return fmt.Errorf("%w: %s repeats %s on one traversal path", ErrRecursiveType, displayPrefix, typ)
 	}
@@ -171,7 +171,7 @@ func (w *walker) walkType(typ reflect.Type, indexPath []int, flagPrefix, configP
 			continue
 		}
 
-		if err := w.walkField(field, appendIndex(indexPath, i), flagPrefix, configPrefix, displayPrefix); err != nil {
+		if err := w.walkField(field, appendIndex(indexPath, i), flagPrefix, configPrefix, displayPrefix, inheritedSecret); err != nil {
 			return err
 		}
 	}
@@ -179,7 +179,7 @@ func (w *walker) walkType(typ reflect.Type, indexPath []int, flagPrefix, configP
 	return nil
 }
 
-func (w *walker) walkField(field reflect.StructField, indexPath []int, flagPrefix, configPrefix, displayPrefix string) error {
+func (w *walker) walkField(field reflect.StructField, indexPath []int, flagPrefix, configPrefix, displayPrefix string, inheritedSecret bool) error {
 	display := joinDisplay(displayPrefix, field.Name)
 
 	spec, err := parseFlagTag(field)
@@ -188,10 +188,10 @@ func (w *walker) walkField(field reflect.StructField, indexPath []int, flagPrefi
 	}
 
 	if isContainerType(field.Type) {
-		return w.walkContainer(field, spec, indexPath, flagPrefix, configPrefix, display)
+		return w.walkContainer(field, spec, indexPath, flagPrefix, configPrefix, display, inheritedSecret)
 	}
 
-	return w.walkLeaf(field, spec, indexPath, flagPrefix, configPrefix, display)
+	return w.walkLeaf(field, spec, indexPath, flagPrefix, configPrefix, display, inheritedSecret)
 }
 
 func (w *walker) walkContainer(
@@ -199,6 +199,7 @@ func (w *walker) walkContainer(
 	spec tagSpec,
 	indexPath []int,
 	flagPrefix, configPrefix, display string,
+	inheritedSecret bool,
 ) error {
 	embedded := field.Anonymous
 	if err := validateContainerSpec(embedded, spec, display); err != nil {
@@ -231,7 +232,9 @@ func (w *walker) walkContainer(
 		nextConfigPrefix = joinConfigPath(configPrefix, defaulter.FieldKey(field))
 	}
 
-	return w.walkType(child, indexPath, flagPrefix, nextConfigPrefix, display)
+	nextSecret := inheritedSecret || defaulter.IsSecret(field)
+
+	return w.walkType(child, indexPath, flagPrefix, nextConfigPrefix, display, nextSecret)
 }
 
 func validateContainerSpec(embedded bool, spec tagSpec, display string) error {
@@ -251,6 +254,7 @@ func (w *walker) walkLeaf(
 	spec tagSpec,
 	indexPath []int,
 	flagPrefix, configPrefix, display string,
+	inheritedSecret bool,
 ) error {
 	if !spec.present && !w.policy.IncludeUntaggedLeaves {
 		return nil
@@ -279,7 +283,7 @@ func (w *walker) walkLeaf(
 		Usage:     strings.TrimSpace(field.Tag.Get(usageTagName)),
 		Kind:      kind,
 		LeafType:  leafType,
-		Secret:    defaulter.IsSecret(field),
+		Secret:    inheritedSecret || defaulter.IsSecret(field),
 		Tagged:    spec.present,
 	})
 

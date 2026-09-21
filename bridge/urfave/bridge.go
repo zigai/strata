@@ -197,14 +197,35 @@ func replaceSliceValue(cmd *cli.Command, flag cli.Flag, source reflect.Value) er
 // which mirrors pflag's own Replace.
 func assignSliceDestination[T any](destination *[]T, source reflect.Value) error {
 	out := make([]T, source.Len())
+	targetType := reflect.TypeFor[T]()
 
 	for i := range source.Len() {
-		element, ok := reflect.TypeAssert[T](source.Index(i))
-		if !ok {
-			return fmt.Errorf("%w: %s into %s", ErrValueOverflow, source.Index(i).Type(), reflect.TypeFor[[]T]())
+		elemVal := source.Index(i)
+		if element, ok := reflect.TypeAssert[T](elemVal); ok {
+			out[i] = element
+			continue
 		}
 
-		out[i] = element
+		if elemVal.Type().ConvertibleTo(targetType) {
+			converted := elemVal.Convert(targetType)
+			if converted.CanInt() {
+				raw := elemVal.Int()
+				conv := converted.Int()
+				if raw != conv {
+					return fmt.Errorf("%w: %v into %s", ErrValueOverflow, raw, targetType)
+				}
+			} else if converted.CanUint() {
+				raw := elemVal.Uint()
+				conv := converted.Uint()
+				if raw != conv {
+					return fmt.Errorf("%w: %v into %s", ErrValueOverflow, raw, targetType)
+				}
+			}
+			out[i] = converted.Interface().(T)
+			continue
+		}
+
+		return fmt.Errorf("%w: %s into %s", ErrValueOverflow, elemVal.Type(), reflect.TypeFor[[]T]())
 	}
 
 	*destination = out

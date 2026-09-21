@@ -6,6 +6,8 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"reflect"
+	"slices"
 	"strings"
 
 	"github.com/zigai/strata/codec"
@@ -68,6 +70,8 @@ func LoadInto[T any](target *T, opts ...Option) (*Metadata, error) {
 	}
 
 	meta := NewMetadata()
+	registerSecretsFromTarget(target, meta)
+
 
 	if options.defaultsFunc != nil {
 		if err := options.defaultsFunc(target); err != nil {
@@ -187,11 +191,18 @@ func applyLayer(target any, layer cascade.Layer, opts *loadOptions, meta *Metada
 
 	ext := normalizeExt(filepath.Ext(layer.Path))
 
+	if ext != "" && opts.excludedExts != nil && opts.excludedExts[ext] {
+		return fmt.Errorf("%w for layer %s", ErrNoCodec, layer.Path)
+	}
+
 	codecInstance, ok := opts.codecReg.Get(ext)
 
 	syntaxExt := ext
 
 	if !ok || ext == "" {
+		if ext != "" && opts.excludedExts != nil && opts.excludedExts[ext] {
+			return fmt.Errorf("%w for layer %s", ErrNoCodec, layer.Path)
+		}
 		// The layer names no registered format, so the document decides one, and
 		// provenance is recorded by the reader for that format.
 		codecInstance, syntaxExt = detectCodec(data, opts)
@@ -240,7 +251,10 @@ func detectCodec(data []byte, opts *loadOptions) (Codec, string) {
 
 	if trimmed[0] == '{' || trimmed[0] == '[' {
 		if c, ok := opts.codecReg.Get(".json"); ok {
-			return c, ".json"
+			var dummy any
+			if err := c.Decode(data, &dummy); err == nil {
+				return c, ".json"
+			}
 		}
 	}
 
@@ -253,6 +267,21 @@ func detectCodec(data []byte, opts *loadOptions) (Codec, string) {
 
 	if c, ok := opts.codecReg.Get(".yaml"); ok {
 		return c, ".yaml"
+	}
+	if c, ok := opts.codecReg.Get(".yml"); ok {
+		return c, ".yml"
+	}
+
+	for _, ext := range opts.codecReg.Extensions() {
+		if ext == ".json" || ext == ".toml" || ext == ".yaml" || ext == ".yml" {
+			continue
+		}
+		if c, ok := opts.codecReg.Get(ext); ok {
+			var dummy any
+			if err := c.Decode(data, &dummy); err == nil {
+				return c, ext
+			}
+		}
 	}
 
 	return nil, ""
@@ -332,12 +361,25 @@ func prepareRegistry(options *loadOptions) error {
 	}
 
 	if options.formatsSet {
+		allExts := options.codecReg.Extensions()
 		resolvedExts, err := applyFormats(options.formats, options.codecReg)
 		if err != nil {
 			return err
 		}
 
 		options.codecReg.Restrict(resolvedExts...)
+
+		options.excludedExts = make(map[string]bool)
+		for _, std := range []string{".toml", ".yaml", ".yml", ".json"} {
+			if !slices.Contains(resolvedExts, std) {
+				options.excludedExts[std] = true
+			}
+		}
+		for _, e := range allExts {
+			if !slices.Contains(resolvedExts, e) {
+				options.excludedExts[e] = true
+			}
+		}
 	}
 
 	return nil
@@ -380,4 +422,61 @@ func recordLayerOrigins(data []byte, layer cascade.Layer, ext string, meta *Meta
 			RawValue: record.RawValue,
 		})
 	})
+}
+
+func registerSecretsFromTarget(target any, meta *Metadata) {
+	if target == nil || meta == nil {
+		return
+	}
+	val := reflect.ValueOf(target)
+	if val.Kind() == reflect.Pointer {
+		if val.IsNil() {
+			return
+		}
+		val = val.Elem()
+	}
+	if val.Kind() != reflect.Struct {
+		return
+	}
+	walkRegisterSecrets(val.Type(), "", false, meta, make(map[reflect.Type]bool))
+}
+
+func walkRegisterSecrets(typ reflect.Type, prefix string, inheritedSecret bool, meta *Metadata, visited map[reflect.Type]bool) {
+	if typ == nil || visited[typ] {
+		return
+	}
+	visited[typ] = true
+	defer delete(visited, typ)
+
+	for i := range typ.NumField() {
+		f := typ.Field(i)
+		if !f.IsExported() && !f.Anonymous {
+			continue
+		}
+		key := defaulter.FieldKey(f)
+		if key == "-" {
+			continue
+		}
+		fieldSecret := inheritedSecret || defaulter.IsSecret(f)
+		fullKey := key
+		if f.Anonymous {
+			fullKey = prefix
+		} else if prefix != "" {
+			fullKey = prefix + "." + key
+		}
+
+		ft := f.Type
+		if ft.Kind() == reflect.Pointer {
+			ft = ft.Elem()
+		}
+
+		if defaulter.IsNestedStructType(ft) {
+			walkRegisterSecrets(ft, fullKey, fieldSecret, meta, visited)
+			continue
+		}
+
+		if fieldSecret && fullKey != "" {
+			meta.RecordSecret(fullKey)
+		}
+	}
 }

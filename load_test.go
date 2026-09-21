@@ -1116,3 +1116,73 @@ func TestWithFormatsWhitespaceAndCase(t *testing.T) {
 		t.Fatalf("ActiveFiles = %v, want 1 file", meta.ActiveFiles())
 	}
 }
+
+func TestTableFirstTOMLStdinDetection(t *testing.T) {
+	t.Parallel()
+
+	type serverCfg struct {
+		Server struct {
+			Port int `strata:"port"`
+		} `strata:"server"`
+	}
+
+	buf := strings.NewReader("[server]\nport = 9000\n")
+	cfg, _, err := strata.Load[serverCfg](
+		strata.WithExplicitPath("-"),
+		strata.WithStdin(buf),
+	)
+	if err != nil {
+		t.Fatalf("Load stdin error: %v", err)
+	}
+
+	if cfg.Server.Port != 9000 {
+		t.Errorf("Server.Port = %d, want 9000", cfg.Server.Port)
+	}
+}
+
+func TestYMLOnlyStdinDetection(t *testing.T) {
+	t.Parallel()
+
+	type simpleCfg struct {
+		Port int `strata:"port"`
+	}
+
+	buf := strings.NewReader("port: 9000\n")
+	cfg, _, err := strata.Load[simpleCfg](
+		strata.WithExplicitPath("-"),
+		strata.WithStdin(buf),
+		strata.WithFormats(".yml"),
+	)
+	if err != nil {
+		t.Fatalf("Load .yml-only stdin error: %v", err)
+	}
+
+	if cfg.Port != 9000 {
+		t.Errorf("Port = %d, want 9000", cfg.Port)
+	}
+}
+
+func TestWithFormatsYMLPathExcludedWhenYAMLOnly(t *testing.T) {
+	t.Parallel()
+
+	tmpDir := t.TempDir()
+	ymlPath := filepath.Join(tmpDir, "config.yml")
+	if err := os.WriteFile(ymlPath, []byte("port: 9000\n"), 0600); err != nil {
+		t.Fatal(err)
+	}
+
+	type simpleCfg struct {
+		Port int `strata:"port"`
+	}
+
+	_, _, err := strata.Load[simpleCfg](
+		strata.WithExplicitPath(ymlPath),
+		strata.WithFormats(".yaml"),
+	)
+	if err == nil {
+		t.Fatal("expected error for explicit .yml path with only .yaml enabled, got nil")
+	}
+	if !errors.Is(err, strata.ErrNoCodec) {
+		t.Errorf("expected ErrNoCodec, got %v", err)
+	}
+}

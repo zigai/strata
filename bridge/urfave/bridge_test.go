@@ -263,3 +263,26 @@ func TestCustomSliceTypesUrfave(t *testing.T) {
 		t.Errorf("cfg.Strings = %v, want [x y]", cfg.Strings)
 	}
 }
+
+func TestApplyWithCustomSliceTypes(t *testing.T) {
+	t.Parallel()
+
+	cfg := customSliceUrfaveConfig{
+		Ints:    []myUrfaveInt{1, 2},
+		Strings: []myUrfaveString{"a", "b"},
+	}
+
+	flags, err := strataurfave.GenerateFlags(&cfg)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	cmd := &cli.Command{
+		Name:  "app",
+		Flags: flags,
+	}
+
+	if err := strataurfave.Apply(cmd, cfg); err != nil {
+		t.Fatalf("Apply failed for custom slice types: %v", err)
+	}
+}
