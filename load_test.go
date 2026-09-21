@@ -1127,6 +1127,7 @@ func TestTableFirstTOMLStdinDetection(t *testing.T) {
 	}
 
 	buf := strings.NewReader("[server]\nport = 9000\n")
+
 	cfg, _, err := strata.Load[serverCfg](
 		strata.WithExplicitPath("-"),
 		strata.WithStdin(buf),
@@ -1148,6 +1149,7 @@ func TestYMLOnlyStdinDetection(t *testing.T) {
 	}
 
 	buf := strings.NewReader("port: 9000\n")
+
 	cfg, _, err := strata.Load[simpleCfg](
 		strata.WithExplicitPath("-"),
 		strata.WithStdin(buf),
@@ -1166,8 +1168,9 @@ func TestWithFormatsYMLPathExcludedWhenYAMLOnly(t *testing.T) {
 	t.Parallel()
 
 	tmpDir := t.TempDir()
+
 	ymlPath := filepath.Join(tmpDir, "config.yml")
-	if err := os.WriteFile(ymlPath, []byte("port: 9000\n"), 0600); err != nil {
+	if err := os.WriteFile(ymlPath, []byte("port: 9000\n"), 0o600); err != nil {
 		t.Fatal(err)
 	}
 
@@ -1182,6 +1185,7 @@ func TestWithFormatsYMLPathExcludedWhenYAMLOnly(t *testing.T) {
 	if err == nil {
 		t.Fatal("expected error for explicit .yml path with only .yaml enabled, got nil")
 	}
+
 	if !errors.Is(err, strata.ErrNoCodec) {
 		t.Errorf("expected ErrNoCodec, got %v", err)
 	}

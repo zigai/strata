@@ -356,5 +356,6 @@ func defaultLoadOptions() *loadOptions {
 		formats:       nil,
 		formatsSet:    false,
 		formatAliases: nil,
+		excludedExts:  nil,
 	}
 }
