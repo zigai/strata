@@ -161,6 +161,7 @@ func TestEmbeddedDefaulterCalledOnce(t *testing.T) {
 	if err := defaulter.Apply(&cfg, nil); err != nil {
 		t.Fatal(err)
 	}
+
 	if cfg.Calls != 1 {
 		t.Errorf("SetDefaults called %d times on the same embedded object, want 1", cfg.Calls)
 	}
