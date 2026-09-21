@@ -175,16 +175,20 @@ func TestNestedSecretFlagPlan(t *testing.T) {
 	type creds struct {
 		Token string `flag:"token"`
 	}
+
 	type cfg struct {
 		Auth creds `flag:"auth" strata:"auth,secret"`
 	}
+
 	targets, err := plan.Build(reflect.TypeFor[cfg](), plan.Registration)
 	if err != nil {
 		t.Fatal(err)
 	}
+
 	if len(targets) != 1 {
 		t.Fatalf("targets=%#v", targets)
 	}
+
 	if !targets[0].Secret {
 		t.Errorf("parent secret tag lost: --%s has Secret=false", targets[0].Name)
 	}
@@ -194,30 +198,38 @@ type customText struct{ N int }
 
 func (v *customText) MarshalText() ([]byte, error) { return []byte(fmt.Sprintf("n=%d", v.N)), nil }
 func (v *customText) UnmarshalText(s []byte) error {
-	_, err := fmt.Sscanf(string(s), "n=%d", &v.N)
-	return err
+	if _, err := fmt.Sscanf(string(s), "n=%d", &v.N); err != nil {
+		return fmt.Errorf("sscanf: %w", err)
+	}
+
+	return nil
 }
 
 func TestPointerMarshalerApplyByValue(t *testing.T) {
 	cfg := struct {
 		Value customText `flag:"value"`
 	}{Value: customText{N: 42}}
+
 	root, ok := plan.OptionalStructTarget(cfg)
 	if !ok {
 		t.Fatal("target rejected")
 	}
+
 	targets, err := plan.Build(root.Type(), plan.Apply)
 	if err != nil {
 		t.Fatal(err)
 	}
+
 	source, ok := plan.ResolveField(root, targets[0].IndexPath)
 	if !ok {
 		t.Fatal("not resolved")
 	}
+
 	text, err := plan.EncodeScalar(source, targets[0].Kind)
 	if err != nil {
 		t.Fatal(err)
 	}
+
 	if text != "n=42" {
 		t.Errorf("by-value Apply renders %q; MarshalText requires %q", text, "n=42")
 	}
