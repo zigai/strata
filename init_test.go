@@ -120,14 +120,17 @@ type concurrentInitConfig struct {
 	Port int `json:"port"`
 }
 
-var concurrentInitEntered chan struct{}
-var concurrentInitContinue chan struct{}
+var (
+	concurrentInitEntered  chan struct{}
+	concurrentInitContinue chan struct{}
+)
 
 func (c *concurrentInitConfig) SetDefaults() {
 	if concurrentInitEntered != nil {
 		close(concurrentInitEntered)
 		<-concurrentInitContinue
 	}
+
 	c.Port = 8080
 }
 
@@ -139,11 +142,14 @@ func TestInitNoOverwriteRace(t *testing.T) {
 
 	go func() {
 		<-concurrentInitEntered
-		writerResult <- os.WriteFile(path, []byte(`{"port":9000,"owner":"other process"}`), 0600)
+
+		writerResult <- os.WriteFile(path, []byte(`{"port":9000,"owner":"other process"}`), 0o600)
+
 		close(concurrentInitContinue)
 	}()
 
 	err := strata.Init[concurrentInitConfig](path)
+
 	if e := <-writerResult; e != nil {
 		t.Fatal(e)
 	}
