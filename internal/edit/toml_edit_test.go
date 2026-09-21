@@ -312,3 +312,53 @@ func TestUpdateTOMLSliceOfMaps(t *testing.T) {
 		t.Errorf("leaked dummy _k identifier in output:\n%s", result)
 	}
 }
+
+func TestUpdateTOMLMultilineEdits(t *testing.T) {
+	t.Parallel()
+
+	cases := []struct{ name, input, key, literal, want string }{
+		{"unrelated_string", "banner = \"\"\"\nport = 123\n\"\"\"\nport = 8080\n", "port", "9000", "banner = \"\"\"\nport = 123\n\"\"\"\nport = 9000\n"},
+		{"multiline_array", "ports = [\n  80,\n  443,\n]\nkeep = true\n", "ports", "[ 8080 ]", "ports = [ 8080 ]\nkeep = true\n"},
+		{"single_line_triple_with_comment", "banner = \"\"\"hello\"\"\" # keep comment\nport = 8080\n", "banner", "\"new\"", "banner = \"new\" # keep comment\nport = 8080\n"},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			got, err := edit.UpdateFormatted([]byte(tc.input), tc.key, nil, tc.literal)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if string(got) != tc.want {
+				t.Errorf("incorrect edit:\n%s\nwant:\n%s", got, tc.want)
+			}
+		})
+	}
+}
+
+func TestUpdateTOMLEmptyKey(t *testing.T) {
+	t.Parallel()
+
+	var panicked any
+	var err error
+	func() {
+		defer func() { panicked = recover() }()
+		_, err = edit.UpdateTOML([]byte("port = 8080\n"), "", 1)
+	}()
+	if panicked != nil {
+		t.Errorf("empty key panics instead of returning an error: %v", panicked)
+	} else if err == nil {
+		t.Error("empty key accepted")
+	}
+}
+
+func TestUpdateTOMLCaseSensitiveExactMatchPreference(t *testing.T) {
+	t.Parallel()
+
+	in := "Port = 1\nport = 2\n"
+	got, err := edit.UpdateTOML([]byte(in), "port", 3)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(string(got), "Port = 1\nport = 3") {
+		t.Errorf("wrong case-sensitive key updated:\n%s", got)
+	}
+}
