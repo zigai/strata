@@ -327,6 +327,7 @@ func TestUpdateTOMLMultilineEdits(t *testing.T) {
 			if err != nil {
 				t.Fatal(err)
 			}
+
 			if string(got) != tc.want {
 				t.Errorf("incorrect edit:\n%s\nwant:\n%s", got, tc.want)
 			}
@@ -337,12 +338,17 @@ func TestUpdateTOMLMultilineEdits(t *testing.T) {
 func TestUpdateTOMLEmptyKey(t *testing.T) {
 	t.Parallel()
 
-	var panicked any
-	var err error
+	var (
+		panicked any
+		err      error
+	)
+
 	func() {
 		defer func() { panicked = recover() }()
+
 		_, err = edit.UpdateTOML([]byte("port = 8080\n"), "", 1)
 	}()
+
 	if panicked != nil {
 		t.Errorf("empty key panics instead of returning an error: %v", panicked)
 	} else if err == nil {
@@ -354,10 +360,12 @@ func TestUpdateTOMLCaseSensitiveExactMatchPreference(t *testing.T) {
 	t.Parallel()
 
 	in := "Port = 1\nport = 2\n"
+
 	got, err := edit.UpdateTOML([]byte(in), "port", 3)
 	if err != nil {
 		t.Fatal(err)
 	}
+
 	if !strings.Contains(string(got), "Port = 1\nport = 3") {
 		t.Errorf("wrong case-sensitive key updated:\n%s", got)
 	}

@@ -2,6 +2,7 @@ package edit
 
 import (
 	"bytes"
+	"errors"
 	"fmt"
 	"reflect"
 	"slices"
@@ -9,6 +10,7 @@ import (
 	"strings"
 
 	"github.com/pelletier/go-toml/v2"
+
 	"github.com/zigai/strata/codec"
 )
 
@@ -25,6 +27,24 @@ import (
 //
 // A key and a table header are matched case-insensitively, and a header written
 // as [table."sub.key"] names the same table as [table.sub.key].
+var (
+	// ErrInvalidEmptyKeyPath is returned when a dotted key path is empty.
+	ErrInvalidEmptyKeyPath = errors.New("invalid empty key path")
+
+	// ErrInvalidEmptyPathSegment is returned when a dotted key path contains an empty segment.
+	ErrInvalidEmptyPathSegment = errors.New("invalid empty path segment")
+
+	// ErrAmbiguousKey is returned when a dotted key matches multiple keys in a TOML document.
+	ErrAmbiguousKey = errors.New("ambiguous key matches multiple keys in TOML document")
+)
+
+type candAssignment struct {
+	lineIdx      int
+	eqIdx        int
+	currentTable []string
+	fullKey      []string
+}
+
 func UpdateTOML(data []byte, dottedKey string, value any) ([]byte, error) {
 	formattedVal, err := formatTOMLValue(value)
 	if err != nil {
@@ -46,27 +66,62 @@ func UpdateFormatted(data []byte, dottedKey string, value any, formattedVal stri
 
 	targetParts := splitDottedKey(dottedKey)
 	if len(targetParts) == 0 {
-		return nil, fmt.Errorf("invalid empty key path")
+		return nil, ErrInvalidEmptyKeyPath
 	}
-	for _, p := range targetParts {
-		if p == "" {
-			return nil, fmt.Errorf("invalid empty path segment in %q", dottedKey)
+
+	if slices.Contains(targetParts, "") {
+		return nil, fmt.Errorf("%w in %q", ErrInvalidEmptyPathSegment, dottedKey)
+	}
+
+	candidates := collectAssignments(lines)
+
+	matchIdx, err := findMatchingCandidate(candidates, targetParts, dottedKey)
+	if err != nil {
+		return nil, err
+	}
+
+	var keyUpdated bool
+
+	if matchIdx != -1 {
+		cand := candidates[matchIdx]
+		lines = updateMatchingLine(lines, cand.lineIdx, cand.eqIdx, formattedVal)
+		keyUpdated = true
+	} else {
+		lines, keyUpdated, err = handleInlineTableUpdate(lines, candidates, targetParts, value)
+		if err != nil {
+			return nil, err
 		}
 	}
 
-	var currentTable []string
-	var inMultilineString bool
-	var multilineQuote string
-
-	type candAssignment struct {
-		lineIdx      int
-		eqIdx        int
-		currentTable []string
-		fullKey      []string
+	var result []byte
+	if keyUpdated {
+		result = joinLines(lines, crlf)
+	} else {
+		appended := appendTOMLKey(lines, targetParts, formattedVal)
+		if crlf {
+			result = bytes.ReplaceAll(appended, []byte("\n"), []byte("\r\n"))
+		} else {
+			result = appended
+		}
 	}
-	var candidates []candAssignment
 
-	for i := range len(lines) {
+	var dummy any
+	if err := toml.Unmarshal(result, &dummy); err != nil {
+		return nil, fmt.Errorf("%w: %w", codec.ErrMalformed, err)
+	}
+
+	return result, nil
+}
+
+func collectAssignments(lines []string) []candAssignment {
+	var (
+		currentTable      []string
+		inMultilineString bool
+		multilineQuote    string
+		candidates        []candAssignment
+	)
+
+	for i := range lines {
 		line := lines[i]
 		trimmed := strings.TrimSpace(line)
 
@@ -75,6 +130,7 @@ func UpdateFormatted(data []byte, dottedKey string, value any, formattedVal stri
 				inMultilineString = false
 				multilineQuote = ""
 			}
+
 			continue
 		}
 
@@ -112,74 +168,60 @@ func UpdateFormatted(data []byte, dottedKey string, value any, formattedVal stri
 		})
 	}
 
-	keyUpdated := false
+	return candidates
+}
 
-	// 1. Look for exact case-sensitive match
-	matchIdx := -1
+func findMatchingCandidate(candidates []candAssignment, targetParts []string, dottedKey string) (int, error) {
 	for idx, cand := range candidates {
 		if partsEqual(cand.fullKey, targetParts) {
+			return idx, nil
+		}
+	}
+
+	matchIdx := -1
+	foldMatches := 0
+
+	for idx, cand := range candidates {
+		if partsEqualFold(cand.fullKey, targetParts) {
+			foldMatches++
 			matchIdx = idx
-			break
 		}
 	}
 
-	// 2. Look for case-insensitive match if no exact match
-	if matchIdx == -1 {
-		foldMatches := 0
-		for idx, cand := range candidates {
-			if partsEqualFold(cand.fullKey, targetParts) {
-				foldMatches++
-				matchIdx = idx
+	if foldMatches > 1 {
+		return -1, fmt.Errorf("%w: %q", ErrAmbiguousKey, dottedKey)
+	}
+
+	return matchIdx, nil
+}
+
+func handleInlineTableUpdate(lines []string, candidates []candAssignment, targetParts []string, value any) ([]string, bool, error) {
+	for _, cand := range candidates {
+		if len(cand.fullKey) >= len(targetParts) || !partsEqualFold(cand.fullKey, targetParts[:len(cand.fullKey)]) {
+			continue
+		}
+
+		line := lines[cand.lineIdx]
+		afterEq := strings.TrimSpace(line[cand.eqIdx+1:])
+		valWithoutComment := stripInlineComment(afterEq)
+
+		if strings.HasPrefix(valWithoutComment, "{") && strings.HasSuffix(valWithoutComment, "}") {
+			remainingParts := targetParts[len(cand.fullKey):]
+
+			updatedInline, err := updateInlineTable(valWithoutComment, remainingParts, value)
+			if err != nil {
+				return nil, false, err
 			}
+
+			lines[cand.lineIdx] = replaceLineValue(line, cand.eqIdx, updatedInline)
+
+			return lines, true, nil
 		}
-		if foldMatches > 1 {
-			return nil, fmt.Errorf("ambiguous key %q matches multiple keys in TOML document", dottedKey)
-		}
+
+		return nil, false, fmt.Errorf("%w: key %q is not a table", ErrNonObjectNavigation, strings.Join(cand.fullKey, "."))
 	}
 
-	if matchIdx != -1 {
-		cand := candidates[matchIdx]
-		lines = updateMatchingLine(lines, cand.lineIdx, cand.eqIdx, formattedVal)
-		keyUpdated = true
-	} else {
-		// 3. Check for inline table navigation
-		for _, cand := range candidates {
-			if len(cand.fullKey) < len(targetParts) && partsEqualFold(cand.fullKey, targetParts[:len(cand.fullKey)]) {
-				line := lines[cand.lineIdx]
-				afterEq := strings.TrimSpace(line[cand.eqIdx+1:])
-				valWithoutComment := stripInlineComment(afterEq)
-				if strings.HasPrefix(valWithoutComment, "{") && strings.HasSuffix(valWithoutComment, "}") {
-					remainingParts := targetParts[len(cand.fullKey):]
-					updatedInline, err := updateInlineTable(valWithoutComment, remainingParts, value)
-					if err != nil {
-						return nil, err
-					}
-					lines[cand.lineIdx] = replaceLineValue(line, cand.eqIdx, updatedInline)
-					keyUpdated = true
-					break
-				}
-				return nil, fmt.Errorf("%w: key %q is not a table", ErrNonObjectNavigation, strings.Join(cand.fullKey, "."))
-			}
-		}
-	}
-
-	var result []byte
-	if keyUpdated {
-		result = joinLines(lines, crlf)
-	} else {
-		appended := appendTOMLKey(lines, targetParts, formattedVal)
-		if crlf {
-			result = bytes.ReplaceAll(appended, []byte("\n"), []byte("\r\n"))
-		} else {
-			result = appended
-		}
-	}
-
-	var dummy any
-	if err := toml.Unmarshal(result, &dummy); err != nil {
-		return nil, fmt.Errorf("%w: %w", codec.ErrMalformed, err)
-	}
-	return result, nil
+	return lines, false, nil
 }
 
 func joinLines(lines []string, crlf bool) []byte {
@@ -279,48 +321,6 @@ func splitDottedKey(s string) []string {
 	return parts
 }
 
-func updateLineAssignment(
-	lines []string,
-	lineIdx, eqIdx int,
-	currentTable, targetParts []string,
-	formattedVal string,
-	value any,
-) ([]string, bool, error) {
-	line := lines[lineIdx]
-	rawKey := strings.TrimSpace(line[:eqIdx])
-	keyParts := splitDottedKey(rawKey)
-	lineFullKey := make([]string, 0, len(currentTable)+len(keyParts))
-	lineFullKey = append(lineFullKey, currentTable...)
-	lineFullKey = append(lineFullKey, keyParts...)
-
-	if partsEqualFold(lineFullKey, targetParts) {
-		lines = updateMatchingLine(lines, lineIdx, eqIdx, formattedVal)
-		return lines, true, nil
-	}
-
-	if len(lineFullKey) < len(targetParts) && partsEqualFold(lineFullKey, targetParts[:len(lineFullKey)]) {
-		afterEq := strings.TrimSpace(line[eqIdx+1:])
-		valWithoutComment := stripInlineComment(afterEq)
-
-		if strings.HasPrefix(valWithoutComment, "{") && strings.HasSuffix(valWithoutComment, "}") {
-			remainingParts := targetParts[len(lineFullKey):]
-
-			updatedInline, err := updateInlineTable(valWithoutComment, remainingParts, value)
-			if err != nil {
-				return nil, false, err
-			}
-
-			lines[lineIdx] = replaceLineValue(line, eqIdx, updatedInline)
-
-			return lines, true, nil
-		}
-
-		return nil, false, fmt.Errorf("%w: key %q is not a table", ErrNonObjectNavigation, strings.Join(lineFullKey, "."))
-	}
-
-	return lines, false, nil
-}
-
 func partsEqualFold(a, b []string) bool {
 	if len(a) != len(b) {
 		return false
@@ -348,25 +348,30 @@ func partsEqual(a, b []string) bool {
 	if len(a) != len(b) {
 		return false
 	}
+
 	for i := range a {
 		if a[i] != b[i] {
 			return false
 		}
 	}
+
 	return true
 }
 
 func countTripleQuotes(s, quote string) int {
 	count := 0
+
 	idx := 0
 	for {
 		p := strings.Index(s[idx:], quote)
 		if p == -1 {
 			break
 		}
+
 		count++
 		idx += p + len(quote)
 	}
+
 	return count
 }
 
@@ -376,11 +381,13 @@ func checkOpeningMultilineString(s string) (bool, string) {
 			return true, `"""`
 		}
 	}
+
 	if strings.Contains(s, `'''`) {
 		if countTripleQuotes(s, `'''`)%2 != 0 {
 			return true, `'''`
 		}
 	}
+
 	return false, ""
 }
 
@@ -389,9 +396,11 @@ func isOpeningMultilineString(val string) bool {
 	if strings.HasPrefix(clean, `"""`) {
 		return countTripleQuotes(clean, `"""`)%2 != 0
 	}
+
 	if strings.HasPrefix(clean, `'''`) {
 		return countTripleQuotes(clean, `'''`)%2 != 0
 	}
+
 	return false
 }
 
@@ -400,55 +409,77 @@ func isOpeningMultilineArray(val string) bool {
 	return bracketDelta(clean) > 0
 }
 
+func handleQuoteChar(r rune, inQuote *bool, quoteChar *rune, escaped *bool) bool {
+	if *escaped {
+		*escaped = false
+		return true
+	}
+
+	if r == '\\' && *inQuote && *quoteChar == '"' {
+		*escaped = true
+		return true
+	}
+
+	if *inQuote {
+		if r == *quoteChar {
+			*inQuote = false
+		}
+
+		return true
+	}
+
+	if r == '"' || r == '\'' {
+		*inQuote = true
+		*quoteChar = r
+
+		return true
+	}
+
+	return false
+}
+
 func bracketDelta(s string) int {
-	delta := 0
-	inQuote := false
-	var quoteChar rune
-	escaped := false
-	for i := range len(s) {
-		r := rune(s[i])
-		if escaped {
-			escaped = false
+	var (
+		delta     int
+		inQuote   bool
+		quoteChar rune
+		escaped   bool
+	)
+
+	for _, r := range s {
+		if handleQuoteChar(r, &inQuote, &quoteChar, &escaped) {
 			continue
 		}
-		if r == '\\' && inQuote && quoteChar == '"' {
-			escaped = true
-			continue
-		}
-		if inQuote {
-			if r == quoteChar {
-				inQuote = false
-			}
-			continue
-		}
-		if r == '"' || r == '\'' {
-			inQuote = true
-			quoteChar = r
-			continue
-		}
+
 		if r == '#' {
 			break
 		}
-		if r == '[' {
+
+		switch r {
+		case '[':
 			delta++
-		} else if r == ']' {
+		case ']':
 			delta--
 		}
 	}
+
 	return delta
 }
 
 func removeMultilineArrayTail(lines []string, startIdx int, cleanVal string) []string {
 	depth := bracketDelta(cleanVal)
+
 	endIdx := startIdx
 	for endIdx < len(lines) {
 		line := lines[endIdx]
 		depth += bracketDelta(line)
 		endIdx++
+
 		if depth <= 0 {
 			break
 		}
 	}
+
 	return append(lines[:startIdx], lines[endIdx:]...)
 }
 
@@ -476,8 +507,10 @@ func removeMultilineTail(lines []string, startIdx int) []string {
 			endIdx++
 			break
 		}
+
 		endIdx++
 	}
+
 	return append(lines[:startIdx], lines[endIdx:]...)
 }
 
