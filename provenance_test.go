@@ -263,3 +263,70 @@ func TestSecretTagMasking(t *testing.T) {
 		t.Errorf("RawValue = %q, want [REDACTED]", orig.RawValue)
 	}
 }
+
+type secretFileConfig struct {
+	Token string `strata:"token,secret" json:"token"`
+}
+
+func (s *secretFileConfig) SetDefaults() {
+	s.Token = "default-secret"
+}
+
+func TestFileSecretRedaction(t *testing.T) {
+	t.Parallel()
+
+	tmpDir := t.TempDir()
+	filePath := filepath.Join(tmpDir, "config.json")
+	if err := os.WriteFile(filePath, []byte(`{"token":"file-secret"}`), 0600); err != nil {
+		t.Fatal(err)
+	}
+
+	_, meta, err := strata.Load[secretFileConfig](strata.WithExplicitPath(filePath))
+	if err != nil {
+		t.Fatalf("Load error: %v", err)
+	}
+
+	o, ok := meta.Where("token")
+	if !ok {
+		t.Fatal("missing origin")
+	}
+	if o.RawValue != "[REDACTED]" {
+		t.Errorf("secret file origin leaked %q", o.RawValue)
+	}
+
+	msg := meta.NewConfigError("token", errors.New("invalid token")).Error()
+	if strings.Contains(msg, "file-secret") {
+		t.Errorf("validation error leaked file secret:\n%s", msg)
+	}
+}
+
+type customKeyFileConfig struct {
+	APIKey string `strata:"apiKey" json:"apiKey"`
+}
+
+func (c *customKeyFileConfig) SetDefaults() {
+	c.APIKey = "default"
+}
+
+func TestCustomKeyFileProvenance(t *testing.T) {
+	t.Parallel()
+
+	tmpDir := t.TempDir()
+	filePath := filepath.Join(tmpDir, "config.json")
+	if err := os.WriteFile(filePath, []byte(`{"apiKey":"file-value"}`), 0600); err != nil {
+		t.Fatal(err)
+	}
+
+	_, meta, err := strata.Load[customKeyFileConfig](strata.WithExplicitPath(filePath))
+	if err != nil {
+		t.Fatalf("Load error: %v", err)
+	}
+
+	o, ok := meta.Where("apiKey")
+	if !ok {
+		t.Fatal("missing origin")
+	}
+	if o.Source != strata.SourceProject || o.RawValue != "file-value" {
+		t.Errorf("file override provenance stays stale: %+v", o)
+	}
+}

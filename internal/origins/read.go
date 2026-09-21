@@ -4,8 +4,7 @@ import "strings"
 
 // Record is one configuration key found in a document.
 type Record struct {
-	// Key is the dotted key, with each segment converted to snake_case so that
-	// it matches the key every other tier records.
+	// Key is the dotted key as written in the document.
 	Key string
 
 	// Line is the line that defined the key.

@@ -2,8 +2,6 @@ package origins
 
 import (
 	"gopkg.in/yaml.v3"
-
-	"github.com/zigai/strata/internal/defaulter"
 )
 
 // readYAML reports whether data parsed as a YAML mapping and, if so, emits one
@@ -38,7 +36,7 @@ func walkYAMLNode(node *yaml.Node, prefix string, emit func(Record)) {
 		keyNode := node.Content[i]
 		valueNode := node.Content[i+1]
 
-		fullKey := joinKey(prefix, defaulter.ToSnakeCase(keyNode.Value))
+		fullKey := joinKey(prefix, keyNode.Value)
 
 		if valueNode.Kind == yaml.MappingNode {
 			walkYAMLNode(valueNode, fullKey, emit)

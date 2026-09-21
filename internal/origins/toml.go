@@ -4,8 +4,6 @@ import (
 	"fmt"
 
 	"github.com/pelletier/go-toml/v2"
-
-	"github.com/zigai/strata/internal/defaulter"
 )
 
 // readTOML reports whether data parsed as a non-empty TOML document and, if so,
@@ -31,7 +29,7 @@ func readTOML(data []byte, emit func(Record)) bool {
 // mappings and joining the segments with ".".
 func walkMap(document map[string]any, prefix string, emit func(key string, value any)) {
 	for key, value := range document {
-		fullKey := joinKey(prefix, defaulter.ToSnakeCase(key))
+		fullKey := joinKey(prefix, key)
 
 		if nested, ok := value.(map[string]any); ok {
 			walkMap(nested, fullKey, emit)

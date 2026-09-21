@@ -5,8 +5,9 @@ import (
 	"strings"
 	"sync"
 	"unicode"
-)
 
+	"github.com/zigai/strata/internal/defaulter"
+)
 // Metadata records which files were merged, and where each resolved key came
 // from.
 //
@@ -18,6 +19,8 @@ import (
 // Metadata as an empty one without a nil check.
 type Metadata struct {
 	origins     map[string]Origin
+	secrets     map[string]bool
+	canonical   map[string]string
 	activeFiles []string
 	mu          sync.RWMutex
 }
@@ -27,6 +30,8 @@ type Metadata struct {
 func NewMetadata() *Metadata {
 	return &Metadata{
 		origins:     make(map[string]Origin),
+		secrets:     make(map[string]bool),
+		canonical:   make(map[string]string),
 		activeFiles: make([]string, 0),
 		mu:          sync.RWMutex{},
 	}
@@ -46,9 +51,18 @@ func (m *Metadata) Where(dottedKey string) (Origin, bool) {
 	defer m.mu.RUnlock()
 
 	normalized := normalizeKey(dottedKey)
+	if canon, ok := m.canonical[normalized]; ok {
+		normalized = normalizeKey(canon)
+	} else if canon, ok := m.canonical[normalizeKey(toSnakeCaseKey(dottedKey))]; ok {
+		normalized = normalizeKey(canon)
+	} else if canon, ok := m.canonical[normalizeKey(strings.ReplaceAll(dottedKey, "_", ""))]; ok {
+		normalized = normalizeKey(canon)
+	}
 
 	origin, ok := m.origins[normalized]
-
+	if !ok {
+		origin, ok = m.origins[normalizeKey(dottedKey)]
+	}
 	return origin, ok
 }
 
@@ -68,8 +82,78 @@ func (m *Metadata) Record(origin Origin) {
 	if m.origins == nil {
 		m.origins = make(map[string]Origin)
 	}
+	if m.secrets == nil {
+		m.secrets = make(map[string]bool)
+	}
+	if m.canonical == nil {
+		m.canonical = make(map[string]string)
+	}
 
+	normKey := normalizeKey(origin.Key)
+	snakeKey := normalizeKey(toSnakeCaseKey(origin.Key))
+	cleanKey := normalizeKey(strings.ReplaceAll(origin.Key, "_", ""))
+
+	if origin.RawValue == "[REDACTED]" {
+		m.secrets[normKey] = true
+		m.secrets[snakeKey] = true
+		m.secrets[cleanKey] = true
+	}
+
+	if origin.Source == SourceDefault {
+		m.canonical[normKey] = origin.Key
+		m.canonical[snakeKey] = origin.Key
+		m.canonical[cleanKey] = origin.Key
+	}
+
+	if canon, ok := m.canonical[normKey]; ok {
+		origin.Key = canon
+	} else if canon, ok := m.canonical[snakeKey]; ok {
+		origin.Key = canon
+	} else if canon, ok := m.canonical[cleanKey]; ok {
+		origin.Key = canon
+	} else {
+		m.canonical[normKey] = origin.Key
+		m.canonical[snakeKey] = origin.Key
+		m.canonical[cleanKey] = origin.Key
+	}
+
+	if m.secrets[normalizeKey(origin.Key)] || m.secrets[snakeKey] || m.secrets[cleanKey] {
+		origin.RawValue = "[REDACTED]"
+		m.secrets[normalizeKey(origin.Key)] = true
+		m.secrets[snakeKey] = true
+		m.secrets[cleanKey] = true
+	}
 	m.origins[normalizeKey(origin.Key)] = origin
+}
+
+// RecordSecret marks a configuration key as secret, ensuring any origin recorded
+// for that key has its raw value redacted.
+func (m *Metadata) RecordSecret(key string) {
+	if m == nil {
+		return
+	}
+
+	m.mu.Lock()
+	defer m.mu.Unlock()
+
+	if m.secrets == nil {
+		m.secrets = make(map[string]bool)
+	}
+	if m.canonical == nil {
+		m.canonical = make(map[string]string)
+	}
+
+	normKey := normalizeKey(key)
+	snakeKey := normalizeKey(toSnakeCaseKey(key))
+	cleanKey := normalizeKey(strings.ReplaceAll(key, "_", ""))
+
+	m.secrets[normKey] = true
+	m.secrets[snakeKey] = true
+	m.secrets[cleanKey] = true
+
+	m.canonical[normKey] = key
+	m.canonical[snakeKey] = key
+	m.canonical[cleanKey] = key
 }
 
 // AddActiveFile records a configuration file that contributed to the result.
@@ -149,4 +233,12 @@ func normalizeKey(s string) string {
 	}
 
 	return strings.ToLower(trimmed)
+}
+
+func toSnakeCaseKey(s string) string {
+	parts := strings.Split(s, ".")
+	for i, part := range parts {
+		parts[i] = defaulter.ToSnakeCase(part)
+	}
+	return strings.Join(parts, ".")
 }

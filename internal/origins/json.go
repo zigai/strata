@@ -4,10 +4,7 @@ import (
 	"bytes"
 	"encoding/json/jsontext"
 	"encoding/json/v2"
-
-	"github.com/zigai/strata/internal/defaulter"
 )
-
 // readJSON emits one Record per leaf key of a JSON document.
 //
 // It reports nothing, unlike the TOML and YAML readers: JSON is the last resort
@@ -31,7 +28,7 @@ func readJSON(data []byte, emit func(Record)) {
 // nested objects.
 func walkJSONObject(document map[string]jsontext.Value, prefix string, emit func(Record)) {
 	for key, raw := range document {
-		fullKey := joinKey(prefix, defaulter.ToSnakeCase(key))
+		fullKey := joinKey(prefix, key)
 
 		if isJSONObject(raw) {
 			var nested map[string]jsontext.Value
