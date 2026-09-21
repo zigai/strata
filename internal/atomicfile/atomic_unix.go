@@ -19,7 +19,9 @@ func createFileNoOverwrite(from, to string) error {
 	if err := os.Link(from, to); err != nil {
 		return fmt.Errorf("link %s to %s: %w", from, to, err)
 	}
+
 	_ = os.Remove(from)
+
 	return nil
 }
 
