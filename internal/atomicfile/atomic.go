@@ -26,7 +26,17 @@ const (
 //
 // NB: an error that wraps the directory sync means the new content is in place
 // but may not survive a crash. The rename is already committed at that point.
-func WriteFileAtomic(targetPath string, data []byte, perm os.FileMode) (err error) {
+func WriteFileAtomic(targetPath string, data []byte, perm os.FileMode) error {
+	return writeFileAtomic(targetPath, data, perm, true)
+}
+
+// CreateFileAtomic writes data to targetPath atomically without overwriting an existing file.
+// If targetPath already exists, it returns an error matching os.ErrExist / fs.ErrExist.
+func CreateFileAtomic(targetPath string, data []byte, perm os.FileMode) error {
+	return writeFileAtomic(targetPath, data, perm, false)
+}
+
+func writeFileAtomic(targetPath string, data []byte, perm os.FileMode, overwrite bool) (err error) {
 	if perm == 0 {
 		perm = defaultFilePerm
 	}
@@ -69,8 +79,14 @@ func WriteFileAtomic(targetPath string, data []byte, perm os.FileMode) (err erro
 		return fmt.Errorf("close temporary file %s: %w", tmpPath, cErr)
 	}
 
-	if rErr := replaceFile(tmpPath, targetPath); rErr != nil {
-		return fmt.Errorf("replace file %s with %s: %w", targetPath, tmpPath, rErr)
+	if overwrite {
+		if rErr := replaceFile(tmpPath, targetPath); rErr != nil {
+			return fmt.Errorf("replace file %s with %s: %w", targetPath, tmpPath, rErr)
+		}
+	} else {
+		if cErr := createFileNoOverwrite(tmpPath, targetPath); cErr != nil {
+			return cErr
+		}
 	}
 
 	if sErr := syncDir(dir); sErr != nil {

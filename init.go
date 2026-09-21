@@ -94,8 +94,17 @@ func Init[T any](targetPath string, opts ...InitOption) error {
 		return err
 	}
 
-	if err := atomicfile.WriteFileAtomic(targetPath, data, 0o644); err != nil {
-		return fmt.Errorf("write template file %s: %w", targetPath, err)
+	if options.overwrite {
+		if err := atomicfile.WriteFileAtomic(targetPath, data, 0o644); err != nil {
+			return fmt.Errorf("write template file %s: %w", targetPath, err)
+		}
+	} else {
+		if err := atomicfile.CreateFileAtomic(targetPath, data, 0o644); err != nil {
+			if errors.Is(err, fs.ErrExist) || os.IsExist(err) {
+				return fmt.Errorf("%w: %s", ErrFileExists, targetPath)
+			}
+			return fmt.Errorf("write template file %s: %w", targetPath, err)
+		}
 	}
 
 	return nil

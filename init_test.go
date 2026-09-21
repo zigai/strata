@@ -115,3 +115,49 @@ func TestInitDirectives(t *testing.T) {
 		}
 	})
 }
+
+type concurrentInitConfig struct {
+	Port int `json:"port"`
+}
+
+var concurrentInitEntered chan struct{}
+var concurrentInitContinue chan struct{}
+
+func (c *concurrentInitConfig) SetDefaults() {
+	if concurrentInitEntered != nil {
+		close(concurrentInitEntered)
+		<-concurrentInitContinue
+	}
+	c.Port = 8080
+}
+
+func TestInitNoOverwriteRace(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "config.json")
+	concurrentInitEntered = make(chan struct{})
+	concurrentInitContinue = make(chan struct{})
+	writerResult := make(chan error, 1)
+
+	go func() {
+		<-concurrentInitEntered
+		writerResult <- os.WriteFile(path, []byte(`{"port":9000,"owner":"other process"}`), 0600)
+		close(concurrentInitContinue)
+	}()
+
+	err := strata.Init[concurrentInitConfig](path)
+	if e := <-writerResult; e != nil {
+		t.Fatal(e)
+	}
+
+	data, e := os.ReadFile(path)
+	if e != nil {
+		t.Fatal(e)
+	}
+
+	if !errors.Is(err, strata.ErrFileExists) {
+		t.Errorf("Init without overwrite returned %v, want ErrFileExists", err)
+	}
+
+	if !strings.Contains(string(data), "other process") {
+		t.Errorf("concurrent writer's content was overwritten: %s", data)
+	}
+}

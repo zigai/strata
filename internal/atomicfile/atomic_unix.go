@@ -15,6 +15,14 @@ func replaceFile(from, to string) error {
 	return nil
 }
 
+func createFileNoOverwrite(from, to string) error {
+	if err := os.Link(from, to); err != nil {
+		return fmt.Errorf("link %s to %s: %w", from, to, err)
+	}
+	_ = os.Remove(from)
+	return nil
+}
+
 func syncDir(dir string) (err error) {
 	d, oErr := os.Open(dir)
 	if oErr != nil {
