@@ -5,6 +5,8 @@ import (
 	"errors"
 	"fmt"
 	"reflect"
+	"runtime"
+	"slices"
 	"strconv"
 	"strings"
 	"time"
@@ -73,14 +75,13 @@ func Apply(target any, onDefault func(key, rawVal string)) error {
 	}
 
 	ensureEmbeddedPointers(elem)
-
-	if d, ok := target.(Defaulter); ok {
+	if d, ok := target.(Defaulter); ok && !isPromotedMethod(target, "SetDefaults") {
 		if err := callSetDefaults(d); err != nil {
 			return err
 		}
 	}
 
-	return recurseDefaults(elem, "", onDefault, false)
+	return recurseDefaults(elem, "", onDefault, false, nil, nil)
 }
 
 // IsNestedStruct reports whether v is a nested composite struct that the walk
@@ -374,8 +375,13 @@ func callSetDefaults(d Defaulter) (err error) {
 	return nil
 }
 
-func recurseDefaults(val reflect.Value, prefix string, onDefault func(key, rawVal string), inheritedSecret bool) error {
+func recurseDefaults(val reflect.Value, prefix string, onDefault func(key, rawVal string), inheritedSecret bool, activeTypes []reflect.Type, activePtrs []uintptr) error {
 	typ := val.Type()
+	if slices.Contains(activeTypes, typ) {
+		return nil
+	}
+	activeTypes = append(activeTypes, typ)
+	defer func() { activeTypes = activeTypes[:len(activeTypes)-1] }()
 
 	for i := range val.NumField() {
 		field := val.Field(i)
@@ -400,7 +406,7 @@ func recurseDefaults(val reflect.Value, prefix string, onDefault func(key, rawVa
 		}
 
 		if IsNestedStruct(field) {
-			if err := handleStructField(field, fullKey, onDefault, fieldSecret); err != nil {
+			if err := handleStructField(field, fullKey, onDefault, fieldSecret, activeTypes, activePtrs); err != nil {
 				return err
 			}
 
@@ -408,7 +414,7 @@ func recurseDefaults(val reflect.Value, prefix string, onDefault func(key, rawVa
 		}
 
 		if field.Kind() == reflect.Pointer && IsNestedStructType(field.Type().Elem()) {
-			if err := handlePointerStructField(field, fullKey, onDefault, fieldSecret); err != nil {
+			if err := handlePointerStructField(field, fullKey, onDefault, fieldSecret, activeTypes, activePtrs); err != nil {
 				return err
 			}
 
@@ -481,34 +487,46 @@ func formatLeafValue(field reflect.Value) string {
 	}
 }
 
-func handleStructField(field reflect.Value, fullKey string, onDefault func(key, rawVal string), inheritedSecret bool) error {
+func handleStructField(field reflect.Value, fullKey string, onDefault func(key, rawVal string), inheritedSecret bool, activeTypes []reflect.Type, activePtrs []uintptr) error {
 	if field.CanAddr() {
 		ensureEmbeddedPointers(field)
 
-		if d, ok := reflect.TypeAssert[Defaulter](field.Addr()); ok {
+		if d, ok := reflect.TypeAssert[Defaulter](field.Addr()); ok && !isPromotedMethod(field.Addr().Interface(), "SetDefaults") {
 			if err := callSetDefaults(d); err != nil {
 				return fmt.Errorf("%s: %w", fullKey, err)
 			}
 		}
 	}
 
-	return recurseDefaults(field, fullKey, onDefault, inheritedSecret)
+	return recurseDefaults(field, fullKey, onDefault, inheritedSecret, activeTypes, activePtrs)
 }
 
-func handlePointerStructField(field reflect.Value, fullKey string, onDefault func(key, rawVal string), inheritedSecret bool) error {
-	if field.IsNil() {
-		return initNilStructPointer(field, fullKey, onDefault, inheritedSecret)
+func handlePointerStructField(field reflect.Value, fullKey string, onDefault func(key, rawVal string), inheritedSecret bool, activeTypes []reflect.Type, activePtrs []uintptr) error {
+	elemType := field.Type().Elem()
+	if slices.Contains(activeTypes, elemType) {
+		return nil
 	}
+
+	if field.IsNil() {
+		return initNilStructPointer(field, fullKey, onDefault, inheritedSecret, activeTypes, activePtrs)
+	}
+
+	ptr := field.Pointer()
+	if slices.Contains(activePtrs, ptr) {
+		return nil
+	}
+	activePtrs = append(activePtrs, ptr)
+	defer func() { activePtrs = activePtrs[:len(activePtrs)-1] }()
 
 	ensureEmbeddedPointers(field.Elem())
 
-	if d, ok := reflect.TypeAssert[Defaulter](field); ok {
+	if d, ok := reflect.TypeAssert[Defaulter](field); ok && !isPromotedMethod(field.Interface(), "SetDefaults") {
 		if err := callSetDefaults(d); err != nil {
 			return fmt.Errorf("%s: %w", fullKey, err)
 		}
 	}
 
-	return recurseDefaults(field.Elem(), fullKey, onDefault, inheritedSecret)
+	return recurseDefaults(field.Elem(), fullKey, onDefault, inheritedSecret, activeTypes, activePtrs)
 }
 
 // initNilStructPointer allocates a nil struct pointer field when its type
@@ -516,9 +534,13 @@ func handlePointerStructField(field reflect.Value, fullKey string, onDefault fun
 //
 // The field is left nil when neither the pointer type nor its element type
 // implements [Defaulter].
-func initNilStructPointer(field reflect.Value, fullKey string, onDefault func(key, rawVal string), inheritedSecret bool) error {
+func initNilStructPointer(field reflect.Value, fullKey string, onDefault func(key, rawVal string), inheritedSecret bool, activeTypes []reflect.Type, activePtrs []uintptr) error {
 	elemType := field.Type().Elem()
 	ptrType := field.Type()
+
+	if slices.Contains(activeTypes, elemType) {
+		return nil
+	}
 
 	if !ptrType.Implements(reflect.TypeFor[Defaulter]()) &&
 		!elemType.Implements(reflect.TypeFor[Defaulter]()) {
@@ -528,7 +550,7 @@ func initNilStructPointer(field reflect.Value, fullKey string, onDefault func(ke
 	newVal := reflect.New(elemType)
 	ensureEmbeddedPointers(newVal.Elem())
 
-	if d, ok := reflect.TypeAssert[Defaulter](newVal); ok {
+	if d, ok := reflect.TypeAssert[Defaulter](newVal); ok && !isPromotedMethod(newVal.Interface(), "SetDefaults") {
 		if err := callSetDefaults(d); err != nil {
 			return fmt.Errorf("%s: %w", fullKey, err)
 		}
@@ -536,5 +558,27 @@ func initNilStructPointer(field reflect.Value, fullKey string, onDefault func(ke
 
 	field.Set(newVal)
 
-	return recurseDefaults(field.Elem(), fullKey, onDefault, inheritedSecret)
+	return recurseDefaults(field.Elem(), fullKey, onDefault, inheritedSecret, activeTypes, activePtrs)
+}
+
+func isPromotedMethod(target any, methodName string) bool {
+	val := reflect.ValueOf(target)
+	t := val.Type()
+	elem := t
+	if elem.Kind() == reflect.Pointer {
+		elem = elem.Elem()
+	}
+	if elem.Kind() == reflect.Struct && elem.Name() == "" {
+		return true
+	}
+	m, ok := t.MethodByName(methodName)
+	if !ok {
+		return false
+	}
+	fn := runtime.FuncForPC(m.Func.Pointer())
+	if fn == nil {
+		return false
+	}
+	file, _ := fn.FileLine(fn.Entry())
+	return strings.Contains(file, "<autogenerated>")
 }

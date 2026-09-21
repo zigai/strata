@@ -149,3 +149,19 @@ func TestNestedEmbeddedNilPointerDefaulter(t *testing.T) {
 		t.Errorf("Outer.Host = %v, want 127.0.0.1", cfg.Outer.Host)
 	}
 }
+
+type CountingEmbeddedDefaulter struct{ Calls int }
+
+func (e *CountingEmbeddedDefaulter) SetDefaults() { e.Calls++ }
+
+func TestEmbeddedDefaulterCalledOnce(t *testing.T) {
+	t.Parallel()
+
+	cfg := struct{ CountingEmbeddedDefaulter }{}
+	if err := defaulter.Apply(&cfg, nil); err != nil {
+		t.Fatal(err)
+	}
+	if cfg.Calls != 1 {
+		t.Errorf("SetDefaults called %d times on the same embedded object, want 1", cfg.Calls)
+	}
+}

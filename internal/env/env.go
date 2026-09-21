@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"os"
 	"reflect"
+	"slices"
 	"strconv"
 	"strings"
 	"time"
@@ -107,7 +108,7 @@ func Apply(target any, opts Options) error {
 		prefix += "_"
 	}
 
-	return bindEnvStruct(elem, prefix, "", lookup, opts.OnBind, opts.ParseDuration, false)
+	return bindEnvStruct(elem, prefix, "", lookup, opts.OnBind, opts.ParseDuration, false, nil, nil)
 }
 
 func bindEnvStruct(
@@ -118,8 +119,15 @@ func bindEnvStruct(
 	onBind func(key, envVar, rawVal string),
 	parseDur func(string) (time.Duration, error),
 	inheritedSecret bool,
+	activeTypes []reflect.Type,
+	activePtrs []uintptr,
 ) error {
 	typ := val.Type()
+	if slices.Contains(activeTypes, typ) {
+		return nil
+	}
+	activeTypes = append(activeTypes, typ)
+	defer func() { activeTypes = activeTypes[:len(activeTypes)-1] }()
 
 	for i := range val.NumField() {
 		field := val.Field(i)
@@ -143,7 +151,7 @@ func bindEnvStruct(
 			dottedKey = parentPath + "." + key
 		}
 
-		if err := bindField(field, sf, prefix, dottedKey, lookup, onBind, parseDur, fieldSecret); err != nil {
+		if err := bindField(field, sf, prefix, dottedKey, lookup, onBind, parseDur, fieldSecret, activeTypes, activePtrs); err != nil {
 			return err
 		}
 	}
@@ -160,13 +168,15 @@ func bindField(
 	onBind func(key, envVar, rawVal string),
 	parseDur func(string) (time.Duration, error),
 	inheritedSecret bool,
+	activeTypes []reflect.Type,
+	activePtrs []uintptr,
 ) error {
 	if defaulter.IsNestedStruct(field) {
-		return bindEnvStruct(field, prefix, dottedKey, lookup, onBind, parseDur, inheritedSecret)
+		return bindEnvStruct(field, prefix, dottedKey, lookup, onBind, parseDur, inheritedSecret, activeTypes, activePtrs)
 	}
 
 	if field.Kind() == reflect.Pointer && defaulter.IsNestedStructType(field.Type().Elem()) {
-		return bindPointerStructField(field, prefix, dottedKey, lookup, onBind, parseDur, inheritedSecret)
+		return bindPointerStructField(field, prefix, dottedKey, lookup, onBind, parseDur, inheritedSecret, activeTypes, activePtrs)
 	}
 
 	return bindLeafField(field, sf, prefix, dottedKey, lookup, onBind, parseDur, inheritedSecret)
@@ -180,12 +190,26 @@ func bindPointerStructField(
 	onBind func(key, envVar, rawVal string),
 	parseDur func(string) (time.Duration, error),
 	inheritedSecret bool,
+	activeTypes []reflect.Type,
+	activePtrs []uintptr,
 ) error {
-	if !field.IsNil() {
-		return bindEnvStruct(field.Elem(), prefix, dottedKey, lookup, onBind, parseDur, inheritedSecret)
+	elemType := field.Type().Elem()
+	if slices.Contains(activeTypes, elemType) {
+		return nil
 	}
 
-	tmp := reflect.New(field.Type().Elem())
+	if !field.IsNil() {
+		ptr := field.Pointer()
+		if slices.Contains(activePtrs, ptr) {
+			return nil
+		}
+		activePtrs = append(activePtrs, ptr)
+		defer func() { activePtrs = activePtrs[:len(activePtrs)-1] }()
+
+		return bindEnvStruct(field.Elem(), prefix, dottedKey, lookup, onBind, parseDur, inheritedSecret, activeTypes, activePtrs)
+	}
+
+	tmp := reflect.New(elemType)
 	boundCount := 0
 
 	countBind := func(k, envVar, rawVal string) {
@@ -196,7 +220,7 @@ func bindPointerStructField(
 		}
 	}
 
-	if err := bindEnvStruct(tmp.Elem(), prefix, dottedKey, lookup, countBind, parseDur, inheritedSecret); err != nil {
+	if err := bindEnvStruct(tmp.Elem(), prefix, dottedKey, lookup, countBind, parseDur, inheritedSecret, activeTypes, activePtrs); err != nil {
 		return err
 	}
 
@@ -206,6 +230,7 @@ func bindPointerStructField(
 
 	return nil
 }
+
 
 func bindLeafField(
 	field reflect.Value,
@@ -252,6 +277,10 @@ func lookupEnvValue(
 	dottedKey string,
 	lookup func(string) (string, bool),
 ) (string, string, bool) {
+	if isEnvSkipped(sf) {
+		return "", "", false
+	}
+
 	if envVar, val, ok := lookupEnvTag(sf, prefix, lookup); ok {
 		return envVar, val, true
 	}
@@ -283,6 +312,15 @@ func lookupEnvValue(
 	}
 
 	return "", "", false
+}
+
+func isEnvSkipped(sf reflect.StructField) bool {
+	tag := sf.Tag.Get("env")
+	if tag == "" {
+		return false
+	}
+	name, _, _ := strings.Cut(tag, ",")
+	return strings.TrimSpace(name) == "-"
 }
 
 func toUpperSnake(s string) string {
