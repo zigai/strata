@@ -8,6 +8,7 @@ import (
 
 	"github.com/zigai/strata/internal/defaulter"
 )
+
 // Metadata records which files were merged, and where each resolved key came
 // from.
 //
@@ -63,6 +64,7 @@ func (m *Metadata) Where(dottedKey string) (Origin, bool) {
 	if !ok {
 		origin, ok = m.origins[normalizeKey(dottedKey)]
 	}
+
 	return origin, ok
 }
 
@@ -79,24 +81,14 @@ func (m *Metadata) Record(origin Origin) {
 	m.mu.Lock()
 	defer m.mu.Unlock()
 
-	if m.origins == nil {
-		m.origins = make(map[string]Origin)
-	}
-	if m.secrets == nil {
-		m.secrets = make(map[string]bool)
-	}
-	if m.canonical == nil {
-		m.canonical = make(map[string]string)
-	}
+	m.initMapsLocked()
 
 	normKey := normalizeKey(origin.Key)
 	snakeKey := normalizeKey(toSnakeCaseKey(origin.Key))
 	cleanKey := normalizeKey(strings.ReplaceAll(origin.Key, "_", ""))
 
 	if origin.RawValue == "[REDACTED]" {
-		m.secrets[normKey] = true
-		m.secrets[snakeKey] = true
-		m.secrets[cleanKey] = true
+		m.markSecret(normKey, snakeKey, cleanKey)
 	}
 
 	if origin.Source == SourceDefault {
@@ -105,24 +97,13 @@ func (m *Metadata) Record(origin Origin) {
 		m.canonical[cleanKey] = origin.Key
 	}
 
-	if canon, ok := m.canonical[normKey]; ok {
-		origin.Key = canon
-	} else if canon, ok := m.canonical[snakeKey]; ok {
-		origin.Key = canon
-	} else if canon, ok := m.canonical[cleanKey]; ok {
-		origin.Key = canon
-	} else {
-		m.canonical[normKey] = origin.Key
-		m.canonical[snakeKey] = origin.Key
-		m.canonical[cleanKey] = origin.Key
-	}
+	origin.Key = m.resolveCanonical(normKey, snakeKey, cleanKey, origin.Key)
 
 	if m.secrets[normalizeKey(origin.Key)] || m.secrets[snakeKey] || m.secrets[cleanKey] {
 		origin.RawValue = "[REDACTED]"
-		m.secrets[normalizeKey(origin.Key)] = true
-		m.secrets[snakeKey] = true
-		m.secrets[cleanKey] = true
+		m.markSecret(normalizeKey(origin.Key), snakeKey, cleanKey)
 	}
+
 	m.origins[normalizeKey(origin.Key)] = origin
 }
 
@@ -136,20 +117,13 @@ func (m *Metadata) RecordSecret(key string) {
 	m.mu.Lock()
 	defer m.mu.Unlock()
 
-	if m.secrets == nil {
-		m.secrets = make(map[string]bool)
-	}
-	if m.canonical == nil {
-		m.canonical = make(map[string]string)
-	}
+	m.initMapsLocked()
 
 	normKey := normalizeKey(key)
 	snakeKey := normalizeKey(toSnakeCaseKey(key))
 	cleanKey := normalizeKey(strings.ReplaceAll(key, "_", ""))
 
-	m.secrets[normKey] = true
-	m.secrets[snakeKey] = true
-	m.secrets[cleanKey] = true
+	m.markSecret(normKey, snakeKey, cleanKey)
 
 	m.canonical[normKey] = key
 	m.canonical[snakeKey] = key
@@ -215,6 +189,46 @@ func (m *Metadata) NewConfigError(key string, err error) *ConfigError {
 	}
 }
 
+func (m *Metadata) initMapsLocked() {
+	if m.origins == nil {
+		m.origins = make(map[string]Origin)
+	}
+
+	if m.secrets == nil {
+		m.secrets = make(map[string]bool)
+	}
+
+	if m.canonical == nil {
+		m.canonical = make(map[string]string)
+	}
+}
+
+func (m *Metadata) markSecret(keys ...string) {
+	for _, k := range keys {
+		m.secrets[k] = true
+	}
+}
+
+func (m *Metadata) resolveCanonical(normKey, snakeKey, cleanKey, defaultKey string) string {
+	if canon, ok := m.canonical[normKey]; ok {
+		return canon
+	}
+
+	if canon, ok := m.canonical[snakeKey]; ok {
+		return canon
+	}
+
+	if canon, ok := m.canonical[cleanKey]; ok {
+		return canon
+	}
+
+	m.canonical[normKey] = defaultKey
+	m.canonical[snakeKey] = defaultKey
+	m.canonical[cleanKey] = defaultKey
+
+	return defaultKey
+}
+
 // normalizeKey trims surrounding whitespace and lowercases, so that two spellings
 // of one key resolve to the same entry.
 func normalizeKey(s string) string {
@@ -240,5 +254,6 @@ func toSnakeCaseKey(s string) string {
 	for i, part := range parts {
 		parts[i] = defaulter.ToSnakeCase(part)
 	}
+
 	return strings.Join(parts, ".")
 }

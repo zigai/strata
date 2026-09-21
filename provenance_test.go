@@ -276,8 +276,9 @@ func TestFileSecretRedaction(t *testing.T) {
 	t.Parallel()
 
 	tmpDir := t.TempDir()
+
 	filePath := filepath.Join(tmpDir, "config.json")
-	if err := os.WriteFile(filePath, []byte(`{"token":"file-secret"}`), 0600); err != nil {
+	if err := os.WriteFile(filePath, []byte(`{"token":"file-secret"}`), 0o600); err != nil {
 		t.Fatal(err)
 	}
 
@@ -290,6 +291,7 @@ func TestFileSecretRedaction(t *testing.T) {
 	if !ok {
 		t.Fatal("missing origin")
 	}
+
 	if o.RawValue != "[REDACTED]" {
 		t.Errorf("secret file origin leaked %q", o.RawValue)
 	}
@@ -312,8 +314,9 @@ func TestCustomKeyFileProvenance(t *testing.T) {
 	t.Parallel()
 
 	tmpDir := t.TempDir()
+
 	filePath := filepath.Join(tmpDir, "config.json")
-	if err := os.WriteFile(filePath, []byte(`{"apiKey":"file-value"}`), 0600); err != nil {
+	if err := os.WriteFile(filePath, []byte(`{"apiKey":"file-value"}`), 0o600); err != nil {
 		t.Fatal(err)
 	}
 
@@ -326,6 +329,7 @@ func TestCustomKeyFileProvenance(t *testing.T) {
 	if !ok {
 		t.Fatal("missing origin")
 	}
+
 	if o.Source != strata.SourceProject || o.RawValue != "file-value" {
 		t.Errorf("file override provenance stays stale: %+v", o)
 	}
