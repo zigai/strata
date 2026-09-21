@@ -286,3 +286,34 @@ func TestApplyWithCustomSliceTypes(t *testing.T) {
 		t.Fatalf("Apply failed for custom slice types: %v", err)
 	}
 }
+
+type customInt64SliceConfig struct {
+	Values []int64 `flag:"values"`
+}
+
+func TestApplyWithInt64SliceIntoIntSlice(t *testing.T) {
+	t.Parallel()
+
+	cfg := customInt64SliceConfig{
+		Values: []int64{10, 20},
+	}
+
+	var destination []int
+
+	cmd := &cli.Command{
+		Flags: []cli.Flag{
+			&cli.IntSliceFlag{
+				Name:        "values",
+				Destination: &destination,
+			},
+		},
+	}
+
+	if err := strataurfave.Apply(cmd, cfg); err != nil {
+		t.Fatalf("Apply failed: %v", err)
+	}
+
+	if len(destination) != 2 || destination[0] != 10 || destination[1] != 20 {
+		t.Errorf("destination = %v, want [10 20]", destination)
+	}
+}

@@ -195,6 +195,54 @@ func replaceSliceValue(cmd *cli.Command, flag cli.Flag, source reflect.Value) er
 // assignSliceDestination replaces the slice a generated flag points at. The flag
 // holds exactly the configuration's elements and never an append of two sources,
 // which mirrors pflag's own Replace.
+func checkIntOverflow(elemVal, converted reflect.Value, targetType reflect.Type) error {
+	conv := converted.Int()
+
+	if elemVal.CanInt() {
+		raw := elemVal.Int()
+		if raw != conv {
+			return fmt.Errorf("%w: %v into %s", ErrValueOverflow, raw, targetType)
+		}
+	} else if elemVal.CanUint() {
+		raw := elemVal.Uint()
+		if conv < 0 || uint64(conv) != raw {
+			return fmt.Errorf("%w: %v into %s", ErrValueOverflow, raw, targetType)
+		}
+	}
+
+	return nil
+}
+
+func checkUintOverflow(elemVal, converted reflect.Value, targetType reflect.Type) error {
+	conv := converted.Uint()
+
+	if elemVal.CanUint() {
+		raw := elemVal.Uint()
+		if raw != conv {
+			return fmt.Errorf("%w: %v into %s", ErrValueOverflow, raw, targetType)
+		}
+	} else if elemVal.CanInt() {
+		raw := elemVal.Int()
+		if raw < 0 || uint64(raw) != conv {
+			return fmt.Errorf("%w: %v into %s", ErrValueOverflow, raw, targetType)
+		}
+	}
+
+	return nil
+}
+
+func checkOverflow(elemVal, converted reflect.Value, targetType reflect.Type) error {
+	if converted.CanInt() {
+		return checkIntOverflow(elemVal, converted, targetType)
+	}
+
+	if converted.CanUint() {
+		return checkUintOverflow(elemVal, converted, targetType)
+	}
+
+	return nil
+}
+
 func assignSliceDestination[T any](destination *[]T, source reflect.Value) error {
 	out := make([]T, source.Len())
 	targetType := reflect.TypeFor[T]()
@@ -206,26 +254,21 @@ func assignSliceDestination[T any](destination *[]T, source reflect.Value) error
 			continue
 		}
 
-		if elemVal.Type().ConvertibleTo(targetType) {
-			converted := elemVal.Convert(targetType)
-			if converted.CanInt() {
-				raw := elemVal.Int()
-				conv := converted.Int()
-				if raw != conv {
-					return fmt.Errorf("%w: %v into %s", ErrValueOverflow, raw, targetType)
-				}
-			} else if converted.CanUint() {
-				raw := elemVal.Uint()
-				conv := converted.Uint()
-				if raw != conv {
-					return fmt.Errorf("%w: %v into %s", ErrValueOverflow, raw, targetType)
-				}
-			}
-			out[i] = converted.Interface().(T)
-			continue
+		if !elemVal.Type().ConvertibleTo(targetType) {
+			return fmt.Errorf("%w: %s into %s", ErrValueOverflow, elemVal.Type(), reflect.TypeFor[[]T]())
 		}
 
-		return fmt.Errorf("%w: %s into %s", ErrValueOverflow, elemVal.Type(), reflect.TypeFor[[]T]())
+		converted := elemVal.Convert(targetType)
+		if err := checkOverflow(elemVal, converted, targetType); err != nil {
+			return err
+		}
+
+		val, ok := reflect.TypeAssert[T](converted)
+		if !ok {
+			return fmt.Errorf("%w: %s into %s", ErrValueOverflow, elemVal.Type(), reflect.TypeFor[[]T]())
+		}
+
+		out[i] = val
 	}
 
 	*destination = out
