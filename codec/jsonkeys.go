@@ -49,13 +49,13 @@ var errMemberConflict = errors.New("two members name the same field")
 // type they describe. A Codec is safe for concurrent use, hence the lock; a set
 // itself is immutable once stored.
 var (
-	jsonBindingsCache   map[reflect.Type]map[string]jsonBinding
+	jsonBindingsCache   map[reflect.Type]map[string]jsonFieldBinding
 	jsonBindingsCacheMu sync.RWMutex
 )
 
-// jsonBinding is the name one member uses for a struct field, together with the
+// jsonFieldBinding is the name one member uses for a struct field, together with the
 // type the member's value decodes into.
-type jsonBinding struct {
+type jsonFieldBinding struct {
 	// Name is the name encoding/json matches for the field: its json tag, or its
 	// Go name when the tag does not name it.
 	Name string
@@ -119,7 +119,7 @@ func rewriteJSONValue(value jsontext.Value, targetType reflect.Type) (jsontext.V
 func rewriteJSONStruct(value jsontext.Value, typ reflect.Type) (jsontext.Value, bool, error) {
 	bindings := jsonBindings(typ)
 
-	return rewriteJSONObject(value, func(member string) (jsonBinding, bool) {
+	return rewriteJSONObject(value, func(member string) (jsonFieldBinding, bool) {
 		binding, ok := bindings[member]
 
 		return binding, ok
@@ -167,8 +167,8 @@ func rewriteJSONElements(value jsontext.Value, elemType reflect.Type) (jsontext.
 // The keys of the map name the caller's own domains rather than fields of a
 // struct, so they are carried through as written.
 func rewriteJSONMapValues(value jsontext.Value, elemType reflect.Type) (jsontext.Value, bool, error) {
-	return rewriteJSONObject(value, func(member string) (jsonBinding, bool) {
-		return jsonBinding{Name: member, Type: elemType}, true
+	return rewriteJSONObject(value, func(member string) (jsonFieldBinding, bool) {
+		return jsonFieldBinding{Name: member, Type: elemType}, true
 	})
 }
 
@@ -178,7 +178,7 @@ func rewriteJSONMapValues(value jsontext.Value, elemType reflect.Type) (jsontext
 // A member bind does not resolve is carried through untouched. Two members that
 // resolve to one name are refused: the document names one field twice, and
 // resolving it by picking a member would discard the other without reporting it.
-func rewriteJSONObject(value jsontext.Value, bind func(member string) (jsonBinding, bool)) (jsontext.Value, bool, error) {
+func rewriteJSONObject(value jsontext.Value, bind func(member string) (jsonFieldBinding, bool)) (jsontext.Value, bool, error) {
 	if value.Kind() != jsontext.KindBeginObject {
 		return value, false, nil
 	}
@@ -304,7 +304,7 @@ func appendJSONArray(dst []byte, elements []jsontext.Value) []byte {
 // The set depends on the type alone, so it is computed once and reused: a
 // document holding many values of one type walks that type's fields once. The
 // returned map is shared and MUST NOT be modified.
-func jsonBindings(typ reflect.Type) map[string]jsonBinding {
+func jsonBindings(typ reflect.Type) map[string]jsonFieldBinding {
 	jsonBindingsCacheMu.RLock()
 
 	bindings, cached := jsonBindingsCache[typ]
@@ -315,13 +315,13 @@ func jsonBindings(typ reflect.Type) map[string]jsonBinding {
 		return bindings
 	}
 
-	bindings = make(map[string]jsonBinding)
+	bindings = make(map[string]jsonFieldBinding)
 
 	collectJSONBindings(bindings, typ, make(map[reflect.Type]bool))
 
 	jsonBindingsCacheMu.Lock()
 	if jsonBindingsCache == nil {
-		jsonBindingsCache = make(map[reflect.Type]map[string]jsonBinding)
+		jsonBindingsCache = make(map[reflect.Type]map[string]jsonFieldBinding)
 	}
 
 	jsonBindingsCache[typ] = bindings
@@ -342,7 +342,7 @@ func jsonBindings(typ reflect.Type) map[string]jsonBinding {
 // path holds the struct types visited on this path. A type that repeats on one
 // path contributes nothing further, so an embedded pointer to the enclosing type
 // terminates the walk.
-func collectJSONBindings(bindings map[string]jsonBinding, typ reflect.Type, path map[reflect.Type]bool) {
+func collectJSONBindings(bindings map[string]jsonFieldBinding, typ reflect.Type, path map[reflect.Type]bool) {
 	if path[typ] {
 		return
 	}
@@ -373,7 +373,7 @@ func collectJSONBindings(bindings map[string]jsonBinding, typ reflect.Type, path
 			name = field.Name
 		}
 
-		binding := jsonBinding{Name: name, Type: field.Type}
+		binding := jsonFieldBinding{Name: name, Type: field.Type}
 
 		addJSONBinding(bindings, name, binding)
 		addJSONBinding(bindings, key, binding)
@@ -386,7 +386,7 @@ func collectJSONBindings(bindings map[string]jsonBinding, typ reflect.Type, path
 
 // addJSONBinding records a name for a binding unless an earlier field claimed
 // the name.
-func addJSONBinding(bindings map[string]jsonBinding, name string, binding jsonBinding) {
+func addJSONBinding(bindings map[string]jsonFieldBinding, name string, binding jsonFieldBinding) {
 	if name == "" || name == "-" {
 		return
 	}
