@@ -109,7 +109,7 @@ Each file tier contributes at most one file in ascending precedence. A missing t
 | --- | --- | --- |
 | Go defaults | `default` | `SetDefaults` on the struct and nested structs, then `WithDefaults` |
 | System file | `system` | `$XDG_CONFIG_DIRS/<app>/config.<ext>`, `/etc/xdg` when unset; `%ProgramData%\<app>\config.<ext>` on Windows |
-| User file | `user` | `$XDG_CONFIG_HOME/<app>/config.<ext>`, `~/.config` when unset; `~/Library/Application Support/<app>/config.<ext>` on macOS; `%APPDATA%\<app>\config.<ext>` on Windows |
+| User file | `user` | `$XDG_CONFIG_HOME/<app>/config.<ext>`, `~/.config` when unset; `%APPDATA%\<app>\config.<ext>` on Windows |
 | Project file | `project` | `$PWD/.<app>.<ext>`, then `$PWD/.<app>/config.<ext>` |
 | Environment | `env` | `<PREFIX><UPPER_SNAKE_KEY>` |
 | CLI flags | `flag` | Applied by a bridge package after `Load` returns |
