@@ -43,7 +43,7 @@ func NewMetadata() *Metadata {
 // Lookup is case-insensitive and trims surrounding whitespace, matching the
 // normalization applied by [Metadata.Record]. The boolean reports whether the key
 // is known. A nil receiver returns false.
-func (m *Metadata) Where(dottedKey string) (Origin, bool) {
+func (m *Metadata) Where(key string) (Origin, bool) {
 	if m == nil {
 		return Origin{Key: "", Source: "", Path: "", Line: 0, RawValue: ""}, false
 	}
@@ -51,18 +51,18 @@ func (m *Metadata) Where(dottedKey string) (Origin, bool) {
 	m.mu.RLock()
 	defer m.mu.RUnlock()
 
-	normalized := normalizeKey(dottedKey)
+	normalized := normalizeKey(key)
 	if canon, ok := m.canonical[normalized]; ok {
 		normalized = normalizeKey(canon)
-	} else if canon, ok := m.canonical[normalizeKey(toSnakeCaseKey(dottedKey))]; ok {
+	} else if canon, ok := m.canonical[normalizeKey(toSnakeCaseKey(key))]; ok {
 		normalized = normalizeKey(canon)
-	} else if canon, ok := m.canonical[normalizeKey(strings.ReplaceAll(dottedKey, "_", ""))]; ok {
+	} else if canon, ok := m.canonical[normalizeKey(strings.ReplaceAll(key, "_", ""))]; ok {
 		normalized = normalizeKey(canon)
 	}
 
 	origin, ok := m.origins[normalized]
 	if !ok {
-		origin, ok = m.origins[normalizeKey(dottedKey)]
+		origin, ok = m.origins[normalizeKey(key)]
 	}
 
 	return origin, ok

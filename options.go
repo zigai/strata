@@ -113,9 +113,9 @@ func WithStdin(r io.Reader) Option {
 // WithCWD sets the directory searched for project-tier configuration.
 //
 // The process working directory is used when this is unset.
-func WithCWD(dir string) Option {
+func WithCWD(cwd string) Option {
 	return func(o *loadOptions) {
-		o.cwd = dir
+		o.cwd = cwd
 	}
 }
 
@@ -124,9 +124,9 @@ func WithCWD(dir string) Option {
 //
 // Input beyond the limit fails with [ErrFileTooLarge]. It is never truncated. A
 // value of zero or less selects the default of 1 MiB.
-func WithMaxFileSize(bytes int64) Option {
+func WithMaxFileSize(maxBytes int64) Option {
 	return func(o *loadOptions) {
-		o.maxFileSize = bytes
+		o.maxFileSize = maxBytes
 	}
 }
 

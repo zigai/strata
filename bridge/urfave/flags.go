@@ -131,7 +131,7 @@ func WithMetadata(meta *strata.Metadata) FlagOption {
 // Every generated name and shorthand is checked for uniqueness before any flag is
 // built. Options are accepted for symmetry with RegisterFlags and
 // SyncFlagsToStruct; none of them affect generation.
-func GenerateFlags(cfg any, _ ...FlagOption) ([]cli.Flag, error) {
+func GenerateFlags(cfg any, opts ...FlagOption) ([]cli.Flag, error) {
 	root, err := plan.StructTarget(cfg)
 	if err != nil {
 		return nil, err
