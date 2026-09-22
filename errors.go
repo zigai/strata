@@ -68,4 +68,13 @@ var (
 	// ErrEmptyEncodedValue is returned when the value passed to [SetBytes]
 	// encodes to an empty document, leaving the key with nothing to hold.
 	ErrEmptyEncodedValue = edit.ErrEmptyEncodedValue
+
+	// ErrInvalidEmptyKeyPath is returned when a dotted key path is empty.
+	ErrInvalidEmptyKeyPath = edit.ErrInvalidEmptyKeyPath
+
+	// ErrInvalidEmptyPathSegment is returned when a dotted key path contains an empty segment.
+	ErrInvalidEmptyPathSegment = edit.ErrInvalidEmptyPathSegment
+
+	// ErrAmbiguousKey is returned when a dotted key matches multiple keys in a document.
+	ErrAmbiguousKey = edit.ErrAmbiguousKey
 )
