@@ -198,6 +198,23 @@ func TestSetBytesFailuresAreClassifiable(t *testing.T) {
 			func() ([]byte, error) { return strata.SetBytes(".yaml", []byte("a: 1\n"), "b", blankValue{}) },
 			strata.ErrEmptyEncodedValue,
 		},
+		{
+			"an empty key path",
+			func() ([]byte, error) { return strata.SetBytes(".toml", []byte("a = 1\n"), "", 2) },
+			strata.ErrInvalidEmptyKeyPath,
+		},
+		{
+			"an empty path segment",
+			func() ([]byte, error) { return strata.SetBytes(".toml", []byte("a = 1\n"), "a..b", 2) },
+			strata.ErrInvalidEmptyPathSegment,
+		},
+		{
+			"an ambiguous key",
+			func() ([]byte, error) {
+				return strata.SetBytes(".toml", []byte("port = 1\nPort = 2\n"), "PORT", 3)
+			},
+			strata.ErrAmbiguousKey,
+		},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			t.Parallel()
