@@ -76,3 +76,74 @@ func TestCascadeDiscovery(t *testing.T) {
 		}
 	})
 }
+
+func TestCascadeUserTierDiscovery(t *testing.T) {
+	if filepath.Separator == '\\' {
+		t.Skip("skipping Unix/macOS user tier test on Windows")
+	}
+
+	t.Run("discovers config in XDG_CONFIG_HOME", func(t *testing.T) {
+		xdgDir := t.TempDir()
+
+		appDir := filepath.Join(xdgDir, "testapp")
+		if err := os.MkdirAll(appDir, 0o700); err != nil {
+			t.Fatalf("MkdirAll: %v", err)
+		}
+
+		configPath := filepath.Join(appDir, "config.toml")
+		if err := os.WriteFile(configPath, []byte("host = \"xdg-host\"\n"), 0o600); err != nil {
+			t.Fatalf("WriteFile: %v", err)
+		}
+
+		t.Setenv("XDG_CONFIG_HOME", xdgDir)
+
+		layers, err := cascade.Discover(cascade.Params{
+			AppName:    "testapp",
+			Extensions: []string{".toml"},
+		})
+		if err != nil {
+			t.Fatalf("Discover error: %v", err)
+		}
+
+		if len(layers) != 1 || layers[0].Source != cascade.SourceUser {
+			t.Fatalf("layers = %+v, want 1 user layer", layers)
+		}
+
+		if layers[0].Path != configPath {
+			t.Fatalf("Path = %q, want %q", layers[0].Path, configPath)
+		}
+	})
+
+	t.Run("discovers config in dot config when XDG_CONFIG_HOME is unset", func(t *testing.T) {
+		homeDir := t.TempDir()
+
+		appDir := filepath.Join(homeDir, ".config", "testapp")
+		if err := os.MkdirAll(appDir, 0o700); err != nil {
+			t.Fatalf("MkdirAll: %v", err)
+		}
+
+		configPath := filepath.Join(appDir, "config.toml")
+		if err := os.WriteFile(configPath, []byte("host = \"dot-config-host\"\n"), 0o600); err != nil {
+			t.Fatalf("WriteFile: %v", err)
+		}
+
+		t.Setenv("XDG_CONFIG_HOME", "")
+		t.Setenv("HOME", homeDir)
+
+		layers, err := cascade.Discover(cascade.Params{
+			AppName:    "testapp",
+			Extensions: []string{".toml"},
+		})
+		if err != nil {
+			t.Fatalf("Discover error: %v", err)
+		}
+
+		if len(layers) != 1 || layers[0].Source != cascade.SourceUser {
+			t.Fatalf("layers = %+v, want 1 user layer", layers)
+		}
+
+		if layers[0].Path != configPath {
+			t.Fatalf("Path = %q, want %q", layers[0].Path, configPath)
+		}
+	})
+}

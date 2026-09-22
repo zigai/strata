@@ -975,6 +975,47 @@ func TestWithFormatAliasCascadingTiers(t *testing.T) {
 	}
 }
 
+func TestUserTierDotConfigEndToEnd(t *testing.T) {
+	if filepath.Separator == '\\' {
+		t.Skip("skipping Unix/macOS user tier test on Windows")
+	}
+
+	homeDir := t.TempDir()
+
+	appConfigDir := filepath.Join(homeDir, ".config", "myapp")
+	if err := os.MkdirAll(appConfigDir, 0o700); err != nil {
+		t.Fatalf("MkdirAll: %v", err)
+	}
+
+	configFile := filepath.Join(appConfigDir, "config.toml")
+	if err := os.WriteFile(configFile, []byte("port = 8181\nhost = \"dot-config-host\"\n"), 0o600); err != nil {
+		t.Fatalf("WriteFile: %v", err)
+	}
+
+	t.Setenv("XDG_CONFIG_HOME", "")
+	t.Setenv("HOME", homeDir)
+
+	cfg, meta, err := strata.Load[formatsTestConfig](
+		strata.WithAppName("myapp"),
+		strata.WithCWD(t.TempDir()),
+	)
+	if err != nil {
+		t.Fatalf("Load: %v", err)
+	}
+
+	if cfg.Port != 8181 {
+		t.Errorf("cfg.Port = %d, want 8181", cfg.Port)
+	}
+
+	if cfg.Host != "dot-config-host" {
+		t.Errorf("cfg.Host = %q, want dot-config-host", cfg.Host)
+	}
+
+	if orig, ok := meta.Where("port"); !ok || orig.Source != strata.SourceUser {
+		t.Errorf("port origin = %+v, want SourceUser", orig)
+	}
+}
+
 func TestWithDecoderCodecContracts(t *testing.T) {
 	t.Parallel()
 
