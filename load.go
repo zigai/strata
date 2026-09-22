@@ -359,57 +359,57 @@ func applyFormats(formats []string, reg *codec.Registry) ([]string, error) {
 	return resolved, nil
 }
 
-func resolveFormatAliases(options *loadOptions) error {
-	for alias, target := range options.formatAliases {
+func resolveFormatAliases(opts *loadOptions) error {
+	for alias, target := range opts.formatAliases {
 		resolvedTarget := target
 
-		for range len(options.formatAliases) {
-			if next, ok := options.formatAliases[resolvedTarget]; ok {
+		for range len(opts.formatAliases) {
+			if next, ok := opts.formatAliases[resolvedTarget]; ok {
 				resolvedTarget = next
 			} else {
 				break
 			}
 		}
 
-		targetCodec, ok := options.codecReg.Get(resolvedTarget)
+		targetCodec, ok := opts.codecReg.Get(resolvedTarget)
 		if !ok {
 			return fmt.Errorf("%w for format alias target %q", ErrNoCodec, target)
 		}
 
-		options.codecReg.Register(alias, targetCodec)
+		opts.codecReg.Register(alias, targetCodec)
 	}
 
 	return nil
 }
 
-func prepareRegistry(options *loadOptions) error {
-	if len(options.formatAliases) > 0 {
-		if err := resolveFormatAliases(options); err != nil {
+func prepareRegistry(opts *loadOptions) error {
+	if len(opts.formatAliases) > 0 {
+		if err := resolveFormatAliases(opts); err != nil {
 			return err
 		}
 	}
 
-	if options.formatsSet {
-		allExts := options.codecReg.Extensions()
+	if opts.formatsSet {
+		allExts := opts.codecReg.Extensions()
 
-		resolvedExts, err := applyFormats(options.formats, options.codecReg)
+		resolvedExts, err := applyFormats(opts.formats, opts.codecReg)
 		if err != nil {
 			return err
 		}
 
-		options.codecReg.Restrict(resolvedExts...)
+		opts.codecReg.Restrict(resolvedExts...)
 
-		options.excludedExts = make(map[string]bool)
+		opts.excludedExts = make(map[string]bool)
 
 		for _, std := range []string{".toml", ".yaml", ".yml", ".json"} {
 			if !slices.Contains(resolvedExts, std) {
-				options.excludedExts[std] = true
+				opts.excludedExts[std] = true
 			}
 		}
 
 		for _, e := range allExts {
 			if !slices.Contains(resolvedExts, e) {
-				options.excludedExts[e] = true
+				opts.excludedExts[e] = true
 			}
 		}
 	}
@@ -417,22 +417,22 @@ func prepareRegistry(options *loadOptions) error {
 	return nil
 }
 
-func discoverAndApplyLayers(target any, options *loadOptions, meta *Metadata) error {
+func discoverAndApplyLayers(target any, opts *loadOptions, meta *Metadata) error {
 	layers, err := cascade.Discover(cascade.Params{
-		AppName:      options.appName,
-		ExplicitPath: options.explicitPath,
-		CWD:          options.cwd,
-		WithoutFiles: options.withoutFiles,
-		StdinReader:  options.stdinReader,
-		MaxFileSize:  options.maxFileSize,
-		Extensions:   options.codecReg.Extensions(),
+		AppName:      opts.appName,
+		ExplicitPath: opts.explicitPath,
+		CWD:          opts.cwd,
+		WithoutFiles: opts.withoutFiles,
+		StdinReader:  opts.stdinReader,
+		MaxFileSize:  opts.maxFileSize,
+		Extensions:   opts.codecReg.Extensions(),
 	})
 	if err != nil {
 		return fmt.Errorf("discover configuration layers: %w", err)
 	}
 
 	for _, layer := range layers {
-		if err := applyLayer(target, layer, options, meta); err != nil {
+		if err := applyLayer(target, layer, opts, meta); err != nil {
 			return fmt.Errorf("apply configuration layer %s (%s): %w", layer.Path, layer.Source, err)
 		}
 	}

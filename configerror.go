@@ -55,23 +55,23 @@ func (e *ConfigError) Unwrap() error {
 
 // formatOriginSource renders the layer that supplied a value, for a
 // [ConfigError] diagnostic.
-func formatOriginSource(o Origin) string {
-	switch o.Source {
+func formatOriginSource(origin Origin) string {
+	switch origin.Source {
 	case SourceEnv:
-		return "environment variable: " + o.Path
+		return "environment variable: " + origin.Path
 	case SourceFlag:
-		return "CLI flag: " + o.Path
+		return "CLI flag: " + origin.Path
 	case SourceDefault:
 		return "struct defaults"
 	case SourceStdin:
 		return "standard input"
 	case SourceSystem, SourceUser, SourceProject:
-		if o.Line > 0 {
-			return o.Path + ":" + strconv.Itoa(o.Line)
+		if origin.Line > 0 {
+			return origin.Path + ":" + strconv.Itoa(origin.Line)
 		}
 
-		return o.Path
+		return origin.Path
 	default:
-		return fmt.Sprintf("%s (%s)", o.Source, o.Path)
+		return fmt.Sprintf("%s (%s)", origin.Source, origin.Path)
 	}
 }
