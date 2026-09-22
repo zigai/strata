@@ -18,8 +18,7 @@ const (
 	SourceSystem = "system"
 
 	// SourceUser marks a layer discovered in the user tier: ~/.config or
-	// XDG_CONFIG_HOME on Unix, %APPDATA% on Windows, and the XDG or Application
-	// Support directories on macOS.
+	// XDG_CONFIG_HOME on Unix and macOS, and %APPDATA% on Windows.
 	SourceUser = "user"
 
 	// SourceProject marks a layer discovered in the project tier: the working
@@ -215,14 +214,11 @@ func discoverUserTier(appName string, exts []string) string {
 		home = os.Getenv("HOME")
 	}
 
-	switch runtime.GOOS {
-	case "windows":
+	if runtime.GOOS == "windows" {
 		return discoverWindowsUserTier(appName, home, exts)
-	case "darwin":
-		return discoverDarwinUserTier(appName, home, exts)
-	default:
-		return discoverUnixUserTier(appName, home, exts)
 	}
+
+	return discoverUnixUserTier(appName, home, exts)
 }
 
 func discoverWindowsUserTier(appName, home string, exts []string) string {
@@ -235,24 +231,6 @@ func discoverWindowsUserTier(appName, home string, exts []string) string {
 		appDir := filepath.Join(appData, appName)
 
 		return findConfigFile(appDir, exts)
-	}
-
-	return ""
-}
-
-func discoverDarwinUserTier(appName, home string, exts []string) string {
-	if xdgHome := os.Getenv("XDG_CONFIG_HOME"); xdgHome != "" {
-		appDir := filepath.Join(xdgHome, appName)
-		if found := findConfigFile(appDir, exts); found != "" {
-			return found
-		}
-	}
-
-	if home != "" {
-		appDir := filepath.Join(home, "Library", "Application Support", appName)
-		if found := findConfigFile(appDir, exts); found != "" {
-			return found
-		}
 	}
 
 	return ""
