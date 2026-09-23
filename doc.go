@@ -3,25 +3,28 @@
 //
 // # Layers
 //
-// Configuration is read from five sources and merged in ascending precedence:
+// Configuration is merged in ascending precedence:
 //
-//	struct defaults -> system file -> user file -> project file -> environment
+//	struct defaults -> system file -> user file -> config file -> environment -> CLI flags
 //
-// The CLI bridge packages apply a sixth layer, the command line, from the
-// caller's side after Load returns. A document overlays the result so far rather
-// than replacing it, so a sparse file changes only the keys it mentions.
-//
-// Files are discovered under the XDG base directories and their Windows
-// equivalents, and in the working directory, using the application name set by
-// [WithAppName] and the extensions the codec registry serves. [WithExplicitPath]
-// loads one named file instead of discovering any.
+// A document overlays the result so far rather than replacing it, so a sparse
+// file changes only the keys it mentions. Every layer but the defaults is opt-in:
+// [WithAppName] searches the system and user files under the XDG base
+// directories and their Windows equivalents, [WithPath] and [WithOptionalPath]
+// name one config file, [WithEnvPrefix] binds environment variables, and the CLI
+// bridge packages add flags through their WithFlags options.
 //
 // # Provenance
 //
-// [Load] returns a [Metadata] alongside the value. It records, for every key
-// that resolved, the layer that supplied it, the file or variable that carried
-// it, and the raw text of the value. [Metadata.Where] looks one key up, and
-// [Metadata.ActiveFiles] lists the files that contributed.
+// [LoadWithMetadata] returns a [Metadata] alongside the value. It records, for
+// every key that resolved, the layer that supplied it, the file or variable that
+// carried it, and the raw text of the value. [Metadata.Where] looks one key up,
+// [Metadata.Origins] lists them all, and [Metadata.ActiveFiles] lists the files
+// that contributed.
+//
+// Keys a file sets that the type does not declare are listed by
+// [Metadata.UnknownKeys] with the declared key they most resemble, and
+// [WithStrict] turns them into errors.
 //
 // # Extension points
 //

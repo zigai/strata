@@ -2,180 +2,188 @@
 
 # strata
 
-strata is a layered configuration library for Go. One struct declares the defaults, and strata merges them with configuration files, environment variables, and CLI flags, recording which layer supplied each resolved key.
+**Configuration for Go that remembers where every value came from.**
+
+Put your settings in a struct with some defaults. strata fills it in from config files, environment variables, and CLI flags. If a value looks wrong, you can ask where it came from.
 
 [![Tests](https://img.shields.io/github/actions/workflow/status/zigai/strata/test.yml?branch=master&label=Tests)](https://github.com/zigai/strata/actions/workflows/test.yml)
 [![Release](https://img.shields.io/github/v/release/zigai/strata?color=blue)](https://github.com/zigai/strata/releases)
 [![Go Reference](https://pkg.go.dev/badge/github.com/zigai/strata.svg)](https://pkg.go.dev/github.com/zigai/strata)
-[![Go version](https://img.shields.io/github/go-mod/go-version/zigai/strata)](https://github.com/zigai/strata/blob/master/go.mod)
 [![License](https://img.shields.io/github/license/zigai/strata)](LICENSE)
 
-```text
-  Defaults  ->  System File  ->  User File  ->  Project File  ->  Environment  ->  CLI Flags
-(Go Struct)      (/etc/xdg)     (~/.config)       ($PWD)           (APP_*)        (bridges)
-```
+<br clear="right">
 
-Later layers override earlier ones, and a document overlays the result so far instead of replacing it, so a sparse file changes only the keys it mentions.
+- **One struct is the whole config.** No string keys, no separate schema.
+- **Layers stack up.** Files, environment variables, and flags each override the one below.
+- **Every value has a source.** Ask strata which file, and which line, set it.
+- **Edits keep the user's formatting.** Change a key without losing their comments.
 
-## Installation
+## Install
 
 ```sh
 go get github.com/zigai/strata
 ```
 
-Requires Go 1.27+.
+Requires Go 1.27 or newer.
 
-Flag handling lives in its own modules:
-
-```sh
-go get github.com/zigai/strata/bridge/cobra
-go get github.com/zigai/strata/bridge/urfave
-```
-
-| Package | Purpose |
-| --- | --- |
-| `strata` | Loading, provenance, validation, and file editing |
-| `strata/codec` | The `Codec` interface and TOML, YAML, and JSON adapters |
-| `strata/bridge/cobra` | Cobra flag registration and synchronization |
-| `strata/bridge/urfave` | `urfave/cli` flag registration and synchronization |
-
-## Usage
+## Quick start
 
 ```go
 package main
 
 import (
 	"fmt"
+	"log"
 
 	"github.com/zigai/strata"
 )
 
 type Config struct {
-	Host string `strata:"host" toml:"host"`
-	Port int    `strata:"port" toml:"port"`
+	Host string
+	Port int
 }
 
-// SetDefaults declares the values that rank below every other layer.
 func (c *Config) SetDefaults() {
 	c.Host = "127.0.0.1"
 	c.Port = 8080
 }
 
 func main() {
-	cfg, meta, err := strata.Load[Config](strata.WithAppName("myapp"))
+	cfg, err := strata.Load[Config](strata.WithPath("config.toml"))
 	if err != nil {
-		panic(err)
+		log.Fatal(err)
 	}
 
 	fmt.Printf("listening on %s:%d\n", cfg.Host, cfg.Port)
-
-	if origin, ok := meta.Where("port"); ok {
-		fmt.Printf("port came from the %s layer (%s)\n", origin.Source, origin.Path)
-	}
 }
 ```
 
-With `.myapp.toml` in the working directory holding `port = 9000`, the program prints:
+Put `port = 9000` in `config.toml` and run it:
 
 ```text
 listening on 127.0.0.1:9000
-port came from the project layer (/home/you/project/.myapp.toml)
 ```
 
-`Load` applies defaults first, reads each tier in ascending precedence, and validates the result. On error, the returned struct retains its defaulted values.
+The file changed `port`, and `host` kept its default. No struct tags needed: `Port` reads the `port` key automatically.
 
-`LoadInto` merges into a value that already exists instead of starting from the zero value, and returns the same provenance. A key that no layer mentions keeps the value it started with:
+The file has to exist. If it's optional, use `WithOptionalPath` instead.
+
+## How the layers stack
+
+Each layer overrides the ones below it, one key at a time:
+
+```text
+  CLI flags        --port 9100          ← wins
+  Environment      MYAPP_PORT=9050
+  Config file      ./config.toml
+  User file        ~/.config/myapp/
+  System file      /etc/xdg/myapp/
+  Defaults         SetDefaults()        ← fallback
+```
+
+Only defaults are on by default. You turn on each of the others with one option.
+
+### Environment variables
 
 ```go
-type State struct {
-	Region string `strata:"region"`
-	Port   int    `strata:"port"`
-}
-
-// State declares no SetDefaults, so only layers that mention a key change it.
-state := State{Region: "eu-central-1"}
-
-meta, err := strata.LoadInto(&state, strata.WithAppName("myapp"))
-if err != nil {
-	panic(err)
-}
+cfg, err := strata.Load[Config](
+	strata.WithPath("config.toml"),
+	strata.WithEnvPrefix("MYAPP_"),
+)
 ```
 
-## Layers and discovery
+Now `MYAPP_PORT=9050` overrides the file. Nested keys use underscores, so `database.port` becomes `MYAPP_DATABASE_PORT`.
 
-Each file tier contributes at most one file in ascending precedence. A missing tier contributes nothing without error.
+To list every variable your program reads, for a `--help` page or your docs, call `strata.EnvVars[Config]("MYAPP_")`.
 
-| Tier | `Origin.Source` | Location |
-| --- | --- | --- |
-| Go defaults | `default` | `SetDefaults` on the struct and nested structs, then `WithDefaults` |
-| System file | `system` | `$XDG_CONFIG_DIRS/<app>/config.<ext>`, `/etc/xdg` when unset; `%ProgramData%\<app>\config.<ext>` on Windows |
-| User file | `user` | `$XDG_CONFIG_HOME/<app>/config.<ext>`, `~/.config` when unset; `%APPDATA%\<app>\config.<ext>` on Windows |
-| Project file | `project` | `$PWD/.<app>.<ext>`, then `$PWD/.<app>/config.<ext>` |
-| Environment | `env` | `<PREFIX><UPPER_SNAKE_KEY>` |
-| CLI flags | `flag` | Applied by a bridge package after `Load` returns |
+### System and user config files
 
-Extensions are discovered in order: `.toml`, `.yaml`, `.yml`, `.json`.
+```go
+cfg, err := strata.Load[Config](strata.WithAppName("myapp"))
+```
 
-### Loading options
+strata then checks `/etc/xdg/myapp/` and `~/.config/myapp/` for a `config.toml`, `.yaml`, `.yml`, or `.json`. On Windows it checks `%ProgramData%` and `%APPDATA%`.
 
-Options apply per call to `Load` or `LoadInto`:
+### CLI flags
 
-- **Explicit file or standard input:** `WithExplicitPath("config.yaml")` loads a single file and skips discovery. The path `-` reads standard input (cached for the process).
-- **Environment prefix:** `WithEnvPrefix("MYAPP_")` maps fields to uppercase environment variables (e.g. `database.port` matches `MYAPP_DATABASE_PORT`). An `env` tag sets an exact name.
-- **Working directory:** `WithCWD(dir)` overrides the directory searched for the project file.
-- **File limits:** `WithMaxFileSize(bytes)` sets the maximum file size (default 1 MiB); exceeding it returns `ErrFileTooLarge`. `WithoutFiles()` disables file discovery entirely.
-- **Format filters:** `WithFormats("toml", "yaml")` restricts discovery and sets precedence order across tiers.
-
-### Keys and secrets
-
-Fields resolve from the first matching `strata`, `toml`, `yaml`, or `json` tag, falling back to the snake case Go field name. Nested structs use dot notation (`database.port`).
+Tag the fields you want as flags:
 
 ```go
 type Config struct {
-	Port   int    `strata:"port"`
-	APIKey string `env:"API_KEY,secret"`
+	Host string `flag:"host"`
+	Port int    `flag:"port,p"` // -p, --port
 }
 ```
 
-Fields tagged `secret` are redacted across environment reporting, provenance (`[REDACTED]`), and CLI flag help.
-
-### Custom formats and decoders
+Then, with [Cobra](https://github.com/spf13/cobra):
 
 ```go
-// Map an alternative extension to an existing format:
-strata.WithFormatAlias(".conf", "toml")
+cfg.SetDefaults() // so --help shows them
+stratacobra.RegisterFlags(cmd, &cfg)
 
-// Bind an external unmarshaler without implementing Codec:
-strata.WithDecoder(".json5", json5.Unmarshal)
+// later, in PersistentPreRunE:
+cfg, err := strata.Load[Config](
+	strata.WithAppName("myapp"),
+	stratacobra.WithFlags(cmd),
+)
+```
 
-// Bind a type-safe decoder for custom or proprietary formats:
-strata.WithDecoderFunc(".env", func(data []byte, target *Config) error {
-	target.Host = "127.0.0.1"
+Only the flags the user actually typed override anything. [`urfave/cli`](https://github.com/urfave/cli) works the same way through `strataurfave`. Both bridges are separate modules:
+
+```sh
+go get github.com/zigai/strata/bridge/cobra
+go get github.com/zigai/strata/bridge/urfave
+```
+
+For a complete CLI, see [`examples/cli`](examples/cli).
+
+## Where did this value come from?
+
+Use `LoadWithMetadata` to get a `*Metadata` along with your config, then ask it about any key:
+
+```go
+cfg, meta, err := strata.LoadWithMetadata[Config](strata.WithAppName("myapp"))
+
+origin, _ := meta.Where("port")
+fmt.Println(origin.Source, origin.Path)
+// user /home/you/.config/myapp/config.toml
+```
+
+`Source` is one of `default`, `system`, `user`, `file`, `stdin`, `env`, or `flag`. For YAML files you also get `origin.Line`. `meta.Origins()` lists every key at once, which is handy for a `config show` command.
+
+## Catching typos
+
+A key your struct doesn't have, like `prot = 9000`, does nothing. strata notices and keeps track of it:
+
+```go
+for _, key := range meta.UnknownKeys() {
+	log.Printf("%s: unknown key %q", key.Path, key.Key)
+}
+```
+
+Each one also has a `Suggestion`: the closest key your struct does have, or empty if nothing is close.
+
+To turn these into errors instead, pass `strata.WithStrict()`:
+
+```text
+config error: unknown key "prot" (did you mean "port"?)
+  --> set by /home/you/project/config.toml
+```
+
+## Checking values
+
+Add a `Validate` method and strata runs it after all the layers, flags included, have been merged:
+
+```go
+func (c *Config) Validate() error {
+	if c.Port > 9000 {
+		return errors.New("port is too high")
+	}
 	return nil
-})
-```
-
-To provide both encoding and decoding for a format, implement `Codec` and register it with `WithCodec`.
-
-## Provenance
-
-`Load` returns `*Metadata` tracking the origin of every resolved key:
-
-```go
-if origin, ok := meta.Where("database.port"); ok {
-	fmt.Printf("%s set by %s (line %d): %s\n", origin.Key, origin.Path, origin.Line, origin.RawValue)
 }
-
-fmt.Println("Active files:", meta.ActiveFiles())
 ```
 
-`Origin.Source` reports the supplying tier (`default`, `system`, `user`, `project`, `env`, `flag`). The YAML reader also records `Line`.
-
-## Validation
-
-Validation runs after defaults, files, and environment variables are merged, and before any CLI overlay.
-
-Implement `MetadataValidator` instead of `Validator` to attribute a failure to the key that caused it:
+If you'd like the error to point at the file that caused the problem, write `ValidateWith` instead:
 
 ```go
 func (c *Config) ValidateWith(meta *strata.Metadata) error {
@@ -186,119 +194,153 @@ func (c *Config) ValidateWith(meta *strata.Metadata) error {
 }
 ```
 
-With `port = 9090` in `.myapp.toml`, the load fails with:
-
 ```text
 config error: above the privileged ceiling for port: "9090"
-  --> set by /home/you/project/.myapp.toml
+  --> set by /home/you/project/config.toml
 ```
 
-The YAML reader adds the line it found the key on (`--> set by /home/you/project/.myapp.yaml:2`). Every validation failure reaches the caller as a `*ConfigError`, which unwraps to the cause.
+## Editing config files
 
-## CLI flags
-
-Struct tags declare CLI flags mapped by the bridge modules:
-
-| Tag | Flag |
-| --- | --- |
-| `flag:"port"` | Long name only (`--port`) |
-| `flag:"port,p"` | Long name with shorthand (`-p, --port`) |
-| `flag:",p"` | Derived kebab-case name with shorthand |
-| `flag:""` | Derived kebab-case name |
-
-Untagged fields remain configuration-only. An embedded struct contributes its fields directly, and tagged nested structs prefix their flags (e.g. `flag:"db"` on `Database` produces `--db-host`).
-
-In Cobra, register flags before parsing and synchronize within `PersistentPreRunE`:
-
-```go
-settings.SetDefaults()
-
-err := stratacobra.RegisterFlags(cmd, &settings, stratacobra.WithPersistent())
-
-// Inside PersistentPreRunE after parsing:
-view, meta, err := strata.Load[settingsView](strata.WithAppName("myapp"))
-if err != nil {
-	return err
-}
-
-settings = AppSettings(view)
-
-if err := stratacobra.SyncFlagsToStruct(cmd, &settings, stratacobra.WithMetadata(meta)); err != nil {
-	return err
-}
-
-if err := settings.Validate(); err != nil {
-	return err
-}
-
-if err := stratacobra.Apply(cmd, settings); err != nil {
-	return err
-}
-```
-
-`SyncFlagsToStruct` copies user-supplied flags into the struct, `Validate` checks the merged result, and `Apply` populates omitted flags from configuration so `cmd.Flags()` and the struct match.
-
-`bridge/urfave` provides `strataurfave.RegisterFlags`, `strataurfave.SyncFlagsToStruct`, and `strataurfave.Apply` for `urfave/cli`, as well as `GenerateFlags` to produce `[]cli.Flag` values.
-
-[`examples/cli`](examples/cli) is a runnable command built this way, with provenance printing, an explicit `--config` path, and a `config set` command.
-
-## Editing files
-
-`Set` updates a key in a configuration file in place, preserving existing comments, key order, and indentation:
+`Set` changes one key and leaves the rest of the file alone:
 
 ```go
 err := strata.Set("config.toml", "database.port", 5433)
 ```
 
-- **TOML:** Keeps comments, blank lines, indentation, and key order.
-- **YAML:** Keeps comments, key order, and anchors. Blank lines are dropped.
-- **JSON:** Keeps indentation and number precision. Sorts object keys.
+TOML files keep everything: comments, blank lines, and key order. YAML files keep their comments but lose blank lines. JSON files get their keys sorted.
 
-`SetBytes` applies the same in-place edit to a byte slice. For files the application owns outright, `Save` serializes the struct and replaces the file atomically:
+For files only your program touches, like saved state, `Save` writes the whole struct at once:
 
 ```go
 err := strata.Save("state.json", cfg)
 ```
 
-### Templates and schemas
+Both write atomically, so a crash never leaves a half-written file. They also use the same key names strata reads, so `Set` works on a file that `Save` or `Init` wrote.
 
-`Init` writes a configuration template holding the defaults of the type, in the format implied by the extension. An existing file is left untouched and reported as `ErrFileExists` unless `WithOverwrite(true)` is passed:
+## Starter files and schemas
 
-```go
-err := strata.Init[Config]("config.toml", strata.WithSchemaURL("https://example.com/strata.schema.json"))
-```
-
-`WithSchemaURL` embeds the schema directive: `#:schema <url>` for TOML, `# yaml-language-server: $schema=<url>` for YAML, and `$schema` for JSON.
-
-`Schema[Config]` returns the JSON Schema for the type as indented JSON. Field names match configuration keys, and a doc comment on a struct field becomes its description in the schema:
+`Init` writes a config file full of your defaults. It never overwrites an existing file unless you pass `WithOverwrite(true)`.
 
 ```go
-schema, err := strata.Schema[Config](
-	strata.WithSchemaID("https://example.com/strata.schema.json"),
-	strata.WithSchemaTitle("Myapp configuration"),
-)
+err := strata.Init[Config]("config.toml")
 ```
 
-## Durations and errors
+`Schema` generates a JSON Schema from your struct. Doc comments on fields become descriptions, so editors can autocomplete and explain each setting:
 
-`strata.Duration` is a `time.Duration` that parses day and week units, which `time.ParseDuration` rejects: `7d`, `2w`, `1w2d`, `1.5d`, and `-7d` are all valid. Values re-encode through the underlying `time.Duration`, so `2w` formats as `336h0m0s`:
+```go
+schema, err := strata.Schema[Config]()
+```
+
+Pass `strata.WithSchemaURL(url)` to `Init` to link the two.
+
+## Days and weeks
+
+Go's `time.Duration` stops at hours. `strata.Duration` also understands `7d`, `2w`, and `1w2d`:
 
 ```go
 type Config struct {
-	Timeout strata.Duration `strata:"timeout"`
+	Timeout strata.Duration // "2w" works
 }
-
-d, err := strata.ParseDuration("1w2d") // 216h0m0s
 ```
 
-Every failure the package names is classifiable through a sentinel on the package, so callers never import a subsystem to branch on errors:
+## More details
+
+<details>
+<summary><b>All loading options</b></summary>
+
+<br>
+
+| Option | What it does |
+| --- | --- |
+| `WithPath(path)` | Load this file on top of the system and user files. Use `-` for standard input. |
+| `WithOptionalPath(path)` | Same as `WithPath`, but a missing file is skipped. |
+| `WithAppName(name)` | Look for system and user config files under this name. |
+| `WithEnvPrefix(prefix)` | Read environment variables that start with this prefix. |
+| `WithStrict()` | Fail when a config file sets a key your struct doesn't have. |
+| `WithDefaults(value)` | Use this value as the defaults, in place of what `SetDefaults` set. |
+| `WithoutFiles()` | Skip system and user files. A `WithPath` file still loads. |
+| `WithFormats("toml", "yaml")` | Only look for these formats, in this order. |
+| `WithMaxFileSize(bytes)` | Reject bigger files with `ErrFileTooLarge`. The default is 1 MiB. |
+
+</details>
+
+<details>
+<summary><b>Key names and secrets</b></summary>
+
+<br>
+
+A field's key comes from its `strata`, `toml`, `yaml`, or `json` tag, whichever it finds first. Without one, the field name is converted to snake case. Nested structs use dots: `database.port`.
+
+An `env` tag gives a field an exact variable name. It's read even without `WithEnvPrefix`. Fields without one are only read from the environment once you set a prefix, so a stray `PORT` or `HOST` in the environment never changes your config.
+
+Tag a field `secret` to keep its value out of provenance output (it shows `[REDACTED]`) and out of `--help`:
+
+```go
+type Config struct {
+	DatabaseURL string `strata:"db_url"`
+	APIKey      string `env:"API_KEY,secret"`
+}
+```
+
+</details>
+
+<details>
+<summary><b>Flag tags</b></summary>
+
+<br>
+
+| Tag | Flag |
+| --- | --- |
+| `flag:"port"` | `--port` |
+| `flag:"port,p"` | `-p, --port` |
+| `flag:",p"` | Name from the field, plus `-p` |
+| `flag:""` | Name from the field |
+
+Fields without a `flag` tag never become flags. Flags on an embedded struct are added as if they were declared on the parent. A tagged nested struct prefixes its flags, so `flag:"db"` on a `Database` field gives `--db-host`.
+
+</details>
+
+<details>
+<summary><b>Other file formats</b></summary>
+
+<br>
+
+```go
+// Treat .conf files as TOML.
+strata.WithFormatAlias(".conf", "toml")
+
+// Use any unmarshal function.
+strata.WithDecoder(".json5", json5.Unmarshal)
+
+// Decode straight into your type.
+strata.WithDecoderFunc(".env", func(data []byte, target *Config) error {
+	// ...
+	return nil
+})
+```
+
+To write the format as well, implement `Codec` and register it with `WithCodec`.
+
+</details>
+
+<details>
+<summary><b>Errors</b></summary>
+
+<br>
+
+A missing system or user file is skipped, and so is a missing `WithOptionalPath` file. Everything else is an error: a missing `WithPath` file, a file that can't be read or parsed, and a failed validation. When `Load` fails, it returns the zero value.
+
+Every error can be matched with `errors.Is` against a sentinel in the `strata` package:
 
 ```go
 if errors.Is(err, strata.ErrMalformed) {
-	// A file was found but could not be parsed, which is a different problem
-	// from no file being found at all.
+	// The file exists but couldn't be parsed.
 }
 ```
+
+Validation failures are always a `*strata.ConfigError`.
+
+</details>
 
 ## License
 
