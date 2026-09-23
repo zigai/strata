@@ -14,7 +14,6 @@ import (
 	stratacobra "github.com/zigai/strata/bridge/cobra"
 )
 
-// commandName is shared by the test command fixtures.
 const commandName = "test"
 
 type cacheSettings struct {
@@ -35,15 +34,10 @@ type settings struct {
 	DB      databaseSettings `flag:"db"`
 	Cache   *cacheSettings   `flag:"cache"`
 
-	// No flag tag: configuration only.
 	Internal string `strata:"internal_state"`
 	Secret   string `strata:"secret_field,secret"`
 }
 
-// run registers flags from initial, executes the command with args, and returns
-// the configuration the application would observe. The pre-run hook replaces the
-// caller's value wholesale, as strata.Load does, and then runs the canonical
-// Sync-then-Apply order.
 func run[T any](t *testing.T, initial T, args ...string) (T, error) {
 	t.Helper()
 
@@ -54,11 +48,7 @@ func run[T any](t *testing.T, initial T, args ...string) (T, error) {
 		PersistentPreRunE: func(c *cobra.Command, _ []string) error {
 			cfg = initial
 
-			if err := stratacobra.SyncFlagsToStruct(c, &cfg); err != nil {
-				return fmt.Errorf("sync: %w", err)
-			}
-
-			return stratacobra.Apply(c, cfg)
+			return stratacobra.SyncFlagsToStruct(c, &cfg)
 		},
 		RunE: func(*cobra.Command, []string) error { return nil },
 	}
@@ -78,13 +68,9 @@ func run[T any](t *testing.T, initial T, args ...string) (T, error) {
 	return cfg, nil
 }
 
-// --- detached storage -------------------------------------------------------
-
 func TestCLIValueSurvivesLoaderReassignment(t *testing.T) {
 	t.Parallel()
 
-	// The loader supplies a different value for Port. Generated flags own
-	// detached storage, and the parsed CLI value still wins.
 	got, err := run(t,
 		settings{Port: 9000, Verbose: true, Tags: []string{"from-file"}},
 		"--port", "1234",
@@ -106,10 +92,6 @@ func TestCLIValueSurvivesLoaderReassignment(t *testing.T) {
 	}
 }
 
-// TestUnsuppliedFlagsDoNotOverwriteLoadedValues separates the value a flag is
-// registered with from the value the loader supplies. The two differ in real use,
-// and SyncFlagsToStruct MUST leave the loaded value in place for every flag the
-// user did not pass.
 func TestUnsuppliedFlagsDoNotOverwriteLoadedValues(t *testing.T) {
 	t.Parallel()
 
@@ -180,8 +162,6 @@ func TestPrecedenceTable(t *testing.T) {
 		})
 	}
 }
-
-// --- discovery --------------------------------------------------------------
 
 func TestUntaggedFieldsAreNotFlags(t *testing.T) {
 	t.Parallel()
@@ -259,8 +239,6 @@ func TestDerivedNames(t *testing.T) {
 	}
 }
 
-// --- tag grammar ------------------------------------------------------------
-
 func TestTagGrammarRejections(t *testing.T) {
 	t.Parallel()
 
@@ -334,8 +312,6 @@ func assertError(t *testing.T, cfg any, want error) {
 		t.Fatalf("err = %v, want %v", err, want)
 	}
 }
-
-// --- registration errors ----------------------------------------------------
 
 func TestRegistrationErrors(t *testing.T) {
 	t.Parallel()
@@ -423,8 +399,6 @@ type recursive struct {
 	Value int `flag:"value"`
 }
 
-// --- type coverage ----------------------------------------------------------
-
 type wide struct {
 	Text      string          `flag:"text"`
 	Enabled   bool            `flag:"enabled"`
@@ -505,8 +479,6 @@ func TestNarrowIntegerOverflowIsReported(t *testing.T) {
 	}
 }
 
-// --- slices -----------------------------------------------------------------
-
 func TestSliceValuesRoundTrip(t *testing.T) {
 	t.Parallel()
 
@@ -532,8 +504,6 @@ func TestSliceReplacementDoesNotAppend(t *testing.T) {
 		t.Fatalf("Tags = %v, want [from-cli]", got.Tags)
 	}
 }
-
-// --- pointers ---------------------------------------------------------------
 
 func TestPointerAllocation(t *testing.T) {
 	t.Parallel()
@@ -564,8 +534,6 @@ func TestPointerAllocation(t *testing.T) {
 		}
 	})
 }
-
-// --- secrets ----------------------------------------------------------------
 
 func TestSecretDefaultsAreNotPublished(t *testing.T) {
 	t.Parallel()
@@ -636,8 +604,6 @@ func TestSecretOriginsAreRedacted(t *testing.T) {
 	}
 }
 
-// --- manual coexistence -----------------------------------------------------
-
 func TestManualFlagsCoexist(t *testing.T) {
 	t.Parallel()
 
@@ -680,8 +646,6 @@ func TestManualFlagsCoexist(t *testing.T) {
 	}
 }
 
-// --- nested containers ------------------------------------------------------
-
 func TestNestedPrefixes(t *testing.T) {
 	t.Parallel()
 
@@ -694,8 +658,6 @@ func TestNestedPrefixes(t *testing.T) {
 		t.Fatalf("DB = %+v, want db.internal:5432", got.DB)
 	}
 }
-
-// --- persistent -------------------------------------------------------------
 
 func TestPersistentRegistration(t *testing.T) {
 	t.Parallel()
@@ -716,37 +678,161 @@ func TestPersistentRegistration(t *testing.T) {
 	}
 }
 
-// --- legacy Apply path ------------------------------------------------------
+type validatedSettings struct {
+	Port int `flag:"port" yaml:"port"`
+}
 
-func TestApplyLeavesExplicitFlagsAlone(t *testing.T) {
+func (s *validatedSettings) Validate() error {
+	if s.Port < 1024 {
+		return fmt.Errorf("port must be >= 1024: got %d", s.Port)
+	}
+
+	return nil
+}
+
+func TestWithFlagsParticipatesInCascadeAndRecordsProvenance(t *testing.T) {
 	t.Parallel()
-
-	cfg := settings{Port: 9000}
 
 	cmd := &cobra.Command{Use: commandName}
 
-	if err := stratacobra.RegisterFlags(cmd, &cfg); err != nil {
+	var seed settings
+
+	if err := stratacobra.RegisterFlags(cmd, &seed); err != nil {
 		t.Fatalf("register: %v", err)
 	}
 
-	cmd.SetArgs([]string{"--port", "1234"})
+	cmd.SetArgs([]string{"--port", "9090"})
 	cmd.SetOut(io.Discard)
 	cmd.SetErr(io.Discard)
+
+	var (
+		loaded settings
+		meta   *strata.Metadata
+	)
+
+	cmd.RunE = func(c *cobra.Command, _ []string) error {
+		var err error
+
+		loaded, meta, err = strata.LoadWithMetadata[settings](
+			strata.WithContribution(func(target any, _ *strata.Metadata) error {
+				s, ok := target.(*settings)
+				if !ok {
+					return errors.New("target is not *settings")
+				}
+
+				s.Port = 8080
+				s.Verbose = true
+
+				return nil
+			}),
+			stratacobra.WithFlags(c, stratacobra.WithMetadata(nil)),
+		)
+
+		return err
+	}
 
 	if err := cmd.Execute(); err != nil {
 		t.Fatalf("execute: %v", err)
 	}
 
-	if err := stratacobra.Apply(cmd, settings{Port: 9000}); err != nil {
-		t.Fatalf("apply: %v", err)
+	if loaded.Port != 9090 {
+		t.Errorf("Port = %d, want 9090 (CLI flag should override lower layer)", loaded.Port)
 	}
 
-	value, err := cmd.Flags().GetInt("port")
-	if err != nil {
-		t.Fatalf("read port: %v", err)
+	if !loaded.Verbose {
+		t.Errorf("Verbose = false, want true (unmentioned flag retains layer value)")
 	}
 
-	if value != 1234 {
-		t.Fatalf("port = %d, want 1234: Apply must not overwrite a supplied flag", value)
+	origin, ok := meta.Where("port")
+	if !ok {
+		t.Fatal("Where(port) not recorded")
+	}
+
+	if origin.Source != strata.SourceFlag || origin.RawValue != "9090" {
+		t.Errorf("origin = %+v, want SourceFlag and raw 9090", origin)
+	}
+}
+
+func TestWithFlagsCanSatisfyValidation(t *testing.T) {
+	t.Parallel()
+
+	cmd := &cobra.Command{Use: commandName}
+
+	var seed validatedSettings
+
+	if err := stratacobra.RegisterFlags(cmd, &seed); err != nil {
+		t.Fatalf("register: %v", err)
+	}
+
+	cmd.SetArgs([]string{"--port", "8080"})
+	cmd.SetOut(io.Discard)
+	cmd.SetErr(io.Discard)
+
+	var loaded validatedSettings
+
+	cmd.RunE = func(c *cobra.Command, _ []string) error {
+		var err error
+
+		loaded, err = strata.Load[validatedSettings](
+			strata.WithContribution(func(target any, _ *strata.Metadata) error {
+				v, ok := target.(*validatedSettings)
+				if !ok {
+					return errors.New("target is not *validatedSettings")
+				}
+
+				v.Port = 80
+
+				return nil
+			}),
+			stratacobra.WithFlags(c),
+		)
+
+		return err
+	}
+
+	if err := cmd.Execute(); err != nil {
+		t.Fatalf("execute: %v, expected validation to succeed after CLI override", err)
+	}
+
+	if loaded.Port != 8080 {
+		t.Errorf("Port = %d, want 8080", loaded.Port)
+	}
+}
+
+func TestWithFlagsCanViolateValidation(t *testing.T) {
+	t.Parallel()
+
+	cmd := &cobra.Command{Use: commandName}
+
+	var seed validatedSettings
+
+	if err := stratacobra.RegisterFlags(cmd, &seed); err != nil {
+		t.Fatalf("register: %v", err)
+	}
+
+	cmd.SetArgs([]string{"--port", "80"})
+	cmd.SetOut(io.Discard)
+	cmd.SetErr(io.Discard)
+
+	cmd.RunE = func(c *cobra.Command, _ []string) error {
+		_, err := strata.Load[validatedSettings](
+			strata.WithContribution(func(target any, _ *strata.Metadata) error {
+				v, ok := target.(*validatedSettings)
+				if !ok {
+					return errors.New("target is not *validatedSettings")
+				}
+
+				v.Port = 8080
+
+				return nil
+			}),
+			stratacobra.WithFlags(c),
+		)
+
+		return err
+	}
+
+	if err := cmd.Execute(); err == nil {
+		t.Fatal("expected validation error from invalid CLI flag, got nil")
 	}
 }

@@ -19,16 +19,13 @@ type Defaulter = defaulter.Defaulter
 
 // Validator allows a configuration struct to check its own invariants.
 //
-// [LoadInto] calls Validate after defaults, files, and environment have been
-// merged, and before any CLI overlay. A configuration that a flag would have
-// corrected therefore fails validation.
+// [LoadInto] calls Validate after defaults, files, environment, and all
+// contributions registered through [WithContribution] have merged. A CLI flag
+// contributed before validation can therefore satisfy or correct an invariant
+// that lower layers did not meet.
 //
 // A failure from Validate carries no key. Implement [MetadataValidator] instead
 // to attribute a failure to a key and report the file and line it came from.
-//
-// To validate the fully merged result, including the CLI overlay, load through a
-// distinct view type that shares the fields and declares no Validate method, and
-// call Validate from the caller.
 type Validator interface {
 	Validate() error
 }
@@ -38,19 +35,8 @@ type Validator interface {
 //
 // [LoadInto] prefers MetadataValidator over [Validator] when a type implements
 // both, and calls it at the same point in the merge as [Validator.Validate]:
-// after defaults, files, and environment, and before any CLI overlay.
-//
-// A failure built with [Metadata.NewConfigError] carries the key, the raw value
-// the configuration supplied, and the layer that supplied it, so the diagnostic
-// names the file and line rather than only the problem:
-//
-//	func (c *Config) ValidateWith(meta *strata.Metadata) error {
-//		if c.Port > 9000 {
-//			return meta.NewConfigError("port", errors.New("above the privileged ceiling"))
-//		}
-//
-//		return nil
-//	}
+// after defaults, files, environment, and any contributions registered through
+// [WithContribution] have merged.
 //
 // ValidateWith may return a plain error for a failure that spans several fields
 // and has no single key to name, and it may return several attributed failures

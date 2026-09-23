@@ -58,6 +58,18 @@ type Options struct {
 	ParseDuration func(string) (time.Duration, error)
 }
 
+// Var is one field the environment can supply.
+//
+// Name is the variable to document: the env tag when the field has one, and
+// otherwise the prefix followed by the upper-snake key joined by "_". Names
+// lists every variable [Apply] tries for it, in order; the first one set wins.
+type Var struct {
+	Key    string
+	Name   string
+	Names  []string
+	Secret bool
+}
+
 // Apply binds environment variables into target and reports every value it
 // takes through [Options.OnBind].
 //
@@ -103,12 +115,122 @@ func Apply(target any, opts Options) error {
 		lookup = os.LookupEnv
 	}
 
-	prefix := strings.ToUpper(strings.TrimSpace(opts.Prefix))
+	return bindEnvStruct(elem, normalizePrefix(opts.Prefix), "", lookup, opts.OnBind, opts.ParseDuration, false, nil, nil)
+}
+
+// Describe lists the fields of the struct type typ that the environment can
+// supply under prefix, in declaration order, using the same names [Apply] tries.
+//
+// A field whose type the environment cannot decode, such as a map, is left out.
+func Describe(typ reflect.Type, prefix string) []Var {
+	for typ.Kind() == reflect.Pointer {
+		typ = typ.Elem()
+	}
+
+	if typ.Kind() != reflect.Struct {
+		return nil
+	}
+
+	var vars []Var
+
+	describeStruct(typ, normalizePrefix(prefix), "", false, nil, &vars)
+
+	return vars
+}
+
+// normalizePrefix trims and uppercases prefix, and appends an underscore when
+// it does not already end in one.
+func normalizePrefix(prefix string) string {
+	prefix = strings.ToUpper(strings.TrimSpace(prefix))
 	if prefix != "" && !strings.HasSuffix(prefix, "_") {
 		prefix += "_"
 	}
 
-	return bindEnvStruct(elem, prefix, "", lookup, opts.OnBind, opts.ParseDuration, false, nil, nil)
+	return prefix
+}
+
+func describeStruct(typ reflect.Type, prefix, parentPath string, inheritedSecret bool, active []reflect.Type, vars *[]Var) {
+	if slices.Contains(active, typ) {
+		return
+	}
+
+	active = append(active, typ)
+
+	for sf := range typ.Fields() {
+		describeField(sf, prefix, parentPath, inheritedSecret, active, vars)
+	}
+}
+
+func describeField(sf reflect.StructField, prefix, parentPath string, inheritedSecret bool, active []reflect.Type, vars *[]Var) {
+	if !sf.IsExported() {
+		return
+	}
+
+	key := defaulter.FieldKey(sf)
+	if key == "-" {
+		return
+	}
+
+	secret := inheritedSecret || defaulter.IsSecret(sf)
+
+	dottedKey := key
+	if sf.Anonymous {
+		dottedKey = parentPath
+	} else if parentPath != "" {
+		dottedKey = parentPath + "." + key
+	}
+
+	fieldType := sf.Type
+	if fieldType.Kind() == reflect.Pointer && defaulter.IsNestedStructType(fieldType.Elem()) {
+		fieldType = fieldType.Elem()
+	}
+
+	if fieldType.Kind() == reflect.Struct && defaulter.IsNestedStructType(fieldType) {
+		describeStruct(fieldType, prefix, dottedKey, secret, active, vars)
+		return
+	}
+
+	if !envDecodable(sf.Type) {
+		return
+	}
+
+	names := candidateNames(sf, prefix, dottedKey)
+	if len(names) == 0 {
+		return
+	}
+
+	*vars = append(*vars, Var{Key: dottedKey, Name: documentedName(sf, names), Names: names, Secret: secret})
+}
+
+// documentedName picks the variable to show a reader from the names
+// [candidateNames] returned: the env tag when there is one, otherwise the
+// single-underscore derived name, which candidateNames lists last.
+func documentedName(sf reflect.StructField, names []string) string {
+	if tag, _, _ := strings.Cut(sf.Tag.Get("env"), ","); strings.TrimSpace(tag) != "" {
+		return names[0]
+	}
+
+	return names[len(names)-1]
+}
+
+// envDecodable reports whether [Apply] can decode text into a field of typ.
+func envDecodable(typ reflect.Type) bool {
+	if reflect.PointerTo(typ).Implements(reflect.TypeFor[encoding.TextUnmarshaler]()) {
+		return true
+	}
+
+	//nolint:exhaustive // mirrors the kinds unmarshalValue accepts
+	switch typ.Kind() {
+	case reflect.Pointer, reflect.Slice:
+		return envDecodable(typ.Elem())
+	case reflect.String, reflect.Bool,
+		reflect.Int, reflect.Int8, reflect.Int16, reflect.Int32, reflect.Int64,
+		reflect.Uint, reflect.Uint8, reflect.Uint16, reflect.Uint32, reflect.Uint64,
+		reflect.Float32, reflect.Float64:
+		return true
+	default:
+		return false
+	}
 }
 
 func bindEnvStruct(
@@ -278,41 +400,58 @@ func lookupEnvValue(
 	dottedKey string,
 	lookup func(string) (string, bool),
 ) (string, string, bool) {
-	if isEnvSkipped(sf) {
-		return "", "", false
-	}
-
-	if envVar, val, ok := lookupEnvTag(sf, prefix, lookup); ok {
-		return envVar, val, true
-	}
-
-	if !strings.Contains(dottedKey, ".") {
-		name := prefix + toUpperSnake(dottedKey)
+	for _, name := range candidateNames(sf, prefix, dottedKey) {
 		if val, ok := lookup(name); ok {
 			return name, val, true
 		}
-
-		return "", "", false
-	}
-
-	parts := strings.Split(dottedKey, ".")
-	upperParts := make([]string, 0, len(parts))
-
-	for _, p := range parts {
-		upperParts = append(upperParts, toUpperSnake(p))
-	}
-
-	doubleName := prefix + strings.Join(upperParts, "__")
-	if val, ok := lookup(doubleName); ok {
-		return doubleName, val, true
-	}
-
-	singleName := prefix + strings.Join(upperParts, "_")
-	if val, ok := lookup(singleName); ok {
-		return singleName, val, true
 	}
 
 	return "", "", false
+}
+
+// candidateNames lists the environment variables that can supply a field, in
+// the order they are tried.
+//
+// An env tag names the variable exactly, tried with the prefix first. The
+// derived names, the prefix followed by the upper-snake key with nested
+// segments joined by "__" and then by "_", are tried only when a prefix is set:
+// without one, a derived name such as PORT or HOST would bind whatever the
+// process environment happens to hold.
+func candidateNames(sf reflect.StructField, prefix, dottedKey string) []string {
+	if isEnvSkipped(sf) {
+		return nil
+	}
+
+	var names []string
+
+	tag, _, _ := strings.Cut(sf.Tag.Get("env"), ",")
+	if tag = strings.TrimSpace(tag); tag != "" {
+		if prefix != "" {
+			names = append(names, prefix+tag)
+		}
+
+		names = append(names, tag)
+	}
+
+	if prefix == "" {
+		return names
+	}
+
+	parts := strings.Split(dottedKey, ".")
+	for i, part := range parts {
+		parts[i] = toUpperSnake(part)
+	}
+
+	if len(parts) > 1 {
+		names = append(names, prefix+strings.Join(parts, "__"))
+	}
+
+	single := prefix + strings.Join(parts, "_")
+	if !slices.Contains(names, single) {
+		names = append(names, single)
+	}
+
+	return names
 }
 
 func isEnvSkipped(sf reflect.StructField) bool {
@@ -328,33 +467,6 @@ func isEnvSkipped(sf reflect.StructField) bool {
 
 func toUpperSnake(s string) string {
 	return strings.ToUpper(defaulter.ToSnakeCase(s))
-}
-
-func lookupEnvTag(sf reflect.StructField, prefix string, lookup func(string) (string, bool)) (string, string, bool) {
-	tag := sf.Tag.Get("env")
-	if tag == "" {
-		return "", "", false
-	}
-
-	parts := strings.Split(tag, ",")
-
-	tagName := strings.TrimSpace(parts[0])
-	if tagName == "" || tagName == "-" {
-		return "", "", false
-	}
-
-	if prefix != "" {
-		prefixed := prefix + tagName
-		if val, ok := lookup(prefixed); ok {
-			return prefixed, val, true
-		}
-	}
-
-	if val, ok := lookup(tagName); ok {
-		return tagName, val, true
-	}
-
-	return "", "", false
 }
 
 func unmarshalValue(field reflect.Value, raw string, parseDur func(string) (time.Duration, error)) error {

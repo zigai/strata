@@ -166,7 +166,7 @@ func TestProvenancePreservesExactIntegers(t *testing.T) {
 				t.Fatalf("seed: %v", err)
 			}
 
-			_, meta, err := strata.Load[wideConfig](strata.WithExplicitPath(path))
+			_, meta, err := strata.LoadWithMetadata[wideConfig](strata.WithPath(path))
 			if err != nil {
 				t.Fatalf("Load: %v", err)
 			}
@@ -192,8 +192,8 @@ func TestProvenanceReaderFollowsDetectedFormat(t *testing.T) {
 	t.Run("json", func(t *testing.T) {
 		t.Parallel()
 
-		_, meta, err := strata.Load[stdinFormatConfig](
-			strata.WithExplicitPath("-"),
+		_, meta, err := strata.LoadWithMetadata[stdinFormatConfig](
+			strata.WithPath("-"),
 			strata.WithStdin(strings.NewReader(`{"alpha": 7}`)),
 		)
 		if err != nil {
@@ -213,8 +213,8 @@ func TestProvenanceReaderFollowsDetectedFormat(t *testing.T) {
 	t.Run("yaml", func(t *testing.T) {
 		t.Parallel()
 
-		_, meta, err := strata.Load[stdinFormatConfig](
-			strata.WithExplicitPath("-"),
+		_, meta, err := strata.LoadWithMetadata[stdinFormatConfig](
+			strata.WithPath("-"),
 			strata.WithStdin(strings.NewReader("alpha: 7\n")),
 		)
 		if err != nil {
@@ -247,7 +247,7 @@ func (s *secretConfig) SetDefaults() {
 func TestSecretTagMasking(t *testing.T) {
 	t.Setenv("SECRET_TOKEN", "super-secret-api-key")
 
-	_, meta, err := strata.Load[secretConfig](
+	_, meta, err := strata.LoadWithMetadata[secretConfig](
 		strata.WithoutFiles(),
 	)
 	if err != nil {
@@ -282,7 +282,7 @@ func TestFileSecretRedaction(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	_, meta, err := strata.Load[secretFileConfig](strata.WithExplicitPath(filePath))
+	_, meta, err := strata.LoadWithMetadata[secretFileConfig](strata.WithPath(filePath))
 	if err != nil {
 		t.Fatalf("Load error: %v", err)
 	}
@@ -320,7 +320,7 @@ func TestCustomKeyFileProvenance(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	_, meta, err := strata.Load[customKeyFileConfig](strata.WithExplicitPath(filePath))
+	_, meta, err := strata.LoadWithMetadata[customKeyFileConfig](strata.WithPath(filePath))
 	if err != nil {
 		t.Fatalf("Load error: %v", err)
 	}
@@ -330,7 +330,7 @@ func TestCustomKeyFileProvenance(t *testing.T) {
 		t.Fatal("missing origin")
 	}
 
-	if o.Source != strata.SourceProject || o.RawValue != "file-value" {
+	if o.Source != strata.SourceFile || o.RawValue != "file-value" {
 		t.Errorf("file override provenance stays stale: %+v", o)
 	}
 }

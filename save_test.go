@@ -25,7 +25,7 @@ func TestSave(t *testing.T) {
 		t.Fatalf("Save error: %v", err)
 	}
 
-	loaded, _, err := strata.Load[demoConfig](strata.WithExplicitPath(p))
+	loaded, err := strata.Load[demoConfig](strata.WithPath(p))
 	if err != nil {
 		t.Fatalf("Load error: %v", err)
 	}

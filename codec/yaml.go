@@ -137,6 +137,16 @@ func collectYAMLBindings(bindings map[string]yamlFieldBinding, typ reflect.Type,
 }
 
 func rewriteYAMLMapping(node *yaml.Node, targetType reflect.Type) error {
+	if targetType.Kind() == reflect.Map {
+		for i := 1; i < len(node.Content); i += 2 {
+			if err := rewriteYAMLNode(node.Content[i], targetType.Elem()); err != nil {
+				return err
+			}
+		}
+
+		return nil
+	}
+
 	if targetType.Kind() != reflect.Struct {
 		return nil
 	}
@@ -219,12 +229,14 @@ func derefType(typ reflect.Type) reflect.Type {
 
 // Encode encodes value as YAML bytes.
 //
-// The document is terminated by a newline.
+// Struct fields are written under their configuration keys, so the document
+// uses the same keys as every other layer. The document is terminated by a
+// newline.
 //
 // It returns an error wrapping the yaml.v3 failure if value cannot be
 // represented in YAML.
 func (c *YAMLCodec) Encode(value any) ([]byte, error) {
-	data, err := yaml.Marshal(value)
+	data, err := yaml.Marshal(keyedValue(value))
 	if err != nil {
 		return nil, fmt.Errorf("yaml marshal: %w", err)
 	}

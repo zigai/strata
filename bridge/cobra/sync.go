@@ -11,24 +11,34 @@ import (
 	"github.com/zigai/strata/internal/plan"
 )
 
-// SyncFlagsToStruct copies flag values into the corresponding fields of cfg, but
+// WithFlags returns a [strata.Option] that injects explicitly supplied CLI flags
+// into the configuration cascade before validation runs.
+//
+// Supplied flags are recorded in the load's Metadata as SourceFlag.
+// Flags not explicitly supplied by the user leave the loaded configuration untouched.
+func WithFlags(cmd *cobra.Command, opts ...FlagOption) strata.Option {
+	return strata.WithContribution(func(target any, meta *strata.Metadata) error {
+		mergedOpts := make([]FlagOption, 0, len(opts)+1)
+		mergedOpts = append(mergedOpts, opts...)
+		mergedOpts = append(mergedOpts, withMetadata(meta))
+
+		return syncFlagsToStruct(cmd, target, mergedOpts...)
+	})
+}
+
+// syncFlagsToStruct copies flag values into the corresponding fields of cfg, but
 // only for flags the parser marked as explicitly supplied by the user. A flag
 // whose value came from configuration is left alone, and a field whose flag was
 // not registered is untouched.
-//
-// SyncFlagsToStruct is called after loading configuration and before Apply. That
-// order matters: Apply writes through the framework's flag setters, and on
-// urfave/cli that marks a flag as supplied. A synchronization performed
-// afterwards could no longer tell user input from configuration.
 //
 // An optional (pointer) field is allocated only when one of its flags was
 // explicitly supplied. A nil subtree the configuration never populated stays
 // nil.
 //
-// When WithMetadata is supplied, every value written here is recorded with
+// When withMetadata is supplied, every value written here is recorded with
 // SourceFlag and the flag's long name as its path. A field tagged as secret is
 // recorded with a redacted raw value.
-func SyncFlagsToStruct(cmd *cobra.Command, cfg any, opts ...FlagOption) error {
+func syncFlagsToStruct(cmd *cobra.Command, cfg any, opts ...FlagOption) error {
 	if cmd == nil {
 		return nil
 	}
@@ -247,4 +257,16 @@ func recordOrigin(meta *strata.Metadata, target *plan.Target, raw string) {
 		Line:     0,
 		RawValue: raw,
 	})
+}
+
+// withMetadata makes syncFlagsToStruct record the origin of every flag value
+// that becomes the winning configuration for its key. A field tagged as secret is
+// recorded with a redacted raw value.
+//
+// The option affects syncFlagsToStruct only; registration does not report
+// provenance.
+func withMetadata(meta *strata.Metadata) FlagOption {
+	return func(config *flagConfig) {
+		config.metadata = meta
+	}
 }

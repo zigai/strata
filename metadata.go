@@ -23,6 +23,7 @@ type Metadata struct {
 	secrets     map[string]bool
 	canonical   map[string]string
 	activeFiles []string
+	unknown     []UnknownKey
 	mu          sync.RWMutex
 }
 
@@ -34,6 +35,7 @@ func NewMetadata() *Metadata {
 		secrets:     make(map[string]bool),
 		canonical:   make(map[string]string),
 		activeFiles: make([]string, 0),
+		unknown:     nil,
 		mu:          sync.RWMutex{},
 	}
 }
@@ -165,6 +167,48 @@ func (m *Metadata) ActiveFiles() []string {
 	return slices.Clone(m.activeFiles)
 }
 
+// Origins returns the origin of every resolved key, sorted by key.
+//
+// It is the whole of what [Metadata.Where] answers one key at a time, for a
+// caller that prints the effective configuration. The returned slice is a copy
+// owned by the caller. A nil receiver returns nil.
+func (m *Metadata) Origins() []Origin {
+	if m == nil {
+		return nil
+	}
+
+	m.mu.RLock()
+	defer m.mu.RUnlock()
+
+	origins := make([]Origin, 0, len(m.origins))
+	for _, origin := range m.origins {
+		origins = append(origins, origin)
+	}
+
+	slices.SortFunc(origins, func(a, b Origin) int {
+		return strings.Compare(a.Key, b.Key)
+	})
+
+	return origins
+}
+
+// UnknownKeys returns the keys configuration files set that the target type
+// does not declare, in the order they were read.
+//
+// These keys have no effect on the result, and are usually typos. Report them
+// as warnings, or use [WithStrict] to fail the load instead. The returned slice
+// is a copy owned by the caller. A nil receiver returns nil.
+func (m *Metadata) UnknownKeys() []UnknownKey {
+	if m == nil {
+		return nil
+	}
+
+	m.mu.RLock()
+	defer m.mu.RUnlock()
+
+	return slices.Clone(m.unknown)
+}
+
 // NewConfigError builds a [ConfigError] for a key that failed validation,
 // attaching the origin already recorded for that key when there is one.
 //
@@ -256,4 +300,11 @@ func toSnakeCaseKey(s string) string {
 	}
 
 	return strings.Join(parts, ".")
+}
+
+func (m *Metadata) recordUnknown(unknown UnknownKey) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+
+	m.unknown = append(m.unknown, unknown)
 }

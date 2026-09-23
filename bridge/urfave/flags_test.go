@@ -18,7 +18,6 @@ import (
 	strataurfave "github.com/zigai/strata/bridge/urfave"
 )
 
-// commandName is shared by the test command fixtures.
 const commandName = "test"
 
 type cacheSettings struct {
@@ -39,12 +38,10 @@ type settings struct {
 	DB      databaseSettings `flag:"db"`
 	Cache   *cacheSettings   `flag:"cache"`
 
-	// No flag tag: configuration only.
 	Internal string `strata:"internal_state"`
 	Secret   string `strata:"secret_field,secret"`
 }
 
-// command builds a test command whose before hook is before.
 func command(before cli.BeforeFunc) *cli.Command {
 	return &cli.Command{
 		Name:      commandName,
@@ -55,25 +52,15 @@ func command(before cli.BeforeFunc) *cli.Command {
 	}
 }
 
-// run registers flags from initial, executes the command with args, and returns
-// the configuration the application would observe. The before hook replaces the
-// caller's value wholesale, as strata.Load does, and then runs the canonical
-// Sync-then-Apply order.
 func run[T any](t *testing.T, initial T, args ...string) (T, error) {
 	t.Helper()
 
 	cfg := initial
 
 	cmd := command(func(ctx context.Context, c *cli.Command) (context.Context, error) {
-		// The loader hands back a freshly decoded value. The parsed CLI value
-		// survives because generated flags own detached storage.
 		cfg = initial
 
-		if err := strataurfave.SyncFlagsToStruct(c, &cfg); err != nil {
-			return ctx, fmt.Errorf("sync: %w", err)
-		}
-
-		return ctx, strataurfave.Apply(c, cfg)
+		return ctx, strataurfave.SyncFlagsToStruct(c, &cfg)
 	})
 
 	if err := strataurfave.RegisterFlags(cmd, &cfg); err != nil {
@@ -87,7 +74,6 @@ func run[T any](t *testing.T, initial T, args ...string) (T, error) {
 	return cfg, nil
 }
 
-// flagNamed reports the registered flag that answers to name, including aliases.
 func flagNamed(cmd *cli.Command, name string) cli.Flag {
 	for _, flag := range cmd.Flags {
 		if slices.Contains(flag.Names(), name) {
@@ -98,13 +84,9 @@ func flagNamed(cmd *cli.Command, name string) cli.Flag {
 	return nil
 }
 
-// --- detached storage -------------------------------------------------------
-
 func TestCLIValueSurvivesLoaderReassignment(t *testing.T) {
 	t.Parallel()
 
-	// The loader supplies a different value for Port. Generated flags own
-	// detached storage, and the parsed CLI value still wins.
 	got, err := run(t,
 		settings{Port: 9000, Verbose: true, Tags: []string{"from-file"}},
 		"--port", "1234",
@@ -129,9 +111,6 @@ func TestCLIValueSurvivesLoaderReassignment(t *testing.T) {
 func TestUnsuppliedFlagsDoNotOverwriteLoadedValues(t *testing.T) {
 	t.Parallel()
 
-	// Registration seeded --port with 8080. The loader then supplies 9000 for a
-	// field the user never mentioned, and synchronization MUST leave it alone:
-	// writing the registered value back would destroy the loaded tier.
 	cfg := settings{Port: 8080}
 
 	cmd := command(func(ctx context.Context, c *cli.Command) (context.Context, error) {
@@ -169,8 +148,6 @@ func TestStorageIsDetachedFromTheCaller(t *testing.T) {
 		t.Fatalf("register: %v", err)
 	}
 
-	// The loader replaces the caller's value, and the original slice backing
-	// array is mutated afterwards. Neither change may reach the registered flags.
 	cfg = settings{Port: 9999, Tags: []string{"replaced"}}
 	tags[0] = "mutated"
 
@@ -222,8 +199,6 @@ func TestPrecedenceTable(t *testing.T) {
 func TestShorthandSuppliesTheSameFlag(t *testing.T) {
 	t.Parallel()
 
-	// urfave/cli has no separate shorthand concept: the tag's shorthand becomes
-	// an alias, and supplying it MUST mark the long name as supplied as well.
 	got, err := run(t, settings{Port: 9000}, "-p", "1234")
 	if err != nil {
 		t.Fatalf("run: %v", err)
@@ -233,8 +208,6 @@ func TestShorthandSuppliesTheSameFlag(t *testing.T) {
 		t.Fatalf("Port = %d, want 1234 (the shorthand must mark --port as supplied)", got.Port)
 	}
 }
-
-// --- discovery --------------------------------------------------------------
 
 func TestUntaggedFieldsAreNotFlags(t *testing.T) {
 	t.Parallel()
@@ -316,8 +289,6 @@ func TestDerivedNames(t *testing.T) {
 	}
 }
 
-// --- tag grammar ------------------------------------------------------------
-
 func TestTagGrammarRejections(t *testing.T) {
 	t.Parallel()
 
@@ -395,8 +366,6 @@ func assertError(t *testing.T, cfg any, want error) {
 		t.Fatalf("registration must be transactional: %d flags were added", len(cmd.Flags))
 	}
 }
-
-// --- registration errors ----------------------------------------------------
 
 func TestRegistrationErrors(t *testing.T) {
 	t.Parallel()
@@ -487,8 +456,6 @@ type recursive struct {
 	Value int `flag:"value"`
 }
 
-// --- type coverage ----------------------------------------------------------
-
 type wide struct {
 	Text      string          `flag:"text"`
 	Enabled   bool            `flag:"enabled"`
@@ -577,8 +544,6 @@ func TestNarrowIntegerOverflowIsReported(t *testing.T) {
 	}
 }
 
-// --- slices -----------------------------------------------------------------
-
 func TestSliceValuesRoundTrip(t *testing.T) {
 	t.Parallel()
 
@@ -604,65 +569,6 @@ func TestSliceReplacementDoesNotAppend(t *testing.T) {
 		t.Fatalf("Tags = %v, want [from-cli]", got.Tags)
 	}
 }
-
-func TestForeignSliceFlagIsReplacedOnTheFirstWrite(t *testing.T) {
-	t.Parallel()
-
-	// A flag the bridge did not generate exposes no destination it can address,
-	// and Apply falls back to urfave/cli's string interface. urfave/cli clears a
-	// slice on its first write, which replaces the registered default.
-	type tagged struct {
-		Items []string `flag:"items"`
-	}
-
-	cfg := tagged{Items: []string{"first", "second"}}
-
-	cmd := command(nil)
-	cmd.Flags = append(cmd.Flags, &cli.StringSliceFlag{Name: "items", Value: []string{"default"}})
-
-	if err := strataurfave.Apply(cmd, cfg); err != nil {
-		t.Fatalf("apply: %v", err)
-	}
-
-	if got := cmd.StringSlice("items"); !reflect.DeepEqual(got, []string{"first", "second"}) {
-		t.Fatalf("items = %v, want [first second]", got)
-	}
-}
-
-func TestSliceElementsSurviveApply(t *testing.T) {
-	t.Parallel()
-
-	// Elements containing commas, quotes, and spaces do not survive a
-	// comma-joined round trip. The configuration-to-flag direction MUST assign
-	// the slice and not serialize it.
-	cfg := settings{Tags: []string{"a,b", `"quoted"`, "", "back\\slash"}}
-
-	var observed []string
-
-	cmd := command(func(ctx context.Context, c *cli.Command) (context.Context, error) {
-		if err := strataurfave.Apply(c, cfg); err != nil {
-			return ctx, fmt.Errorf("apply: %w", err)
-		}
-
-		observed = c.StringSlice("tags")
-
-		return ctx, nil
-	})
-
-	if err := strataurfave.RegisterFlags(cmd, &cfg); err != nil {
-		t.Fatalf("register: %v", err)
-	}
-
-	if err := cmd.Run(context.Background(), []string{commandName}); err != nil {
-		t.Fatalf("run: %v", err)
-	}
-
-	if !reflect.DeepEqual(observed, cfg.Tags) {
-		t.Fatalf("observed = %q, want %q", observed, cfg.Tags)
-	}
-}
-
-// --- pointers ---------------------------------------------------------------
 
 func TestPointerAllocation(t *testing.T) {
 	t.Parallel()
@@ -693,8 +599,6 @@ func TestPointerAllocation(t *testing.T) {
 		}
 	})
 }
-
-// --- secrets ----------------------------------------------------------------
 
 func TestSecretDefaultsAreNotPublished(t *testing.T) {
 	t.Parallel()
@@ -786,8 +690,6 @@ func TestSecretOriginsAreRedacted(t *testing.T) {
 	}
 }
 
-// --- manual coexistence -----------------------------------------------------
-
 func TestManualFlagsCoexist(t *testing.T) {
 	t.Parallel()
 
@@ -796,11 +698,7 @@ func TestManualFlagsCoexist(t *testing.T) {
 	cmd := command(func(ctx context.Context, c *cli.Command) (context.Context, error) {
 		cfg = settings{Port: 9000}
 
-		if err := strataurfave.SyncFlagsToStruct(c, &cfg); err != nil {
-			return ctx, fmt.Errorf("sync: %w", err)
-		}
-
-		return ctx, strataurfave.Apply(c, cfg)
+		return ctx, strataurfave.SyncFlagsToStruct(c, &cfg)
 	})
 
 	if err := strataurfave.RegisterFlags(cmd, &cfg); err != nil {
@@ -822,8 +720,6 @@ func TestManualFlagsCoexist(t *testing.T) {
 	}
 }
 
-// --- nested containers ------------------------------------------------------
-
 func TestNestedPrefixes(t *testing.T) {
 	t.Parallel()
 
@@ -836,8 +732,6 @@ func TestNestedPrefixes(t *testing.T) {
 		t.Fatalf("DB = %+v, want db.internal:5432", got.DB)
 	}
 }
-
-// --- generation -------------------------------------------------------------
 
 func TestGeneratedFlagsParseAndSynchronize(t *testing.T) {
 	t.Parallel()
@@ -871,117 +765,144 @@ func TestGeneratedFlagsParseAndSynchronize(t *testing.T) {
 	}
 }
 
-// --- legacy Apply path ------------------------------------------------------
-
-func TestApplyLeavesExplicitFlagsAlone(t *testing.T) {
-	t.Parallel()
-
-	cfg := settings{Port: 9000}
-
-	cmd := command(nil)
-
-	if err := strataurfave.RegisterFlags(cmd, &cfg); err != nil {
-		t.Fatalf("register: %v", err)
-	}
-
-	if err := cmd.Run(context.Background(), []string{commandName, "--port", "1234"}); err != nil {
-		t.Fatalf("run: %v", err)
-	}
-
-	if err := strataurfave.Apply(cmd, settings{Port: 9000}); err != nil {
-		t.Fatalf("apply: %v", err)
-	}
-
-	if value := cmd.Int("port"); value != 1234 {
-		t.Fatalf("port = %d, want 1234: Apply must not overwrite a supplied flag", value)
-	}
+type urfaveValidatedSettings struct {
+	Port int `flag:"port" yaml:"port"`
 }
 
-func TestApplyMarksFlagsAsSupplied(t *testing.T) {
-	t.Parallel()
-
-	// Apply writes through Command.Set, which flips urfave/cli's supplied marker.
-	// This test pins the asymmetry behind the documented rule: SyncFlagsToStruct
-	// runs before Apply.
-	cfg := settings{Port: 9000}
-
-	cmd := command(nil)
-
-	if err := strataurfave.RegisterFlags(cmd, &cfg); err != nil {
-		t.Fatalf("register: %v", err)
+func (s *urfaveValidatedSettings) Validate() error {
+	if s.Port < 1024 {
+		return fmt.Errorf("port must be >= 1024: got %d", s.Port)
 	}
 
-	if err := cmd.Run(context.Background(), []string{commandName}); err != nil {
-		t.Fatalf("run: %v", err)
-	}
-
-	if cmd.IsSet("port") {
-		t.Fatalf("--port must not be marked as supplied: the user passed nothing")
-	}
-
-	if err := strataurfave.Apply(cmd, cfg); err != nil {
-		t.Fatalf("apply: %v", err)
-	}
-
-	if !cmd.IsSet("port") {
-		t.Fatalf("Apply must mark --port as supplied; synchronization depends on running first")
-	}
+	return nil
 }
 
-func TestApplyToleratesUnusableConfigurations(t *testing.T) {
+func TestWithFlagsParticipatesInCascadeAndRecordsProvenance(t *testing.T) {
 	t.Parallel()
 
-	cfg := settings{}
-
-	if err := strataurfave.Apply(nil, cfg); err != nil {
-		t.Fatalf("apply(nil command): %v", err)
-	}
-
-	if err := strataurfave.SyncFlagsToStruct(nil, &cfg); err != nil {
-		t.Fatalf("sync(nil command): %v", err)
-	}
+	var seed settings
 
 	var (
-		pointer *settings
-		scalar  = 7
+		loaded settings
+		meta   *strata.Metadata
 	)
 
-	for _, unusable := range []any{nil, pointer, scalar} {
-		cmd := command(nil)
+	cmd := command(func(ctx context.Context, c *cli.Command) (context.Context, error) {
+		var err error
 
-		if err := strataurfave.RegisterFlags(cmd, &settings{Port: 8080}); err != nil {
-			t.Fatalf("register: %v", err)
-		}
+		loaded, meta, err = strata.LoadWithMetadata[settings](
+			strata.WithContribution(func(target any, _ *strata.Metadata) error {
+				s, ok := target.(*settings)
+				if !ok {
+					return errors.New("target is not *settings")
+				}
 
-		if err := strataurfave.Apply(cmd, unusable); err != nil {
-			t.Fatalf("apply(%v): %v", unusable, err)
-		}
+				s.Port = 8080
+				s.Verbose = true
 
-		if value := cmd.Int("port"); value != 8080 {
-			t.Errorf("apply(%v) left port = %d, want the registered 8080", unusable, value)
-		}
+				return nil
+			}),
+			strataurfave.WithFlags(c, strataurfave.WithMetadata(nil)),
+		)
+
+		return ctx, err
+	})
+
+	if err := strataurfave.RegisterFlags(cmd, &seed); err != nil {
+		t.Fatalf("register: %v", err)
+	}
+
+	if err := cmd.Run(context.Background(), []string{commandName, "--port", "9090"}); err != nil {
+		t.Fatalf("run: %v", err)
+	}
+
+	if loaded.Port != 9090 {
+		t.Errorf("Port = %d, want 9090 (CLI flag should override lower layer)", loaded.Port)
+	}
+
+	if !loaded.Verbose {
+		t.Errorf("Verbose = false, want true (unmentioned flag retains layer value)")
+	}
+
+	origin, ok := meta.Where("port")
+	if !ok {
+		t.Fatal("Where(port) not recorded")
+	}
+
+	if origin.Source != strata.SourceFlag || origin.RawValue != "9090" {
+		t.Errorf("origin = %+v, want SourceFlag and raw 9090", origin)
 	}
 }
 
-func TestUntaggedFieldsMatchHandRegisteredFlags(t *testing.T) {
+func TestWithFlagsCanSatisfyValidation(t *testing.T) {
 	t.Parallel()
 
-	// Apply keeps the historical lenient matching: a hand-registered flag derived
-	// from an untagged field name still receives the configuration value.
-	type legacy struct {
-		SortOrder string
+	var seed urfaveValidatedSettings
+
+	var loaded urfaveValidatedSettings
+
+	cmd := command(func(ctx context.Context, c *cli.Command) (context.Context, error) {
+		var err error
+
+		loaded, err = strata.Load[urfaveValidatedSettings](
+			strata.WithContribution(func(target any, _ *strata.Metadata) error {
+				v, ok := target.(*urfaveValidatedSettings)
+				if !ok {
+					return errors.New("target is not *urfaveValidatedSettings")
+				}
+
+				v.Port = 80
+
+				return nil
+			}),
+			strataurfave.WithFlags(c),
+		)
+
+		return ctx, err
+	})
+
+	if err := strataurfave.RegisterFlags(cmd, &seed); err != nil {
+		t.Fatalf("register: %v", err)
 	}
 
-	cfg := legacy{SortOrder: "created_at"}
-
-	cmd := command(nil)
-	cmd.Flags = append(cmd.Flags, &cli.StringFlag{Name: "sort-order", Value: "text"})
-
-	if err := strataurfave.Apply(cmd, cfg); err != nil {
-		t.Fatalf("apply: %v", err)
+	if err := cmd.Run(context.Background(), []string{commandName, "--port", "8080"}); err != nil {
+		t.Fatalf("run: %v, expected validation to succeed after CLI override", err)
 	}
 
-	if got := cmd.String("sort-order"); got != "created_at" {
-		t.Fatalf("sort-order = %q, want created_at", got)
+	if loaded.Port != 8080 {
+		t.Errorf("Port = %d, want 8080", loaded.Port)
+	}
+}
+
+func TestWithFlagsCanViolateValidation(t *testing.T) {
+	t.Parallel()
+
+	var seed urfaveValidatedSettings
+
+	cmd := command(func(ctx context.Context, c *cli.Command) (context.Context, error) {
+		_, err := strata.Load[urfaveValidatedSettings](
+			strata.WithContribution(func(target any, _ *strata.Metadata) error {
+				v, ok := target.(*urfaveValidatedSettings)
+				if !ok {
+					return errors.New("target is not *urfaveValidatedSettings")
+				}
+
+				v.Port = 8080
+
+				return nil
+			}),
+			strataurfave.WithFlags(c),
+		)
+
+		return ctx, err
+	})
+
+	if err := strataurfave.RegisterFlags(cmd, &seed); err != nil {
+		t.Fatalf("register: %v", err)
+	}
+
+	err := cmd.Run(context.Background(), []string{commandName, "--port", "80"})
+	if err == nil {
+		t.Fatal("expected validation error from invalid CLI flag, got nil")
 	}
 }

@@ -77,4 +77,14 @@ var (
 
 	// ErrAmbiguousKey is returned when a dotted key matches multiple keys in a document.
 	ErrAmbiguousKey = edit.ErrAmbiguousKey
+
+	// ErrDefaultsTypeMismatch is returned when the type given to [WithDefaults]
+	// differs from the type being loaded.
+	ErrDefaultsTypeMismatch = errors.New("defaults type does not match the loaded type")
+
+	// ErrUnknownKey is returned under [WithStrict] when a configuration file names
+	// a key the target type does not declare. Each unknown key is reported as a
+	// [*ConfigError] wrapping this error, naming the file and, where one is close,
+	// the key that was probably meant.
+	ErrUnknownKey = errors.New("unknown key")
 )

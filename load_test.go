@@ -45,7 +45,7 @@ func TestLoadInto(t *testing.T) {
 
 	var target cascadingConfig
 
-	meta, err := strata.LoadInto(&target, strata.WithExplicitPath(filePath))
+	meta, err := strata.LoadInto(&target, strata.WithPath(filePath))
 	if err != nil {
 		t.Fatalf("LoadInto error: %v", err)
 	}
@@ -86,7 +86,7 @@ func TestLoadIntoWithDefaults(t *testing.T) {
 
 func TestPrecedenceCascading(t *testing.T) {
 	tmpDir := t.TempDir()
-	projectFile := filepath.Join(tmpDir, ".precedence.toml")
+	projectFile := filepath.Join(tmpDir, "precedence.toml")
 
 	if err := os.WriteFile(projectFile, []byte("app_name = \"project-app\"\nmax_retries = 10\n"), 0o600); err != nil {
 		t.Fatalf("WriteFile: %v", err)
@@ -94,9 +94,9 @@ func TestPrecedenceCascading(t *testing.T) {
 
 	t.Setenv("PREC_APP_NAME", "env-app")
 
-	cfg, meta, err := strata.Load[cascadingConfig](
+	cfg, meta, err := strata.LoadWithMetadata[cascadingConfig](
+		strata.WithPath(projectFile),
 		strata.WithAppName("precedence"),
-		strata.WithCWD(tmpDir),
 		strata.WithEnvPrefix("PREC_"),
 	)
 	if err != nil {
@@ -119,8 +119,8 @@ func TestPrecedenceCascading(t *testing.T) {
 		t.Errorf("app_name origin = %+v, want SourceEnv", orig)
 	}
 
-	if orig, ok := meta.Where("max_retries"); !ok || orig.Source != strata.SourceProject {
-		t.Errorf("max_retries origin = %+v, want SourceProject", orig)
+	if orig, ok := meta.Where("max_retries"); !ok || orig.Source != strata.SourceFile {
+		t.Errorf("max_retries origin = %+v, want SourceFile", orig)
 	}
 
 	if orig, ok := meta.Where("timeout"); !ok || orig.Source != strata.SourceDefault {
@@ -139,8 +139,8 @@ func TestBooleanFalseOverwriteDefense(t *testing.T) {
 		t.Fatalf("WriteFile: %v", err)
 	}
 
-	cfg, meta, err := strata.Load[cascadingConfig](
-		strata.WithExplicitPath(filePath),
+	cfg, meta, err := strata.LoadWithMetadata[cascadingConfig](
+		strata.WithPath(filePath),
 	)
 	if err != nil {
 		t.Fatalf("Load error: %v", err)
@@ -162,8 +162,8 @@ func TestBooleanFalseOverwriteDefense(t *testing.T) {
 		t.Errorf("auto_clean origin = %+v, want SourceDefault", orig)
 	}
 
-	if orig, ok := meta.Where("max_retries"); !ok || orig.Source != strata.SourceProject {
-		t.Errorf("max_retries origin = %+v, want SourceProject", orig)
+	if orig, ok := meta.Where("max_retries"); !ok || orig.Source != strata.SourceFile {
+		t.Errorf("max_retries origin = %+v, want SourceFile", orig)
 	}
 }
 
@@ -178,8 +178,8 @@ func TestSliceReplacementSemantics(t *testing.T) {
 		t.Fatalf("WriteFile: %v", err)
 	}
 
-	cfg, _, err := strata.Load[cascadingConfig](
-		strata.WithExplicitPath(filePath),
+	cfg, err := strata.Load[cascadingConfig](
+		strata.WithPath(filePath),
 	)
 	if err != nil {
 		t.Fatalf("Load error: %v", err)
@@ -191,8 +191,6 @@ func TestSliceReplacementSemantics(t *testing.T) {
 	}
 }
 
-// An explicit path MUST outrank WithoutFiles. WithoutFiles once short-circuited
-// first, loading nothing.
 func TestExplicitPathOutranksWithoutFiles(t *testing.T) {
 	t.Parallel()
 
@@ -201,7 +199,7 @@ func TestExplicitPathOutranksWithoutFiles(t *testing.T) {
 		t.Fatalf("seed: %v", err)
 	}
 
-	got, _, err := strata.Load[narrowConfig](strata.WithExplicitPath(path), strata.WithoutFiles())
+	got, err := strata.Load[narrowConfig](strata.WithPath(path), strata.WithoutFiles())
 	if err != nil {
 		t.Fatalf("Load: %v", err)
 	}
@@ -240,8 +238,8 @@ func TestCustomCodecRegistration(t *testing.T) {
 		Value string `strata:"value"`
 	}
 
-	_, _, err := strata.Load[SimpleCfg](
-		strata.WithExplicitPath(customPath),
+	_, err := strata.Load[SimpleCfg](
+		strata.WithPath(customPath),
 		strata.WithCodec(".custom", customCodec),
 	)
 	if err != nil {
@@ -262,8 +260,8 @@ func TestMaxFileSizeOption(t *testing.T) {
 
 	buf := bytes.NewBufferString(strings.Repeat("a", 200))
 
-	_, _, err := strata.Load[Cfg](
-		strata.WithExplicitPath("-"),
+	_, err := strata.Load[Cfg](
+		strata.WithPath("-"),
 		strata.WithStdin(buf),
 		strata.WithMaxFileSize(100),
 	)
@@ -272,9 +270,6 @@ func TestMaxFileSizeOption(t *testing.T) {
 	}
 }
 
-// A size limit of [math.MaxInt64] MUST read the whole input. The limit-plus-one
-// probe once overflowed to a negative value, so the read returned no bytes and
-// the load succeeded with an empty configuration.
 func TestMaxFileSizeAcceptsMaxInt64(t *testing.T) {
 	t.Parallel()
 
@@ -283,7 +278,7 @@ func TestMaxFileSizeAcceptsMaxInt64(t *testing.T) {
 		t.Fatalf("seed: %v", err)
 	}
 
-	got, _, err := strata.Load[narrowConfig](strata.WithExplicitPath(path), strata.WithMaxFileSize(math.MaxInt64))
+	got, err := strata.Load[narrowConfig](strata.WithPath(path), strata.WithMaxFileSize(math.MaxInt64))
 	if err != nil {
 		t.Fatalf("Load: %v", err)
 	}
@@ -301,7 +296,7 @@ func TestFileTooLargeIsClassifiable(t *testing.T) {
 		t.Fatalf("seed: %v", err)
 	}
 
-	_, _, err := strata.Load[narrowConfig](strata.WithExplicitPath(path), strata.WithMaxFileSize(4))
+	_, err := strata.Load[narrowConfig](strata.WithPath(path), strata.WithMaxFileSize(4))
 	if !errors.Is(err, strata.ErrFileTooLarge) {
 		t.Fatalf("err = %v, want it to wrap ErrFileTooLarge", err)
 	}
@@ -319,17 +314,15 @@ type nestedPanicky struct {
 	Inner panickyConfig `strata:"inner"`
 }
 
-// A panic from SetDefaults MUST be reported. It was once swallowed, so a load
-// whose defaults were never applied returned successfully.
 func TestPanickingDefaultsIsReported(t *testing.T) {
 	t.Parallel()
 
-	_, _, err := strata.Load[panickyConfig](strata.WithoutFiles())
+	_, err := strata.Load[panickyConfig](strata.WithoutFiles())
 	if err == nil || !strings.Contains(err.Error(), "defaults exploded") {
 		t.Fatalf("top-level err = %v, want the panic reported", err)
 	}
 
-	if _, _, err := strata.Load[nestedPanicky](strata.WithoutFiles()); err == nil {
+	if _, err := strata.Load[nestedPanicky](strata.WithoutFiles()); err == nil {
 		t.Fatal("nested panicking SetDefaults returned no error")
 	} else if !strings.Contains(err.Error(), "defaults exploded") {
 		t.Errorf("err = %v, want it to carry the panicking value", err)
@@ -342,24 +335,27 @@ type formatsTestConfig struct {
 }
 
 func TestWithFormatsRestrictsDiscovery(t *testing.T) {
-	t.Parallel()
-
 	dir := t.TempDir()
-	tomlPath := filepath.Join(dir, ".myapp.toml")
 
+	appDir := filepath.Join(dir, "myapp")
+	if err := os.MkdirAll(appDir, 0o700); err != nil {
+		t.Fatalf("MkdirAll: %v", err)
+	}
+
+	tomlPath := filepath.Join(appDir, "config.toml")
 	if err := os.WriteFile(tomlPath, []byte("port = 8080\nhost = 'toml-host'\n"), 0o600); err != nil {
 		t.Fatalf("WriteFile: %v", err)
 	}
 
-	yamlPath := filepath.Join(dir, ".myapp.yaml")
-
+	yamlPath := filepath.Join(appDir, "config.yaml")
 	if err := os.WriteFile(yamlPath, []byte("port: 9090\nhost: yaml-host\n"), 0o600); err != nil {
 		t.Fatalf("WriteFile: %v", err)
 	}
 
-	defaultCfg, defaultMeta, err := strata.Load[formatsTestConfig](
+	t.Setenv("XDG_CONFIG_HOME", dir)
+
+	defaultCfg, defaultMeta, err := strata.LoadWithMetadata[formatsTestConfig](
 		strata.WithAppName("myapp"),
-		strata.WithCWD(dir),
 	)
 	if err != nil {
 		t.Fatalf("Load default: %v", err)
@@ -373,9 +369,8 @@ func TestWithFormatsRestrictsDiscovery(t *testing.T) {
 		t.Fatalf("active file = %s, want %s", defaultMeta.ActiveFiles()[0], tomlPath)
 	}
 
-	yamlCfg, yamlMeta, err := strata.Load[formatsTestConfig](
+	yamlCfg, yamlMeta, err := strata.LoadWithMetadata[formatsTestConfig](
 		strata.WithAppName("myapp"),
-		strata.WithCWD(dir),
 		strata.WithFormats("yaml"),
 	)
 	if err != nil {
@@ -392,24 +387,27 @@ func TestWithFormatsRestrictsDiscovery(t *testing.T) {
 }
 
 func TestWithFormatsReordersPriority(t *testing.T) {
-	t.Parallel()
-
 	dir := t.TempDir()
-	tomlPath := filepath.Join(dir, ".myapp.toml")
 
+	appDir := filepath.Join(dir, "myapp")
+	if err := os.MkdirAll(appDir, 0o700); err != nil {
+		t.Fatalf("MkdirAll: %v", err)
+	}
+
+	tomlPath := filepath.Join(appDir, "config.toml")
 	if err := os.WriteFile(tomlPath, []byte("port = 8080\n"), 0o600); err != nil {
 		t.Fatalf("WriteFile: %v", err)
 	}
 
-	jsonPath := filepath.Join(dir, ".myapp.json")
-
+	jsonPath := filepath.Join(appDir, "config.json")
 	if err := os.WriteFile(jsonPath, []byte(`{"port": 7070}`), 0o600); err != nil {
 		t.Fatalf("WriteFile: %v", err)
 	}
 
-	cfg, meta, err := strata.Load[formatsTestConfig](
+	t.Setenv("XDG_CONFIG_HOME", dir)
+
+	cfg, meta, err := strata.LoadWithMetadata[formatsTestConfig](
 		strata.WithAppName("myapp"),
-		strata.WithCWD(dir),
 		strata.WithFormats("json", "toml"),
 	)
 	if err != nil {
@@ -426,18 +424,22 @@ func TestWithFormatsReordersPriority(t *testing.T) {
 }
 
 func TestWithFormatsYAMLExpansion(t *testing.T) {
-	t.Parallel()
-
 	dir := t.TempDir()
-	ymlPath := filepath.Join(dir, ".myapp.yml")
 
+	appDir := filepath.Join(dir, "myapp")
+	if err := os.MkdirAll(appDir, 0o700); err != nil {
+		t.Fatalf("MkdirAll: %v", err)
+	}
+
+	ymlPath := filepath.Join(appDir, "config.yml")
 	if err := os.WriteFile(ymlPath, []byte("port: 9090\n"), 0o600); err != nil {
 		t.Fatalf("WriteFile: %v", err)
 	}
 
-	cfg, _, err := strata.Load[formatsTestConfig](
+	t.Setenv("XDG_CONFIG_HOME", dir)
+
+	cfg, err := strata.Load[formatsTestConfig](
 		strata.WithAppName("myapp"),
-		strata.WithCWD(dir),
 		strata.WithFormats("yaml"),
 	)
 	if err != nil {
@@ -448,9 +450,8 @@ func TestWithFormatsYAMLExpansion(t *testing.T) {
 		t.Fatalf("cfg.Port = %d, want 9090", cfg.Port)
 	}
 
-	cfgDot, _, err := strata.Load[formatsTestConfig](
+	cfgDot, err := strata.Load[formatsTestConfig](
 		strata.WithAppName("myapp"),
-		strata.WithCWD(dir),
 		strata.WithFormats(".yaml"),
 	)
 	if err != nil {
@@ -465,7 +466,7 @@ func TestWithFormatsYAMLExpansion(t *testing.T) {
 func TestWithFormatsUnknownFormatError(t *testing.T) {
 	t.Parallel()
 
-	_, _, err := strata.Load[formatsTestConfig](
+	_, err := strata.Load[formatsTestConfig](
 		strata.WithFormats("tmol"),
 	)
 	if err == nil {
@@ -493,8 +494,8 @@ func TestWithFormatsCustomCodec(t *testing.T) {
 
 	c1 := &dummyCustomCodec{}
 
-	_, _, err := strata.Load[formatsTestConfig](
-		strata.WithExplicitPath(customPath),
+	_, err := strata.Load[formatsTestConfig](
+		strata.WithPath(customPath),
 		strata.WithCodec(".custom", c1),
 		strata.WithFormats(".custom"),
 	)
@@ -508,8 +509,8 @@ func TestWithFormatsCustomCodec(t *testing.T) {
 
 	c2 := &dummyCustomCodec{}
 
-	_, _, err = strata.Load[formatsTestConfig](
-		strata.WithExplicitPath(customPath),
+	_, err = strata.Load[formatsTestConfig](
+		strata.WithPath(customPath),
 		strata.WithFormats(".custom"),
 		strata.WithCodec(".custom", c2),
 	)
@@ -532,8 +533,8 @@ func TestWithFormatsExplicitPathDisallowed(t *testing.T) {
 		t.Fatalf("WriteFile: %v", err)
 	}
 
-	_, _, err := strata.Load[formatsTestConfig](
-		strata.WithExplicitPath(yamlPath),
+	_, err := strata.Load[formatsTestConfig](
+		strata.WithPath(yamlPath),
 		strata.WithFormats(".toml"),
 	)
 	if err == nil {
@@ -549,15 +550,14 @@ func TestWithFormatAliasTOML(t *testing.T) {
 	t.Parallel()
 
 	dir := t.TempDir()
-	confPath := filepath.Join(dir, ".myapp.conf")
+	confPath := filepath.Join(dir, "config.conf")
 
 	if err := os.WriteFile(confPath, []byte("port = 8080\nhost = 'conf-host'\n"), 0o600); err != nil {
 		t.Fatalf("WriteFile: %v", err)
 	}
 
-	cfg, meta, err := strata.Load[formatsTestConfig](
-		strata.WithAppName("myapp"),
-		strata.WithCWD(dir),
+	cfg, meta, err := strata.LoadWithMetadata[formatsTestConfig](
+		strata.WithPath(confPath),
 		strata.WithFormatAlias(".conf", "toml"),
 	)
 	if err != nil {
@@ -577,8 +577,8 @@ func TestWithFormatAliasTOML(t *testing.T) {
 		t.Fatal("Where(\"port\") returned false, want true")
 	}
 
-	if origin.Source != "project" || origin.Path != confPath {
-		t.Fatalf("origin = %+v, want project and %s", origin, confPath)
+	if origin.Source != "file" || origin.Path != confPath {
+		t.Fatalf("origin = %+v, want file and %s", origin, confPath)
 	}
 }
 
@@ -586,15 +586,14 @@ func TestWithFormatAliasYAML(t *testing.T) {
 	t.Parallel()
 
 	dir := t.TempDir()
-	confPath := filepath.Join(dir, ".myapp.conf")
+	confPath := filepath.Join(dir, "config.conf")
 
 	if err := os.WriteFile(confPath, []byte("port: 9090\nhost: yaml-conf-host\n"), 0o600); err != nil {
 		t.Fatalf("WriteFile: %v", err)
 	}
 
-	cfg, meta, err := strata.Load[formatsTestConfig](
-		strata.WithAppName("myapp"),
-		strata.WithCWD(dir),
+	cfg, meta, err := strata.LoadWithMetadata[formatsTestConfig](
+		strata.WithPath(confPath),
 		strata.WithFormatAlias(".conf", "yaml"),
 	)
 	if err != nil {
@@ -613,7 +612,7 @@ func TestWithFormatAliasYAML(t *testing.T) {
 func TestWithFormatAliasUnknownTarget(t *testing.T) {
 	t.Parallel()
 
-	_, _, err := strata.Load[formatsTestConfig](
+	_, err := strata.Load[formatsTestConfig](
 		strata.WithFormatAlias(".conf", "nonexistent"),
 	)
 	if err == nil {
@@ -629,15 +628,14 @@ func TestWithDecoder(t *testing.T) {
 	t.Parallel()
 
 	dir := t.TempDir()
-	customPath := filepath.Join(dir, ".myapp.custom")
+	customPath := filepath.Join(dir, "config.custom")
 
 	if err := os.WriteFile(customPath, []byte(`{"port": 5050, "host": "decoder-host"}`), 0o600); err != nil {
 		t.Fatalf("WriteFile: %v", err)
 	}
 
-	cfg, meta, err := strata.Load[formatsTestConfig](
-		strata.WithAppName("myapp"),
-		strata.WithCWD(dir),
+	cfg, meta, err := strata.LoadWithMetadata[formatsTestConfig](
+		strata.WithPath(customPath),
 		strata.WithDecoder(".custom", json.Unmarshal),
 	)
 	if err != nil {
@@ -657,15 +655,14 @@ func TestWithDecoderFunc(t *testing.T) {
 	t.Parallel()
 
 	dir := t.TempDir()
-	iniPath := filepath.Join(dir, ".myapp.ini")
+	iniPath := filepath.Join(dir, "config.ini")
 
 	if err := os.WriteFile(iniPath, []byte("port=4040\nhost=ini-host\n"), 0o600); err != nil {
 		t.Fatalf("WriteFile: %v", err)
 	}
 
-	cfg, meta, err := strata.Load[formatsTestConfig](
-		strata.WithAppName("myapp"),
-		strata.WithCWD(dir),
+	cfg, meta, err := strata.LoadWithMetadata[formatsTestConfig](
+		strata.WithPath(iniPath),
 		strata.WithDecoderFunc(".ini", func(data []byte, target *formatsTestConfig) error {
 			for line := range strings.SplitSeq(string(data), "\n") {
 				line = strings.TrimSpace(line)
@@ -737,15 +734,14 @@ func TestWithDecoderMalformed(t *testing.T) {
 	t.Parallel()
 
 	dir := t.TempDir()
-	customPath := filepath.Join(dir, ".myapp.custom")
+	customPath := filepath.Join(dir, "config.custom")
 
 	if err := os.WriteFile(customPath, []byte("not valid json"), 0o600); err != nil {
 		t.Fatalf("WriteFile: %v", err)
 	}
 
-	_, _, err := strata.Load[formatsTestConfig](
-		strata.WithAppName("myapp"),
-		strata.WithCWD(dir),
+	_, err := strata.Load[formatsTestConfig](
+		strata.WithPath(customPath),
 		strata.WithDecoder(".custom", json.Unmarshal),
 	)
 	if err == nil {
@@ -771,15 +767,14 @@ func TestWithFormatAliasTransitive(t *testing.T) {
 	t.Parallel()
 
 	dir := t.TempDir()
-	cfgPath := filepath.Join(dir, ".myapp.cfg")
+	cfgPath := filepath.Join(dir, "config.cfg")
 
 	if err := os.WriteFile(cfgPath, []byte("port = 8181\nhost = 'transitive-host'\n"), 0o600); err != nil {
 		t.Fatalf("WriteFile: %v", err)
 	}
 
-	cfg, meta, err := strata.Load[formatsTestConfig](
-		strata.WithAppName("myapp"),
-		strata.WithCWD(dir),
+	cfg, meta, err := strata.LoadWithMetadata[formatsTestConfig](
+		strata.WithPath(cfgPath),
 		strata.WithFormatAlias(".cfg", ".conf"),
 		strata.WithFormatAlias(".conf", "toml"),
 	)
@@ -800,8 +795,8 @@ func TestWithFormatAliasTransitive(t *testing.T) {
 		t.Fatal("Where(\"port\") returned false, want true")
 	}
 
-	if origin.Source != "project" || origin.Path != cfgPath {
-		t.Fatalf("origin = %+v, want project and %s", origin, cfgPath)
+	if origin.Source != "file" || origin.Path != cfgPath {
+		t.Fatalf("origin = %+v, want file and %s", origin, cfgPath)
 	}
 }
 
@@ -809,15 +804,14 @@ func TestWithFormatAliasJSON(t *testing.T) {
 	t.Parallel()
 
 	dir := t.TempDir()
-	manifestPath := filepath.Join(dir, ".myapp.manifest")
+	manifestPath := filepath.Join(dir, "config.manifest")
 
 	if err := os.WriteFile(manifestPath, []byte(`{"port": 7272, "host": "manifest-host"}`), 0o600); err != nil {
 		t.Fatalf("WriteFile: %v", err)
 	}
 
-	cfg, meta, err := strata.Load[formatsTestConfig](
-		strata.WithAppName("myapp"),
-		strata.WithCWD(dir),
+	cfg, meta, err := strata.LoadWithMetadata[formatsTestConfig](
+		strata.WithPath(manifestPath),
 		strata.WithFormatAlias(".manifest", "json"),
 	)
 	if err != nil {
@@ -833,8 +827,8 @@ func TestWithFormatAliasJSON(t *testing.T) {
 		t.Fatal("Where(\"host\") returned false, want true")
 	}
 
-	if origin.Source != "project" || origin.Path != manifestPath {
-		t.Fatalf("origin = %+v, want project and %s", origin, manifestPath)
+	if origin.Source != "file" || origin.Path != manifestPath {
+		t.Fatalf("origin = %+v, want file and %s", origin, manifestPath)
 	}
 }
 
@@ -842,15 +836,14 @@ func TestWithFormatAliasNormalization(t *testing.T) {
 	t.Parallel()
 
 	dir := t.TempDir()
-	confPath := filepath.Join(dir, ".myapp.conf")
+	confPath := filepath.Join(dir, "config.conf")
 
 	if err := os.WriteFile(confPath, []byte("port = 8282\nhost = 'norm-host'\n"), 0o600); err != nil {
 		t.Fatalf("WriteFile: %v", err)
 	}
 
-	cfg, _, err := strata.Load[formatsTestConfig](
-		strata.WithAppName("myapp"),
-		strata.WithCWD(dir),
+	cfg, err := strata.Load[formatsTestConfig](
+		strata.WithPath(confPath),
 		strata.WithFormatAlias("CONF", "TOML"),
 		strata.WithFormatAlias("", "toml"),
 		strata.WithFormatAlias(".empty", ""),
@@ -868,15 +861,14 @@ func TestWithFormatAliasSparseOverlay(t *testing.T) {
 	t.Parallel()
 
 	dir := t.TempDir()
-	confPath := filepath.Join(dir, ".myapp.conf")
+	confPath := filepath.Join(dir, "config.conf")
 
 	if err := os.WriteFile(confPath, []byte("port = 5678\n"), 0o600); err != nil {
 		t.Fatalf("WriteFile: %v", err)
 	}
 
-	cfg, _, err := strata.Load[defaultedFormatsConfig](
-		strata.WithAppName("myapp"),
-		strata.WithCWD(dir),
+	cfg, err := strata.Load[defaultedFormatsConfig](
+		strata.WithPath(confPath),
 		strata.WithFormatAlias(".conf", "toml"),
 	)
 	if err != nil {
@@ -893,11 +885,15 @@ func TestWithFormatAliasSparseOverlay(t *testing.T) {
 }
 
 func TestWithFormatAliasCombinedWithFormats(t *testing.T) {
-	t.Parallel()
-
 	dir := t.TempDir()
-	tomlPath := filepath.Join(dir, ".myapp.toml")
-	confPath := filepath.Join(dir, ".myapp.conf")
+
+	appDir := filepath.Join(dir, "myapp")
+	if err := os.MkdirAll(appDir, 0o700); err != nil {
+		t.Fatalf("MkdirAll: %v", err)
+	}
+
+	tomlPath := filepath.Join(appDir, "config.toml")
+	confPath := filepath.Join(appDir, "config.conf")
 
 	if err := os.WriteFile(tomlPath, []byte("port = 1000\nhost = 'toml'\n"), 0o600); err != nil {
 		t.Fatalf("WriteFile toml: %v", err)
@@ -907,9 +903,10 @@ func TestWithFormatAliasCombinedWithFormats(t *testing.T) {
 		t.Fatalf("WriteFile conf: %v", err)
 	}
 
-	cfg, meta, err := strata.Load[formatsTestConfig](
+	t.Setenv("XDG_CONFIG_HOME", dir)
+
+	cfg, meta, err := strata.LoadWithMetadata[formatsTestConfig](
 		strata.WithAppName("myapp"),
-		strata.WithCWD(dir),
 		strata.WithFormatAlias(".conf", "toml"),
 		strata.WithFormats(".conf"),
 	)
@@ -941,7 +938,7 @@ func TestWithFormatAliasCascadingTiers(t *testing.T) {
 	}
 
 	userConf := filepath.Join(appUserDir, "config.conf")
-	projConf := filepath.Join(projDir, ".myapp.conf")
+	projConf := filepath.Join(projDir, "config.conf")
 
 	if err := os.WriteFile(userConf, []byte("port = 2000\nhost = 'user-host'\n"), 0o600); err != nil {
 		t.Fatalf("WriteFile user: %v", err)
@@ -953,9 +950,9 @@ func TestWithFormatAliasCascadingTiers(t *testing.T) {
 
 	t.Setenv("XDG_CONFIG_HOME", userDir)
 
-	cfg, meta, err := strata.Load[formatsTestConfig](
+	cfg, meta, err := strata.LoadWithMetadata[formatsTestConfig](
 		strata.WithAppName("myapp"),
-		strata.WithCWD(projDir),
+		strata.WithPath(projConf),
 		strata.WithFormatAlias(".conf", "toml"),
 	)
 	if err != nil {
@@ -963,7 +960,7 @@ func TestWithFormatAliasCascadingTiers(t *testing.T) {
 	}
 
 	if cfg.Port != 3000 {
-		t.Fatalf("cfg.Port = %d, want 3000 (project tier override)", cfg.Port)
+		t.Fatalf("cfg.Port = %d, want 3000 (config file override)", cfg.Port)
 	}
 
 	if cfg.Host != "user-host" {
@@ -995,9 +992,8 @@ func TestUserTierDotConfigEndToEnd(t *testing.T) {
 	t.Setenv("XDG_CONFIG_HOME", "")
 	t.Setenv("HOME", homeDir)
 
-	cfg, meta, err := strata.Load[formatsTestConfig](
+	cfg, meta, err := strata.LoadWithMetadata[formatsTestConfig](
 		strata.WithAppName("myapp"),
-		strata.WithCWD(t.TempDir()),
 	)
 	if err != nil {
 		t.Fatalf("Load: %v", err)
@@ -1020,15 +1016,14 @@ func TestWithDecoderCodecContracts(t *testing.T) {
 	t.Parallel()
 
 	dir := t.TempDir()
-	customPath := filepath.Join(dir, ".myapp.custom")
+	customPath := filepath.Join(dir, "config.custom")
 
 	if err := os.WriteFile(customPath, []byte(`{"port": 5555}`), 0o600); err != nil {
 		t.Fatalf("WriteFile: %v", err)
 	}
 
-	cfg, _, err := strata.Load[defaultedFormatsConfig](
-		strata.WithAppName("myapp"),
-		strata.WithCWD(dir),
+	cfg, err := strata.Load[defaultedFormatsConfig](
+		strata.WithPath(customPath),
 		strata.WithDecoder(".custom", json.Unmarshal),
 	)
 	if err != nil {
@@ -1056,8 +1051,9 @@ func TestWithDecoderFuncTypeMismatch(t *testing.T) {
 
 	var mismatched cascadingConfig
 
-	_, err := strata.LoadInto(&mismatched,
-		strata.WithExplicitPath(iniPath),
+	_, err := strata.LoadInto(
+		&mismatched,
+		strata.WithPath(iniPath),
 		strata.WithDecoderFunc(".ini", func(_ []byte, _ *formatsTestConfig) error {
 			return nil
 		}),
@@ -1083,8 +1079,8 @@ func TestWithDecoderFuncNilTargetAndErrorWrapping(t *testing.T) {
 
 	customErr := errors.New("custom parse failure")
 
-	_, _, err := strata.Load[formatsTestConfig](
-		strata.WithExplicitPath(iniPath),
+	_, err := strata.Load[formatsTestConfig](
+		strata.WithPath(iniPath),
 		strata.WithDecoderFunc(".ini", func(_ []byte, _ *formatsTestConfig) error {
 			return customErr
 		}),
@@ -1103,18 +1099,22 @@ func TestWithDecoderFuncNilTargetAndErrorWrapping(t *testing.T) {
 }
 
 func TestWithFormatsEmptyArgDisablesDiscovery(t *testing.T) {
-	t.Parallel()
-
 	dir := t.TempDir()
-	tomlPath := filepath.Join(dir, ".myapp.toml")
 
+	appDir := filepath.Join(dir, "myapp")
+	if err := os.MkdirAll(appDir, 0o700); err != nil {
+		t.Fatalf("MkdirAll: %v", err)
+	}
+
+	tomlPath := filepath.Join(appDir, "config.toml")
 	if err := os.WriteFile(tomlPath, []byte("port = 8080\n"), 0o600); err != nil {
 		t.Fatalf("WriteFile: %v", err)
 	}
 
-	cfg, meta, err := strata.Load[defaultedFormatsConfig](
+	t.Setenv("XDG_CONFIG_HOME", dir)
+
+	cfg, meta, err := strata.LoadWithMetadata[defaultedFormatsConfig](
 		strata.WithAppName("myapp"),
-		strata.WithCWD(dir),
 		strata.WithFormats(),
 	)
 	if err != nil {
@@ -1134,15 +1134,14 @@ func TestWithFormatsWhitespaceAndCase(t *testing.T) {
 	t.Parallel()
 
 	dir := t.TempDir()
-	tomlPath := filepath.Join(dir, ".myapp.toml")
+	tomlPath := filepath.Join(dir, "config.toml")
 
 	if err := os.WriteFile(tomlPath, []byte("port = 8080\n"), 0o600); err != nil {
 		t.Fatalf("WriteFile: %v", err)
 	}
 
-	cfg, meta, err := strata.Load[formatsTestConfig](
-		strata.WithAppName("myapp"),
-		strata.WithCWD(dir),
+	cfg, meta, err := strata.LoadWithMetadata[formatsTestConfig](
+		strata.WithPath(tomlPath),
 		strata.WithFormats("  ", "TOML"),
 	)
 	if err != nil {
@@ -1169,8 +1168,8 @@ func TestTableFirstTOMLStdinDetection(t *testing.T) {
 
 	buf := strings.NewReader("[server]\nport = 9000\n")
 
-	cfg, _, err := strata.Load[serverCfg](
-		strata.WithExplicitPath("-"),
+	cfg, err := strata.Load[serverCfg](
+		strata.WithPath("-"),
 		strata.WithStdin(buf),
 	)
 	if err != nil {
@@ -1191,8 +1190,8 @@ func TestYMLOnlyStdinDetection(t *testing.T) {
 
 	buf := strings.NewReader("port: 9000\n")
 
-	cfg, _, err := strata.Load[simpleCfg](
-		strata.WithExplicitPath("-"),
+	cfg, err := strata.Load[simpleCfg](
+		strata.WithPath("-"),
 		strata.WithStdin(buf),
 		strata.WithFormats(".yml"),
 	)
@@ -1219,8 +1218,8 @@ func TestWithFormatsYMLPathExcludedWhenYAMLOnly(t *testing.T) {
 		Port int `strata:"port"`
 	}
 
-	_, _, err := strata.Load[simpleCfg](
-		strata.WithExplicitPath(ymlPath),
+	_, err := strata.Load[simpleCfg](
+		strata.WithPath(ymlPath),
 		strata.WithFormats(".yaml"),
 	)
 	if err == nil {
@@ -1229,5 +1228,244 @@ func TestWithFormatsYMLPathExcludedWhenYAMLOnly(t *testing.T) {
 
 	if !errors.Is(err, strata.ErrNoCodec) {
 		t.Errorf("expected ErrNoCodec, got %v", err)
+	}
+}
+
+type contributionValidatedConfig struct {
+	Port int `yaml:"port"`
+}
+
+func (c *contributionValidatedConfig) Validate() error {
+	if c.Port < 1024 {
+		return fmt.Errorf("port must be privileged or above: got %d", c.Port)
+	}
+
+	return nil
+}
+
+func TestWithContributionOverridesLowerTiers(t *testing.T) {
+	t.Parallel()
+
+	tmpDir := t.TempDir()
+	filePath := filepath.Join(tmpDir, "config.yaml")
+
+	if err := os.WriteFile(filePath, []byte("port: 8080\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+
+	type simpleConfig struct {
+		Port int `yaml:"port"`
+	}
+
+	target, meta, err := strata.LoadWithMetadata[simpleConfig](
+		strata.WithPath(filePath),
+		strata.WithContribution(func(target any, meta *strata.Metadata) error {
+			cfg, ok := target.(*simpleConfig)
+			if !ok {
+				return errors.New("target is not *simpleConfig")
+			}
+
+			cfg.Port = 9090
+
+			meta.Record(strata.Origin{
+				Key:      "port",
+				Source:   strata.SourceFlag,
+				Path:     "port",
+				Line:     0,
+				RawValue: "9090",
+			})
+
+			return nil
+		}),
+	)
+	if err != nil {
+		t.Fatalf("Load error: %v", err)
+	}
+
+	if target.Port != 9090 {
+		t.Errorf("Port = %d, want 9090", target.Port)
+	}
+
+	origin, ok := meta.Where("port")
+	if !ok {
+		t.Fatal("Where(port) not found")
+	}
+
+	if origin.Source != strata.SourceFlag || origin.RawValue != "9090" {
+		t.Errorf("origin = %+v, want SourceFlag and 9090", origin)
+	}
+}
+
+func TestWithContributionCanSatisfyValidation(t *testing.T) {
+	t.Parallel()
+
+	tmpDir := t.TempDir()
+	filePath := filepath.Join(tmpDir, "invalid.yaml")
+
+	if err := os.WriteFile(filePath, []byte("port: 80\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+
+	_, err := strata.Load[contributionValidatedConfig](strata.WithPath(filePath))
+	if err == nil {
+		t.Fatal("expected validation failure without contribution")
+	}
+
+	target, err := strata.Load[contributionValidatedConfig](
+		strata.WithPath(filePath),
+		strata.WithContribution(func(target any, _ *strata.Metadata) error {
+			cfg, ok := target.(*contributionValidatedConfig)
+			if !ok {
+				return errors.New("target is not *contributionValidatedConfig")
+			}
+
+			cfg.Port = 8080
+
+			return nil
+		}),
+	)
+	if err != nil {
+		t.Fatalf("Load with correcting contribution failed: %v", err)
+	}
+
+	if target.Port != 8080 {
+		t.Errorf("target.Port = %d, want 8080", target.Port)
+	}
+}
+
+func TestWithContributionCanViolateValidation(t *testing.T) {
+	t.Parallel()
+
+	tmpDir := t.TempDir()
+	filePath := filepath.Join(tmpDir, "valid.yaml")
+
+	if err := os.WriteFile(filePath, []byte("port: 8080\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+
+	_, err := strata.Load[contributionValidatedConfig](
+		strata.WithPath(filePath),
+		strata.WithContribution(func(target any, _ *strata.Metadata) error {
+			cfg, ok := target.(*contributionValidatedConfig)
+			if !ok {
+				return errors.New("target is not *contributionValidatedConfig")
+			}
+
+			cfg.Port = 80
+
+			return nil
+		}),
+	)
+	if err == nil {
+		t.Fatal("expected validation failure from invalid contribution")
+	}
+}
+
+func TestLoadReturnsZeroValueAfterContributionError(t *testing.T) {
+	t.Parallel()
+
+	type simpleConfig struct {
+		Port int `yaml:"port"`
+	}
+
+	errExpected := errors.New("contribution exploded")
+
+	got, meta, err := strata.LoadWithMetadata[simpleConfig](
+		strata.WithContribution(func(target any, _ *strata.Metadata) error {
+			cfg, ok := target.(*simpleConfig)
+			if !ok {
+				return errors.New("target is not *simpleConfig")
+			}
+
+			cfg.Port = 9090
+
+			return errExpected
+		}),
+	)
+	if !errors.Is(err, errExpected) {
+		t.Errorf("got err %v, want %v", err, errExpected)
+	}
+
+	if got != (simpleConfig{}) || meta != nil {
+		t.Errorf("got (%+v, %v), want zero config and nil metadata", got, meta)
+	}
+}
+
+func TestWithContributionMultipleInOrder(t *testing.T) {
+	t.Parallel()
+
+	type orderedConfig struct {
+		Order []int
+	}
+
+	target, err := strata.Load[orderedConfig](
+		strata.WithContribution(func(target any, _ *strata.Metadata) error {
+			cfg, ok := target.(*orderedConfig)
+			if !ok {
+				return errors.New("target is not *orderedConfig")
+			}
+
+			cfg.Order = append(cfg.Order, 1)
+
+			return nil
+		}),
+		strata.WithContribution(nil),
+		strata.WithContribution(func(target any, _ *strata.Metadata) error {
+			cfg, ok := target.(*orderedConfig)
+			if !ok {
+				return errors.New("target is not *orderedConfig")
+			}
+
+			cfg.Order = append(cfg.Order, 2)
+
+			return nil
+		}),
+	)
+	if err != nil {
+		t.Fatalf("Load error: %v", err)
+	}
+
+	if !reflect.DeepEqual(target.Order, []int{1, 2}) {
+		t.Errorf("Order = %v, want [1, 2]", target.Order)
+	}
+}
+
+func TestUntaggedStructResolution(t *testing.T) {
+	type ServerConfig struct {
+		Host string
+		Port int
+	}
+
+	dir := t.TempDir()
+
+	tomlPath := filepath.Join(dir, "config.toml")
+
+	tomlContent := []byte("host = \"10.0.0.1\"\nport = 9000\n")
+	if err := os.WriteFile(tomlPath, tomlContent, 0o600); err != nil {
+		t.Fatal(err)
+	}
+
+	t.Setenv("TESTUNTAGGED_PORT", "9999")
+
+	cfg, meta, err := strata.LoadWithMetadata[ServerConfig](
+		strata.WithPath(tomlPath),
+		strata.WithAppName("myapp"),
+		strata.WithEnvPrefix("TESTUNTAGGED_"),
+	)
+	if err != nil {
+		t.Fatalf("Load error: %v", err)
+	}
+
+	if cfg.Host != "10.0.0.1" || cfg.Port != 9999 {
+		t.Errorf("got Host=%q, Port=%d; want Host=10.0.0.1, Port=9999", cfg.Host, cfg.Port)
+	}
+
+	origin, ok := meta.Where("port")
+	if !ok {
+		t.Fatal("expected origin for port")
+	}
+
+	if origin.Source != strata.SourceEnv {
+		t.Errorf("origin.Source = %v, want %v", origin.Source, strata.SourceEnv)
 	}
 }

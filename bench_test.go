@@ -36,7 +36,7 @@ func BenchmarkLoadWithoutFiles(b *testing.B) {
 	b.ResetTimer()
 
 	for b.Loop() {
-		_, _, err := strata.Load[BenchConfig](strata.WithoutFiles())
+		_, err := strata.Load[BenchConfig](strata.WithoutFiles())
 		if err != nil {
 			b.Fatal(err)
 		}
@@ -52,7 +52,7 @@ func BenchmarkLoadWithEnv(b *testing.B) {
 	b.ResetTimer()
 
 	for b.Loop() {
-		_, _, err := strata.Load[BenchConfig](
+		_, err := strata.Load[BenchConfig](
 			strata.WithEnvPrefix("BENCH_"),
 			strata.WithoutFiles(),
 		)
@@ -83,7 +83,7 @@ features = ["auth", "db"]
 	b.ResetTimer()
 
 	for b.Loop() {
-		_, _, err := strata.Load[BenchConfig](strata.WithExplicitPath(tomlPath))
+		_, err := strata.Load[BenchConfig](strata.WithPath(tomlPath))
 		if err != nil {
 			b.Fatal(err)
 		}

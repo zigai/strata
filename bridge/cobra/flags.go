@@ -68,7 +68,7 @@ var (
 )
 
 // flagConfig carries the options accepted by RegisterFlags and
-// SyncFlagsToStruct.
+// WithFlags.
 type flagConfig struct {
 	persistent bool
 	metadata   *strata.Metadata
@@ -89,23 +89,11 @@ type pendingFlag struct {
 // WithPersistent registers generated flags on cmd.PersistentFlags() in place of
 // cmd.Flags().
 //
-// The option affects RegisterFlags only; SyncFlagsToStruct and Apply match
-// against both flag sets regardless.
+// The option affects RegisterFlags only; [WithFlags] reads both flag sets
+// regardless.
 func WithPersistent() FlagOption {
 	return func(config *flagConfig) {
 		config.persistent = true
-	}
-}
-
-// WithMetadata makes SyncFlagsToStruct record the origin of every flag value
-// that becomes the winning configuration for its key. A field tagged as secret is
-// recorded with a redacted raw value.
-//
-// The option affects SyncFlagsToStruct only; registration does not report
-// provenance.
-func WithMetadata(meta *strata.Metadata) FlagOption {
-	return func(config *flagConfig) {
-		config.metadata = meta
 	}
 }
 
@@ -137,9 +125,7 @@ func WithMetadata(meta *strata.Metadata) FlagOption {
 // RegisterFlags, for example by calling SetDefaults on cfg first.
 //
 // A field tagged as secret is the exception: its storage starts at the zero
-// value, and the configured secret never reaches pflag's default rendering. The
-// real value is written into storage by Apply, which the documented lifecycle
-// runs before any application code reads a flag.
+// value, so the configured secret never reaches pflag's default rendering.
 //
 // # Manual flags
 //

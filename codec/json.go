@@ -69,14 +69,14 @@ func (c *JSONCodec) Decode(data []byte, target any) error {
 //
 // Unlike the TOML and YAML encoders, the result is not terminated by a newline.
 //
-// NB: A field that declares no json tag is encoded under its Go name. [Decode]
-// accepts that name as well as the field's configuration key, so a document this
-// method writes loads back into the type it was encoded from.
+// Struct fields are written under their configuration keys, the names strata
+// resolves from the strata, toml, yaml, and json tags or the snake_case field
+// name, so the document uses the same keys as every other layer.
 //
 // It returns an error wrapping the v2 failure if value cannot be represented in
 // JSON.
 func (c *JSONCodec) Encode(value any) ([]byte, error) {
-	data, err := json.Marshal(value, jsontext.WithIndent("  "), json.Deterministic(true))
+	data, err := json.Marshal(keyedValue(value), jsontext.WithIndent("  "), json.Deterministic(true))
 	if err != nil {
 		return nil, fmt.Errorf("json marshal: %w", err)
 	}

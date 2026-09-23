@@ -43,36 +43,6 @@ func StructTarget(cfg any) (reflect.Value, error) {
 	return elem, nil
 }
 
-// OptionalStructTarget reports the struct value behind cfg without treating an
-// unusable cfg as an error. It reports false for a cfg that is nil, is not a
-// pointer, or does not point to a struct.
-func OptionalStructTarget(cfg any) (reflect.Value, bool) {
-	if cfg == nil {
-		return reflect.Value{}, false
-	}
-
-	val := reflect.ValueOf(cfg)
-	if val.Kind() == reflect.Pointer {
-		if val.IsNil() {
-			return reflect.Value{}, false
-		}
-
-		val = val.Elem()
-	}
-
-	if val.Kind() != reflect.Struct {
-		return reflect.Value{}, false
-	}
-
-	if !val.CanAddr() {
-		tmp := reflect.New(val.Type()).Elem()
-		tmp.Set(val)
-		val = tmp
-	}
-
-	return val, true
-}
-
 // SeedStorage copies the configuration value a target addresses into its
 // detached flag storage, converting it to the storage representation of the
 // target's kind.
@@ -202,21 +172,6 @@ func MarshalLeaf(src reflect.Value) (string, error) {
 	}
 
 	return fmt.Sprint(src.Interface()), nil
-}
-
-// EncodeScalar renders a configuration value as the string form the flag's
-// parser accepts. A text codec is rendered by its own marshaller, which keeps the
-// round trip exact; every other kind uses the natural Go representation.
-func EncodeScalar(source reflect.Value, kind Kind) (string, error) {
-	//nolint:exhaustive // every non-text, non-string kind uses its natural Go representation
-	switch kind {
-	case KindText:
-		return MarshalLeaf(source)
-	case KindString:
-		return source.String(), nil
-	default:
-		return fmt.Sprint(source.Interface()), nil
-	}
 }
 
 // UnmarshalLeaf decodes value into dst through [encoding.TextUnmarshaler], which

@@ -2,7 +2,6 @@ package plan_test
 
 import (
 	"errors"
-	"fmt"
 	"reflect"
 	"slices"
 	"strings"
@@ -47,16 +46,6 @@ func TestBuildFollowsTaggedContainersOnly(t *testing.T) {
 
 	if contains(names, "plain-mode") {
 		t.Errorf("Registration followed an untagged container: %v", names)
-	}
-}
-
-// The apply policy widens the walk to untagged containers, so a flag derived from
-// a field name still matches a value supplied before the tag existed.
-func TestBuildFollowsUntaggedContainersUnderTheApplyPolicy(t *testing.T) {
-	t.Parallel()
-
-	if names := flagNames(t, plan.Apply); !contains(names, "plain-mode") {
-		t.Errorf("Apply did not follow an untagged container: %v", names)
 	}
 }
 
@@ -191,46 +180,5 @@ func TestNestedSecretFlagPlan(t *testing.T) {
 
 	if !targets[0].Secret {
 		t.Errorf("parent secret tag lost: --%s has Secret=false", targets[0].Name)
-	}
-}
-
-type customText struct{ N int }
-
-func (v *customText) MarshalText() ([]byte, error) { return []byte(fmt.Sprintf("n=%d", v.N)), nil }
-func (v *customText) UnmarshalText(s []byte) error {
-	if _, err := fmt.Sscanf(string(s), "n=%d", &v.N); err != nil {
-		return fmt.Errorf("sscanf: %w", err)
-	}
-
-	return nil
-}
-
-func TestPointerMarshalerApplyByValue(t *testing.T) {
-	cfg := struct {
-		Value customText `flag:"value"`
-	}{Value: customText{N: 42}}
-
-	root, ok := plan.OptionalStructTarget(cfg)
-	if !ok {
-		t.Fatal("target rejected")
-	}
-
-	targets, err := plan.Build(root.Type(), plan.Apply)
-	if err != nil {
-		t.Fatal(err)
-	}
-
-	source, ok := plan.ResolveField(root, targets[0].IndexPath)
-	if !ok {
-		t.Fatal("not resolved")
-	}
-
-	text, err := plan.EncodeScalar(source, targets[0].Kind)
-	if err != nil {
-		t.Fatal(err)
-	}
-
-	if text != "n=42" {
-		t.Errorf("by-value Apply renders %q; MarshalText requires %q", text, "n=42")
 	}
 }

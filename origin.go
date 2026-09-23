@@ -14,15 +14,15 @@ const (
 	// ~/.config on Unix and %APPDATA% on Windows.
 	SourceUser SourceKind = "user"
 
-	// SourceProject is the project-local configuration file layer, discovered
-	// from .<app>.* in the working directory.
-	SourceProject SourceKind = "project"
+	// SourceFile is the configuration file named by [WithPath] or
+	// [WithOptionalPath]. It ranks above the system and user files.
+	SourceFile SourceKind = "file"
 
 	// SourceEnv is the environment variable layer. It ranks above every file.
 	SourceEnv SourceKind = "env"
 
 	// SourceStdin is the layer read from standard input, enabled by
-	// [WithExplicitPath] with "-".
+	// [WithPath] with "-".
 	SourceStdin SourceKind = "stdin"
 
 	// SourceFlag is the layer applied by the CLI bridge packages. It ranks above

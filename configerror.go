@@ -1,6 +1,7 @@
 package strata
 
 import (
+	"errors"
 	"fmt"
 	"strconv"
 	"strings"
@@ -33,7 +34,8 @@ func (e *ConfigError) Error() string {
 	var b strings.Builder
 	fmt.Fprintf(&b, "config error: %v", e.Err)
 
-	if e.Key != "" {
+	// An unknown-key failure already names the key, and carries no value.
+	if e.Key != "" && !errors.Is(e.Err, ErrUnknownKey) {
 		fmt.Fprintf(&b, " for %s", e.Key)
 	}
 
@@ -65,7 +67,7 @@ func formatOriginSource(origin Origin) string {
 		return "struct defaults"
 	case SourceStdin:
 		return "standard input"
-	case SourceSystem, SourceUser, SourceProject:
+	case SourceSystem, SourceUser, SourceFile:
 		if origin.Line > 0 {
 			return origin.Path + ":" + strconv.Itoa(origin.Line)
 		}

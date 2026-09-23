@@ -54,16 +54,15 @@ var (
 	// destination field's width.
 	//
 	// A slice whose element type is not assignable to the destination element type
-	// is reported here when a CLI value is written back into the field, and when
-	// Apply writes such a slice into a generated flag. The seeding path reports the
-	// same condition as ErrUnsupportedFieldType.
+	// is reported here when a CLI value is written back into the field. The
+	// seeding path reports the same condition as ErrUnsupportedFieldType.
 	//
 	// The error value is declared by internal/plan, which reports the condition.
 	ErrValueOverflow = plan.ErrValueOverflow
 )
 
 // flagConfig carries the options accepted by GenerateFlags, RegisterFlags, and
-// SyncFlagsToStruct.
+// WithFlags.
 type flagConfig struct {
 	metadata *strata.Metadata
 }
@@ -85,18 +84,6 @@ type pendingFlag struct {
 // delegates parsing to a cli.Value, not to a typed constructor.
 type textValue struct {
 	text *string
-}
-
-// WithMetadata makes SyncFlagsToStruct record the origin of every flag value
-// that becomes the winning configuration for its key. A field tagged as secret is
-// recorded with a redacted raw value.
-//
-// The option affects SyncFlagsToStruct only; generation and registration do not
-// report provenance.
-func WithMetadata(meta *strata.Metadata) FlagOption {
-	return func(config *flagConfig) {
-		config.metadata = meta
-	}
 }
 
 // GenerateFlags discovers CLI flags from the exported fields of cfg and returns
@@ -129,8 +116,8 @@ func WithMetadata(meta *strata.Metadata) FlagOption {
 // # Validation
 //
 // Every generated name and shorthand is checked for uniqueness before any flag is
-// built. Options are accepted for symmetry with RegisterFlags and
-// SyncFlagsToStruct; none of them affect generation.
+// built. Options are accepted for symmetry with RegisterFlags; none of them
+// affect generation.
 func GenerateFlags(cfg any, opts ...FlagOption) ([]cli.Flag, error) {
 	root, err := plan.StructTarget(cfg)
 	if err != nil {

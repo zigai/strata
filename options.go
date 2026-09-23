@@ -12,24 +12,17 @@ import (
 	"github.com/zigai/strata/internal/stream"
 )
 
-// builtinFormats is the registry of formats this package writes on its own: the
-// TOML, YAML, and JSON codecs [codec.NewRegistry] serves. It is never mutated,
-// so a shared instance is safe.
 var builtinFormats = codec.NewRegistry()
 
-// Codec defines the decoding and encoding operations for one configuration
-// format. It is an alias for [codec.Codec].
 type Codec = codec.Codec
 
-// Option configures the behavior of [Load] and [LoadInto]. An Option is
-// applied once per call and is not retained.
 type Option func(*loadOptions)
 
 type loadOptions struct {
 	appName       string
 	envPrefix     string
 	explicitPath  string
-	cwd           string
+	optionalPath  bool
 	stdinReader   io.Reader
 	codecReg      *codec.Registry
 	defaultsFunc  func(any) error
@@ -39,12 +32,13 @@ type loadOptions struct {
 	formatsSet    bool
 	formatAliases map[string]string
 	excludedExts  map[string]bool
+	contributions []Contribution
+	strict        bool
+	keys          *keyTree
 }
 
-// DecoderFunc decodes data into a target struct.
-//
-// It matches the standard library unmarshaler signature used by packages
-// such as encoding/json, yaml, and toml.
+type Contribution func(target any, meta *Metadata) error
+
 type DecoderFunc func(data []byte, target any) error
 
 type decoderCodec struct {
@@ -68,14 +62,20 @@ func WithAppName(name string) Option {
 
 // WithEnvPrefix sets the environment variable prefix, such as "MYAPP_".
 //
-// When unset, no environment variable is bound.
+// When unset, only fields whose env tag names a variable are bound. Derived
+// names such as PORT are never read without a prefix, so an unrelated variable
+// in the process environment cannot change the configuration.
 func WithEnvPrefix(prefix string) Option {
 	return func(o *loadOptions) {
 		o.envPrefix = prefix
 	}
 }
 
-// WithExplicitPath names one file to load and skips tier discovery.
+// WithPath names one configuration file to load on top of the system and user
+// files.
+//
+// A missing file is an error; use [WithOptionalPath] for a file that may not
+// exist. The file is reported in [Metadata] as [SourceFile].
 //
 // The path "-" reads from standard input instead. The process standard input is
 // read once and buffered for the lifetime of the process, so a later load sees
@@ -84,16 +84,34 @@ func WithEnvPrefix(prefix string) Option {
 // NB: A reader supplied through [WithStdin] is not cached. It is consumed
 // directly, so a second load over an exhausted reader produces defaults without
 // reporting an error.
-func WithExplicitPath(path string) Option {
+func WithPath(path string) Option {
 	return func(o *loadOptions) {
 		o.explicitPath = path
+		o.optionalPath = false
 	}
+}
+
+// WithOptionalPath is [WithPath] for a file that may not exist. A missing file
+// contributes nothing; a file that exists but cannot be read or parsed is still
+// an error.
+func WithOptionalPath(path string) Option {
+	return func(o *loadOptions) {
+		o.explicitPath = path
+		o.optionalPath = true
+	}
+}
+
+// WithExplicitPath is the former name of [WithPath].
+//
+// Deprecated: Use [WithPath].
+func WithExplicitPath(path string) Option {
+	return WithPath(path)
 }
 
 // WithoutFiles disables tier discovery, leaving only the environment and
 // defaults.
 //
-// A path set through [WithExplicitPath] still applies. Naming one file is a more
+// A path set through [WithPath] still applies. Naming one file is a more
 // specific instruction than turning discovery off.
 func WithoutFiles() Option {
 	return func(o *loadOptions) {
@@ -101,21 +119,38 @@ func WithoutFiles() Option {
 	}
 }
 
-// WithStdin supplies the reader used by WithExplicitPath("-").
+// WithStrict fails the load when a configuration file sets a key the target
+// type does not declare.
+//
+// Each such key is reported as a [*ConfigError] wrapping [ErrUnknownKey], with
+// the file it came from and, when one is close, the key that was probably
+// meant. Without WithStrict the same keys are listed by
+// [Metadata.UnknownKeys] and otherwise ignored.
+func WithStrict() Option {
+	return func(o *loadOptions) {
+		o.strict = true
+	}
+}
+
+// WithContribution registers a configuration provider that executes after
+// defaults, configuration files, and environment variables have merged, but
+// immediately before validation.
+//
+// Multiple contributions execute in registration order.
+func WithContribution(c Contribution) Option {
+	return func(o *loadOptions) {
+		if c != nil {
+			o.contributions = append(o.contributions, c)
+		}
+	}
+}
+
+// WithStdin supplies the reader used by WithPath("-").
 //
 // The process standard input is used when this is unset.
 func WithStdin(r io.Reader) Option {
 	return func(o *loadOptions) {
 		o.stdinReader = r
-	}
-}
-
-// WithCWD sets the directory searched for project-tier configuration.
-//
-// The process working directory is used when this is unset.
-func WithCWD(cwd string) Option {
-	return func(o *loadOptions) {
-		o.cwd = cwd
 	}
 }
 
@@ -130,24 +165,25 @@ func WithMaxFileSize(maxBytes int64) Option {
 	}
 }
 
-// WithDefaults copies an explicit defaults value into the target before any
-// layer is read.
+// WithDefaults replaces the target with an explicit defaults value before any
+// configuration file is read.
+//
+// It is applied after [Defaulter.SetDefaults], so it wins wherever both set a
+// field, and every configuration file, the environment, and CLI flags rank
+// above it. The value replaces the whole struct, including values a caller
+// seeded before [LoadInto].
 //
 // The type argument MUST match the type passed to [Load] or [LoadInto]. A
-// mismatch is silently ignored rather than reported, so pairing
-// WithDefaults[Config] with Load[configView] is a no-op that appears to succeed.
-// Convert when a loading view is in use:
-//
-//	strata.WithDefaults(ConfigView(defaults))
-//
-// Values supplied here rank below [Defaulter.SetDefaults], below every
-// configuration file, and below the environment.
+// mismatch fails the load with [ErrDefaultsTypeMismatch].
 func WithDefaults[T any](defaults T) Option {
 	return func(o *loadOptions) {
 		o.defaultsFunc = func(target any) error {
-			if ptr, ok := target.(*T); ok {
-				*ptr = defaults
+			ptr, ok := target.(*T)
+			if !ok {
+				return fmt.Errorf("%w: WithDefaults[%T] used to load %T", ErrDefaultsTypeMismatch, defaults, target)
 			}
+
+			*ptr = defaults
 
 			return nil
 		}
@@ -157,8 +193,8 @@ func WithDefaults[T any](defaults T) Option {
 // WithCodec registers a codec for a file extension on this load only.
 //
 // Registration affects both discovery and decoding. The extension joins the
-// candidate list, so a project tier can be satisfied by a .json5 file once that
-// codec is registered. An extension the registry already serves is replaced for
+// candidate list, so a system or user tier can be satisfied by a .json5 file once
+// that codec is registered. An extension the registry already serves is replaced for
 // this load.
 //
 // c MUST NOT be nil; [codec.Registry.Register] panics if it is.
@@ -197,9 +233,6 @@ func WithFormats(formats ...string) Option {
 // Discovery will search for files matching aliasExt and decode them using the
 // target format's codec. When recording provenance, strata analyzes the file
 // using the target format's syntax.
-//
-// For example, WithFormatAlias(".conf", "toml") searches for .conf files,
-// decodes them using TOML, and populates provenance via the TOML reader.
 func WithFormatAlias(aliasExt, targetFormat string) Option {
 	return func(o *loadOptions) {
 		normAlias := normalizeExt(aliasExt)
@@ -219,10 +252,6 @@ func WithFormatAlias(aliasExt, targetFormat string) Option {
 
 // WithDecoder registers a decoder function for a file extension on this load.
 //
-// It accepts any function matching the standard func(data []byte, v any) error
-// signature, allowing third-party parsers (e.g. json5, hcl) to be registered
-// without implementing the [Codec] interface.
-//
 // fn MUST NOT be nil; WithDecoder panics if it is.
 func WithDecoder(ext string, fn DecoderFunc) Option {
 	if fn == nil {
@@ -240,9 +269,6 @@ func WithDecoder(ext string, fn DecoderFunc) Option {
 
 // WithDecoderFunc registers a type-safe decoder function for a file extension on
 // this load.
-//
-// The target parameter passed to fn is statically typed as *T, eliminating
-// runtime type assertions for custom parsers.
 //
 // fn MUST NOT be nil; WithDecoderFunc panics if it is.
 func WithDecoderFunc[T any](ext string, fn func(data []byte, target *T) error) Option {
@@ -331,7 +357,6 @@ func normalizeExt(ext string) string {
 	return trimmed
 }
 
-// formatName reports the display name of a built-in extension.
 func formatName(ext string) string {
 	if ext == ".yml" {
 		return "yaml"
@@ -340,14 +365,12 @@ func formatName(ext string) string {
 	return strings.TrimPrefix(ext, ".")
 }
 
-// defaultLoadOptions returns the option set a load starts from when the caller
-// passes no options.
 func defaultLoadOptions() *loadOptions {
 	return &loadOptions{
 		appName:       "",
 		envPrefix:     "",
 		explicitPath:  "",
-		cwd:           "",
+		optionalPath:  false,
 		stdinReader:   os.Stdin,
 		codecReg:      codec.NewRegistry(),
 		defaultsFunc:  nil,
@@ -357,5 +380,8 @@ func defaultLoadOptions() *loadOptions {
 		formatsSet:    false,
 		formatAliases: nil,
 		excludedExts:  nil,
+		contributions: nil,
+		strict:        false,
+		keys:          nil,
 	}
 }

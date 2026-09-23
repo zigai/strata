@@ -16,7 +16,7 @@ func TestEnvUnmarshalUintAndFloat(t *testing.T) {
 	t.Setenv("NUM_MAX_AGE", "100")
 	t.Setenv("NUM_RATE", "3.1415")
 
-	cfg, _, err := strata.Load[numericConfig](
+	cfg, err := strata.Load[numericConfig](
 		strata.WithEnvPrefix("NUM_"),
 		strata.WithoutFiles(),
 	)
@@ -49,7 +49,7 @@ func TestEnvRejectsValuesThatDoNotFitTheField(t *testing.T) {
 		t.Run(tc.name, func(t *testing.T) {
 			t.Setenv(tc.key, tc.value)
 
-			got, _, err := strata.Load[narrowConfig](strata.WithEnvPrefix("NARROW_"), strata.WithoutFiles())
+			got, err := strata.Load[narrowConfig](strata.WithEnvPrefix("NARROW_"), strata.WithoutFiles())
 			if err == nil {
 				t.Fatalf("%s = %q loaded as %+v, want an error", tc.key, tc.value, got)
 			}
@@ -66,7 +66,7 @@ func TestEnvAcceptsValuesAtTheFieldBoundary(t *testing.T) {
 	t.Setenv("NARROW_TINY", "255")
 	t.Setenv("NARROW_FLOAT", "3.5")
 
-	got, _, err := strata.Load[narrowConfig](strata.WithEnvPrefix("NARROW_"), strata.WithoutFiles())
+	got, err := strata.Load[narrowConfig](strata.WithEnvPrefix("NARROW_"), strata.WithoutFiles())
 	if err != nil {
 		t.Fatalf("Load: %v", err)
 	}
@@ -87,7 +87,7 @@ func TestPrimitivePointerEnv(t *testing.T) {
 	t.Setenv("PTR_NAME", "pointer-test")
 	t.Setenv("PTR_DEBUG", "true")
 
-	cfg, meta, err := strata.Load[ptrConfig](
+	cfg, meta, err := strata.LoadWithMetadata[ptrConfig](
 		strata.WithEnvPrefix("PTR_"),
 		strata.WithoutFiles(),
 	)

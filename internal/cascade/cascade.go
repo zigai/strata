@@ -21,12 +21,9 @@ const (
 	// XDG_CONFIG_HOME on Unix and macOS, and %APPDATA% on Windows.
 	SourceUser = "user"
 
-	// SourceProject marks a layer discovered in the project tier: the working
-	// directory, which is [Params.CWD] when set and the process working directory
-	// otherwise.
-	//
-	// A path named by [Params.ExplicitPath] is reported with this source as well.
-	SourceProject = "project"
+	// SourceFile marks the layer read from the path named by
+	// [Params.ExplicitPath].
+	SourceFile = "file"
 
 	// SourceStdin marks the layer read from standard input, which
 	// [Params.ExplicitPath] selects with "-".
@@ -53,10 +50,13 @@ type Layer struct {
 //
 // Extensions are tried in the order given. MaxFileSize bounds the bytes read for
 // a stdin layer, and StdinReader overrides the process standard input.
+//
+// OptionalPath makes a missing ExplicitPath contribute nothing instead of
+// failing the discovery.
 type Params struct {
 	AppName      string
 	ExplicitPath string
-	CWD          string
+	OptionalPath bool
 	WithoutFiles bool
 	StdinReader  io.Reader
 	MaxFileSize  int64
@@ -65,57 +65,51 @@ type Params struct {
 
 // Discover returns the configuration layers to merge, in ascending precedence.
 //
-// The tiers are searched in the order system, user, project, and each tier
-// contributes at most one layer. A tier with no configuration file contributes
-// nothing; that is not an error.
+// The system and user tiers are searched under AppName, and each contributes at
+// most one layer. A tier with no configuration file contributes nothing; that is
+// not an error. An empty AppName or WithoutFiles skips both tiers.
 //
-// An explicit path is honored ahead of every tier and outranks WithoutFiles,
-// which disables tier scanning only. The path "-" reads standard input in place
-// of a file.
-//
-// WithoutFiles and an empty AppName both yield no layers when no explicit path
-// is set.
+// An explicit path is layered above both tiers, and still applies under
+// WithoutFiles. The path "-" reads standard input in place of a file. A missing
+// explicit path is an error unless OptionalPath is set.
 //
 // It returns [ErrPathIsDirectory] if an explicit path names a directory.
 func Discover(p Params) ([]Layer, error) {
-	// An explicit path is checked before WithoutFiles: naming one file is a more
-	// specific instruction than disabling tier discovery.
-	if p.ExplicitPath != "" {
-		return discoverExplicitLayer(p)
-	}
-
 	if p.WithoutFiles {
-		return nil, nil
-	}
+		if p.ExplicitPath != "" {
+			return discoverExplicitLayer(p)
+		}
 
-	if p.AppName == "" {
 		return nil, nil
 	}
 
 	var layers []Layer
 
-	if sysPath := discoverSystemTier(p.AppName, p.Extensions); sysPath != "" {
-		layers = append(layers, Layer{
-			Source: SourceSystem,
-			Path:   sysPath,
-			Data:   nil,
-		})
+	if p.AppName != "" {
+		if sysPath := discoverSystemTier(p.AppName, p.Extensions); sysPath != "" {
+			layers = append(layers, Layer{
+				Source: SourceSystem,
+				Path:   sysPath,
+				Data:   nil,
+			})
+		}
+
+		if userPath := discoverUserTier(p.AppName, p.Extensions); userPath != "" {
+			layers = append(layers, Layer{
+				Source: SourceUser,
+				Path:   userPath,
+				Data:   nil,
+			})
+		}
 	}
 
-	if userPath := discoverUserTier(p.AppName, p.Extensions); userPath != "" {
-		layers = append(layers, Layer{
-			Source: SourceUser,
-			Path:   userPath,
-			Data:   nil,
-		})
-	}
+	if p.ExplicitPath != "" {
+		explicitLayers, err := discoverExplicitLayer(p)
+		if err != nil {
+			return nil, err
+		}
 
-	if projPath := discoverProjectLayer(p.CWD, p.AppName, p.Extensions); projPath != "" {
-		layers = append(layers, Layer{
-			Source: SourceProject,
-			Path:   projPath,
-			Data:   nil,
-		})
+		layers = append(layers, explicitLayers...)
 	}
 
 	return layers, nil
@@ -141,6 +135,10 @@ func discoverExplicitLayer(p Params) ([]Layer, error) {
 
 	info, err := os.Stat(cleanPath)
 	if err != nil {
+		if p.OptionalPath && errors.Is(err, os.ErrNotExist) {
+			return nil, nil
+		}
+
 		return nil, fmt.Errorf("explicit configuration path %s: %w", p.ExplicitPath, err)
 	}
 
@@ -150,26 +148,11 @@ func discoverExplicitLayer(p Params) ([]Layer, error) {
 
 	return []Layer{
 		{
-			Source: SourceProject,
+			Source: SourceFile,
 			Path:   p.ExplicitPath,
 			Data:   nil,
 		},
 	}, nil
-}
-
-func discoverProjectLayer(cwd, appName string, exts []string) string {
-	dir := cwd
-	if dir == "" {
-		if cur, err := os.Getwd(); err == nil {
-			dir = cur
-		}
-	}
-
-	if dir == "" {
-		return ""
-	}
-
-	return discoverProjectTier(dir, appName, exts)
 }
 
 func discoverSystemTier(appName string, exts []string) string {
@@ -249,21 +232,6 @@ func discoverUnixUserTier(appName, home string, exts []string) string {
 	}
 
 	return ""
-}
-
-func discoverProjectTier(cwd, appName string, exts []string) string {
-	for _, ext := range exts {
-		fileName := fmt.Sprintf(".%s%s", appName, ext)
-		fullPath := filepath.Join(cwd, fileName)
-
-		if isRegularFile(fullPath) {
-			return fullPath
-		}
-	}
-
-	appDir := filepath.Join(cwd, "."+appName)
-
-	return findConfigFile(appDir, exts)
 }
 
 func findConfigFile(dir string, exts []string) string {

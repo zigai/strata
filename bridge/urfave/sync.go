@@ -10,34 +10,37 @@ import (
 	"github.com/zigai/strata/internal/plan"
 )
 
-// SyncFlagsToStruct copies flag values into the corresponding fields of cfg, but
+// WithFlags returns a [strata.Option] that injects explicitly supplied CLI flags
+// into the configuration cascade before validation runs.
+//
+// Supplied flags are recorded in the load's Metadata as SourceFlag.
+// Flags not explicitly supplied by the user leave the loaded configuration untouched.
+func WithFlags(cmd *cli.Command, opts ...FlagOption) strata.Option {
+	return strata.WithContribution(func(target any, meta *strata.Metadata) error {
+		mergedOpts := make([]FlagOption, 0, len(opts)+1)
+		mergedOpts = append(mergedOpts, opts...)
+		mergedOpts = append(mergedOpts, withMetadata(meta))
+
+		return syncFlagsToStruct(cmd, target, mergedOpts...)
+	})
+}
+
+// syncFlagsToStruct copies flag values into the corresponding fields of cfg, but
 // only for flags the user supplied explicitly on the command line. A flag value
 // that came from configuration is left alone, and a field whose flag was not
 // registered is untouched.
 //
-// # Lifecycle
-//
-// SyncFlagsToStruct runs after configuration is loaded and before Apply. The
-// order is not interchangeable: Apply writes configuration values through
-// urfave/cli's Command.Set, which marks a flag as supplied, and a synchronization
-// performed afterwards could no longer tell user input from configuration.
-//
-//	Load -> Sync -> Apply
-//
-// Command.IsSet is the marker read here, and it is meaningful only while it still
-// reflects the parser's decisions. Apply marks flags through Command.Set, so a
-// command MUST NOT be executed a second time after Apply has run; the marker
-// would report configuration values as user input. Register and execute one
-// command object per process.
+// Command.IsSet is the marker read here, so only values the parser saw on the
+// command line are copied.
 //
 // An optional (pointer) field is allocated only when one of its flags was
 // explicitly supplied. A nil subtree the configuration never populated stays
 // nil.
 //
-// When WithMetadata is supplied, every value written here is recorded with
+// When withMetadata is supplied, every value written here is recorded with
 // SourceFlag and the flag's long name as its path. A field tagged as secret is
 // recorded with a redacted raw value.
-func SyncFlagsToStruct(cmd *cli.Command, cfg any, opts ...FlagOption) error {
+func syncFlagsToStruct(cmd *cli.Command, cfg any, opts ...FlagOption) error {
 	if cmd == nil {
 		return nil
 	}
@@ -97,9 +100,6 @@ func decodeFlag(cmd *cli.Command, target *plan.Target, dst reflect.Value) error 
 	}
 }
 
-// decodeString reads the raw text of a string or text codec flag. A text codec
-// decodes that text into the field, and no other assumption is made about the
-// type.
 func decodeString(cmd *cli.Command, target *plan.Target, dst reflect.Value) error {
 	value := cmd.String(target.Name)
 
@@ -184,9 +184,6 @@ func decodeSlice(cmd *cli.Command, target *plan.Target, dst reflect.Value) error
 	}
 }
 
-// rawFlagValue renders the current value of a flag for provenance reporting. The
-// untyped accessor is read so that the reported value does not depend on the
-// target's declared kind; a text codec reports the text the parser saw.
 func rawFlagValue(cmd *cli.Command, name string) string {
 	return fmt.Sprint(cmd.Value(name))
 }
@@ -207,4 +204,16 @@ func recordOrigin(meta *strata.Metadata, target *plan.Target, raw string) {
 		Line:     0,
 		RawValue: raw,
 	})
+}
+
+// withMetadata makes syncFlagsToStruct record the origin of every flag value
+// that becomes the winning configuration for its key. A field tagged as secret is
+// recorded with a redacted raw value.
+//
+// The option affects syncFlagsToStruct only; generation and registration do not
+// report provenance.
+func withMetadata(meta *strata.Metadata) FlagOption {
+	return func(config *flagConfig) {
+		config.metadata = meta
+	}
 }

@@ -89,7 +89,7 @@ func loadFromYAML[T any](t *testing.T, body string) error {
 		t.Fatalf("seed: %v", err)
 	}
 
-	_, _, err := strata.Load[T](strata.WithExplicitPath(path))
+	_, err := strata.Load[T](strata.WithPath(path))
 
 	return err
 }
@@ -241,7 +241,7 @@ func TestValidatorPostLoadHook(t *testing.T) {
 
 		cfg := validatedConfig{Port: 80}
 
-		_, _, err := strata.Load[validatedConfig](
+		_, err := strata.Load[validatedConfig](
 			strata.WithoutFiles(),
 			strata.WithDefaults(cfg),
 		)
@@ -259,7 +259,7 @@ func TestValidatorPostLoadHook(t *testing.T) {
 
 		cfg := validatedConfig{Port: 8080}
 
-		loaded, _, err := strata.Load[validatedConfig](
+		loaded, err := strata.Load[validatedConfig](
 			strata.WithoutFiles(),
 			strata.WithDefaults(cfg),
 		)

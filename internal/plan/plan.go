@@ -45,23 +45,13 @@ var (
 	ErrRecursiveType = errors.New("recursive type in flag schema")
 )
 
-var (
-	// Registration is the policy that reports tagged leaves under tagged
-	// containers only. RegisterFlags and SyncFlagsToStruct share it, and the two
-	// operations always agree on the field set they govern.
-	Registration = Policy{
-		RecurseUntaggedStructs: false,
-		IncludeUntaggedLeaves:  false,
-	}
-
-	// Apply is the permissive policy used by the bridge Apply functions. It
-	// preserves the historical matching of untagged fields against hand-registered
-	// flags derived from field names.
-	Apply = Policy{
-		RecurseUntaggedStructs: true,
-		IncludeUntaggedLeaves:  true,
-	}
-)
+// Registration is the policy that reports tagged leaves under tagged
+// containers only. RegisterFlags and WithFlags share it, and the two
+// operations always agree on the field set they govern.
+var Registration = Policy{
+	RecurseUntaggedStructs: false,
+	IncludeUntaggedLeaves:  false,
+}
 
 // Policy selects which fields a traversal reports.
 type Policy struct {

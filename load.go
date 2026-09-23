@@ -18,28 +18,30 @@ import (
 	"github.com/zigai/strata/internal/stream"
 )
 
-// Load reads every configured tier into a new T, and returns it with the
-// provenance of each resolved key.
+// Load reads every configured layer into a new T.
 //
-// Tiers are applied in ascending precedence: struct defaults, system file, user
-// file, project file, environment, and finally the CLI overlay applied by the
-// bridge packages. A document overlays the result so far rather than replacing
-// it, so a sparse file changes only the keys it mentions.
+// Finding no system or user file is not an error; defaults and environment
+// still apply and the call succeeds. A missing [WithPath] file, an unreadable,
+// malformed, or over-sized file, and a validation failure are errors, and on
+// error the zero T is returned.
 //
-// Finding no configuration file is not an error. Defaults and environment still
-// apply and the call succeeds. An unreadable, malformed, or over-sized file is
-// an error, as is a validation failure.
-//
-// On error the returned T is not the zero value. Defaults are applied before any
-// file is read, so a load that fails at a later tier leaves a fully defaulted
-// value. Callers MUST check the error before reading T, or use [LoadInto] when
-// the partially merged state is wanted.
-func Load[T any](opts ...Option) (T, *Metadata, error) {
+// Use [LoadWithMetadata] to also learn where each value came from.
+func Load[T any](opts ...Option) (T, error) {
+	target, _, err := LoadWithMetadata[T](opts...)
+
+	return target, err
+}
+
+// LoadWithMetadata is [Load] that also returns the provenance of each resolved
+// key, the files that contributed, and any unknown keys the files set.
+func LoadWithMetadata[T any](opts ...Option) (T, *Metadata, error) {
 	var target T
 
 	meta, err := LoadInto(&target, opts...)
 	if err != nil {
-		return target, nil, err
+		var zero T
+
+		return zero, nil, err
 	}
 
 	return target, meta, nil
@@ -69,37 +71,26 @@ func LoadInto[T any](target *T, opts ...Option) (*Metadata, error) {
 		return nil, err
 	}
 
+	options.keys = keyTreeFor(reflect.TypeFor[T]())
+
 	meta := NewMetadata()
 	registerSecretsFromTarget(target, meta)
 
-	if options.defaultsFunc != nil {
-		if err := options.defaultsFunc(target); err != nil {
-			return nil, fmt.Errorf("apply defaults instance: %w", err)
-		}
+	if err := applyDefaults(target, options, meta); err != nil {
+		return nil, err
 	}
 
-	// 1. Apply defaults declared by the Defaulter interface. These rank below
-	//    every other tier.
-	err := defaulter.Apply(target, func(key, rawVal string) {
-		meta.Record(Origin{
-			Key:      key,
-			Source:   SourceDefault,
-			Path:     "",
-			Line:     0,
-			RawValue: rawVal,
-		})
-	})
-	if err != nil {
-		return nil, fmt.Errorf("apply defaults: %w", err)
-	}
-
-	// 2. Discover and merge configuration files, in ascending precedence.
 	if err := discoverAndApplyLayers(target, options, meta); err != nil {
 		return nil, err
 	}
 
-	// 3. Bind environment variables. These rank above every file.
-	err = env.Apply(target, env.Options{
+	if options.strict {
+		if err := unknownKeysError(meta); err != nil {
+			return nil, err
+		}
+	}
+
+	err := env.Apply(target, env.Options{
 		Prefix: options.envPrefix,
 		Lookup: os.LookupEnv,
 		OnBind: func(key, envVar, rawVal string) {
@@ -116,7 +107,13 @@ func LoadInto[T any](target *T, opts ...Option) (*Metadata, error) {
 	if err != nil {
 		return nil, fmt.Errorf("bind environment variables: %w", err)
 	}
-	// 4. Validate the merged result.
+
+	for _, contrib := range options.contributions {
+		if err := contrib(target, meta); err != nil {
+			return nil, err
+		}
+	}
+
 	if vErr := runValidation(target, meta); vErr != nil {
 		return nil, vErr
 	}
@@ -124,9 +121,42 @@ func LoadInto[T any](target *T, opts ...Option) (*Metadata, error) {
 	return meta, nil
 }
 
-// runValidation calls whichever validation interface target implements.
-// [MetadataValidator] can attribute a failure to a key, so it takes precedence
-// when a type implements both.
+// applyDefaults runs the struct's SetDefaults, then the value given to
+// WithDefaults, and records the result as the default layer.
+func applyDefaults(target any, opts *loadOptions, meta *Metadata) error {
+	recordDefault := func(key, rawVal string) {
+		meta.Record(Origin{
+			Key:      key,
+			Source:   SourceDefault,
+			Path:     "",
+			Line:     0,
+			RawValue: rawVal,
+		})
+	}
+
+	if opts.defaultsFunc == nil {
+		if err := defaulter.Apply(target, recordDefault); err != nil {
+			return fmt.Errorf("apply defaults: %w", err)
+		}
+
+		return nil
+	}
+
+	if err := defaulter.Apply(target, nil); err != nil {
+		return fmt.Errorf("apply defaults: %w", err)
+	}
+
+	if err := opts.defaultsFunc(target); err != nil {
+		return err
+	}
+
+	if err := defaulter.Report(target, recordDefault); err != nil {
+		return fmt.Errorf("apply defaults: %w", err)
+	}
+
+	return nil
+}
+
 func runValidation(target any, meta *Metadata) error {
 	if v, ok := target.(MetadataValidator); ok {
 		return validateWithMetadata(v, meta)
@@ -141,13 +171,6 @@ func runValidation(target any, meta *Metadata) error {
 	return nil
 }
 
-// validateWithMetadata calls a MetadataValidator and normalizes its failure.
-//
-// A failure already carrying an attributed key is returned as built, so its
-// origin survives. A failure that names no key is reported the way a [Validator]
-// failure is. Every validation failure therefore leaves [LoadInto] as a
-// [ConfigError], which lets a caller classify one with [errors.As] without
-// knowing which interface produced it.
 func validateWithMetadata(v MetadataValidator, meta *Metadata) error {
 	err := v.ValidateWith(meta)
 	if err == nil {
@@ -162,9 +185,6 @@ func validateWithMetadata(v MetadataValidator, meta *Metadata) error {
 	return meta.NewConfigError("", fmt.Errorf("validation failed: %w", err))
 }
 
-// applyLayer merges one discovered layer into target and records the origin of
-// each key it supplies. A layer that carries its data inline, as the explicit
-// path and standard input do, is not read from disk.
 func readLayerData(layer cascade.Layer, maxFileSize int64) ([]byte, error) {
 	if layer.Data != nil {
 		return layer.Data, nil
@@ -239,7 +259,7 @@ func applyLayer(target any, layer cascade.Layer, opts *loadOptions, meta *Metada
 		syntaxExt = aliasTarget
 	}
 
-	recordLayerOrigins(data, layer, syntaxExt, meta)
+	recordLayerOrigins(data, layer, syntaxExt, opts.keys, meta)
 
 	return nil
 }
@@ -283,12 +303,6 @@ func detectOtherCodec(reg *codec.Registry, data []byte) (Codec, string) {
 	return nil, ""
 }
 
-// detectCodec selects a codec from the shape of the data, for a layer whose
-// extension is absent or unregistered. An empty layer is TOML, a leading brace
-// or bracket selects JSON, a layer that decodes as TOML is TOML, and anything
-// else is YAML. It reports the extension the selected codec is registered under
-// alongside it, and nil with an empty extension when the registry holds none of
-// those.
 func detectCodec(data []byte, opts *loadOptions) (Codec, string) {
 	trimmed := bytes.TrimSpace(data)
 	if len(trimmed) == 0 {
@@ -421,7 +435,7 @@ func discoverAndApplyLayers(target any, opts *loadOptions, meta *Metadata) error
 	layers, err := cascade.Discover(cascade.Params{
 		AppName:      opts.appName,
 		ExplicitPath: opts.explicitPath,
-		CWD:          opts.cwd,
+		OptionalPath: opts.optionalPath,
 		WithoutFiles: opts.withoutFiles,
 		StdinReader:  opts.stdinReader,
 		MaxFileSize:  opts.maxFileSize,
@@ -440,20 +454,46 @@ func discoverAndApplyLayers(target any, opts *loadOptions, meta *Metadata) error
 	return nil
 }
 
-// recordLayerOrigins records one [Origin] per key the layer supplies.
-//
-// The layer is named explicitly rather than taken from the document, because a
-// document carries no record of which tier it was discovered in.
-func recordLayerOrigins(data []byte, layer cascade.Layer, ext string, meta *Metadata) {
+func recordLayerOrigins(data []byte, layer cascade.Layer, ext string, keys *keyTree, meta *Metadata) {
 	origins.Read(data, ext, func(record origins.Record) {
-		meta.Record(Origin{
+		origin := Origin{
 			Key:      record.Key,
 			Source:   SourceKind(layer.Source),
 			Path:     layer.Path,
 			Line:     record.Line,
 			RawValue: record.RawValue,
-		})
+		}
+
+		if keys.known(record.Key) {
+			meta.Record(origin)
+			return
+		}
+
+		origin.RawValue = ""
+		meta.recordUnknown(UnknownKey{Origin: origin, Suggestion: keys.suggest(record.Key)})
 	})
+}
+
+// unknownKeysError reports every unknown key as a [ConfigError] wrapping
+// [ErrUnknownKey], or nil when there are none.
+func unknownKeysError(meta *Metadata) error {
+	unknown := meta.UnknownKeys()
+	if len(unknown) == 0 {
+		return nil
+	}
+
+	errs := make([]error, 0, len(unknown))
+
+	for _, key := range unknown {
+		cause := fmt.Errorf("%w %q", ErrUnknownKey, key.Key)
+		if key.Suggestion != "" {
+			cause = fmt.Errorf("%w %q (did you mean %q?)", ErrUnknownKey, key.Key, key.Suggestion)
+		}
+
+		errs = append(errs, &ConfigError{Key: key.Key, Err: cause, Origin: key.Origin})
+	}
+
+	return errors.Join(errs...)
 }
 
 func registerSecretsFromTarget(target any, meta *Metadata) {

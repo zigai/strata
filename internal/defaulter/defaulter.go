@@ -45,6 +45,13 @@ type Defaulter interface {
 	SetDefaults()
 }
 
+// visitor carries what one walk does at each field: report non-zero leaves, and
+// when apply is set, call SetDefaults and allocate defaulted nil pointers.
+type visitor struct {
+	report func(key, rawVal string)
+	apply  bool
+}
+
 // Apply applies the defaults declared by target's type and reports every leaf
 // field that ends up non-zero to onDefault. Unexported fields and fields that a
 // "-" tag excludes are not walked.
@@ -82,7 +89,25 @@ func Apply(target any, onDefault func(key, rawVal string)) error {
 		}
 	}
 
-	return recurseDefaults(elem, "", onDefault, false, nil, nil)
+	return recurseDefaults(elem, "", &visitor{report: onDefault, apply: true}, false, nil, nil)
+}
+
+// Report reports every non-zero leaf of target to onDefault, exactly as [Apply]
+// does, without calling any SetDefaults method or allocating nil pointers.
+//
+// It describes a value whose defaults were settled some other way, such as by
+// replacing it with an explicit defaults value after [Apply].
+func Report(target any, onDefault func(key, rawVal string)) error {
+	if target == nil {
+		return ErrTargetNotPointer
+	}
+
+	val := reflect.ValueOf(target)
+	if val.Kind() != reflect.Pointer || val.IsNil() || val.Elem().Kind() != reflect.Struct {
+		return ErrTargetNotPointer
+	}
+
+	return recurseDefaults(val.Elem(), "", &visitor{report: onDefault, apply: false}, false, nil, nil)
 }
 
 // IsNestedStruct reports whether v is a nested composite struct that the walk
@@ -388,7 +413,7 @@ func fullFieldKey(prefix, key string, anonymous bool) string {
 	return key
 }
 
-func recurseField(field reflect.Value, sf reflect.StructField, prefix string, onDefault func(key, rawVal string), inheritedSecret bool, activeTypes []reflect.Type, activePtrs []uintptr) error {
+func recurseField(field reflect.Value, sf reflect.StructField, prefix string, v *visitor, inheritedSecret bool, activeTypes []reflect.Type, activePtrs []uintptr) error {
 	if !sf.IsExported() {
 		return nil
 	}
@@ -402,19 +427,19 @@ func recurseField(field reflect.Value, sf reflect.StructField, prefix string, on
 	fullKey := fullFieldKey(prefix, key, sf.Anonymous)
 
 	if IsNestedStruct(field) {
-		return handleStructField(field, fullKey, onDefault, fieldSecret, activeTypes, activePtrs)
+		return handleStructField(field, fullKey, v, fieldSecret, activeTypes, activePtrs)
 	}
 
 	if field.Kind() == reflect.Pointer && IsNestedStructType(field.Type().Elem()) {
-		return handlePointerStructField(field, fullKey, onDefault, fieldSecret, activeTypes, activePtrs)
+		return handlePointerStructField(field, fullKey, v, fieldSecret, activeTypes, activePtrs)
 	}
 
-	recordDefaultLeaf(field, sf, fullKey, onDefault, fieldSecret)
+	recordDefaultLeaf(field, sf, fullKey, v, fieldSecret)
 
 	return nil
 }
 
-func recurseDefaults(val reflect.Value, prefix string, onDefault func(key, rawVal string), inheritedSecret bool, activeTypes []reflect.Type, activePtrs []uintptr) error {
+func recurseDefaults(val reflect.Value, prefix string, v *visitor, inheritedSecret bool, activeTypes []reflect.Type, activePtrs []uintptr) error {
 	typ := val.Type()
 	if slices.Contains(activeTypes, typ) {
 		return nil
@@ -424,7 +449,7 @@ func recurseDefaults(val reflect.Value, prefix string, onDefault func(key, rawVa
 	defer func() { activeTypes = activeTypes[:len(activeTypes)-1] }()
 
 	for i := range val.NumField() {
-		if err := recurseField(val.Field(i), typ.Field(i), prefix, onDefault, inheritedSecret, activeTypes, activePtrs); err != nil {
+		if err := recurseField(val.Field(i), typ.Field(i), prefix, v, inheritedSecret, activeTypes, activePtrs); err != nil {
 			return err
 		}
 	}
@@ -432,17 +457,17 @@ func recurseDefaults(val reflect.Value, prefix string, onDefault func(key, rawVa
 	return nil
 }
 
-func recordDefaultLeaf(field reflect.Value, sf reflect.StructField, fullKey string, onDefault func(key, rawVal string), isSecret bool) {
-	if onDefault == nil || field.IsZero() {
+func recordDefaultLeaf(field reflect.Value, sf reflect.StructField, fullKey string, v *visitor, isSecret bool) {
+	if v.report == nil || field.IsZero() {
 		return
 	}
 
 	if isSecret || IsSecret(sf) {
-		onDefault(fullKey, "[REDACTED]")
+		v.report(fullKey, "[REDACTED]")
 		return
 	}
 
-	onDefault(fullKey, rawValueOf(field))
+	v.report(fullKey, rawValueOf(field))
 }
 
 // rawValueOf renders a leaf field for provenance.
@@ -492,28 +517,28 @@ func formatLeafValue(field reflect.Value) string {
 	}
 }
 
-func handleStructField(field reflect.Value, fullKey string, onDefault func(key, rawVal string), inheritedSecret bool, activeTypes []reflect.Type, activePtrs []uintptr) error {
-	if field.CanAddr() {
+func handleStructField(field reflect.Value, fullKey string, v *visitor, inheritedSecret bool, activeTypes []reflect.Type, activePtrs []uintptr) error {
+	if field.CanAddr() && v.apply {
 		ensureEmbeddedPointers(field)
 
-		if d, ok := reflect.TypeAssert[Defaulter](field.Addr()); ok && !isPromotedSetDefaults(field.Addr().Interface()) {
+		if d, ok := reflect.TypeAssert[Defaulter](field.Addr()); ok && v.apply && !isPromotedSetDefaults(field.Addr().Interface()) {
 			if err := callSetDefaults(d); err != nil {
 				return fmt.Errorf("%s: %w", fullKey, err)
 			}
 		}
 	}
 
-	return recurseDefaults(field, fullKey, onDefault, inheritedSecret, activeTypes, activePtrs)
+	return recurseDefaults(field, fullKey, v, inheritedSecret, activeTypes, activePtrs)
 }
 
-func handlePointerStructField(field reflect.Value, fullKey string, onDefault func(key, rawVal string), inheritedSecret bool, activeTypes []reflect.Type, activePtrs []uintptr) error {
+func handlePointerStructField(field reflect.Value, fullKey string, v *visitor, inheritedSecret bool, activeTypes []reflect.Type, activePtrs []uintptr) error {
 	elemType := field.Type().Elem()
 	if slices.Contains(activeTypes, elemType) {
 		return nil
 	}
 
 	if field.IsNil() {
-		return initNilStructPointer(field, fullKey, onDefault, inheritedSecret, activeTypes, activePtrs)
+		return initNilStructPointer(field, fullKey, v, inheritedSecret, activeTypes, activePtrs)
 	}
 
 	ptr := field.Pointer()
@@ -524,15 +549,17 @@ func handlePointerStructField(field reflect.Value, fullKey string, onDefault fun
 	activePtrs = append(activePtrs, ptr)
 	defer func() { activePtrs = activePtrs[:len(activePtrs)-1] }()
 
-	ensureEmbeddedPointers(field.Elem())
+	if v.apply {
+		ensureEmbeddedPointers(field.Elem())
+	}
 
-	if d, ok := reflect.TypeAssert[Defaulter](field); ok && !isPromotedSetDefaults(field.Interface()) {
+	if d, ok := reflect.TypeAssert[Defaulter](field); ok && v.apply && !isPromotedSetDefaults(field.Interface()) {
 		if err := callSetDefaults(d); err != nil {
 			return fmt.Errorf("%s: %w", fullKey, err)
 		}
 	}
 
-	return recurseDefaults(field.Elem(), fullKey, onDefault, inheritedSecret, activeTypes, activePtrs)
+	return recurseDefaults(field.Elem(), fullKey, v, inheritedSecret, activeTypes, activePtrs)
 }
 
 // initNilStructPointer allocates a nil struct pointer field when its type
@@ -540,11 +567,11 @@ func handlePointerStructField(field reflect.Value, fullKey string, onDefault fun
 //
 // The field is left nil when neither the pointer type nor its element type
 // implements [Defaulter].
-func initNilStructPointer(field reflect.Value, fullKey string, onDefault func(key, rawVal string), inheritedSecret bool, activeTypes []reflect.Type, activePtrs []uintptr) error {
+func initNilStructPointer(field reflect.Value, fullKey string, v *visitor, inheritedSecret bool, activeTypes []reflect.Type, activePtrs []uintptr) error {
 	elemType := field.Type().Elem()
 	ptrType := field.Type()
 
-	if slices.Contains(activeTypes, elemType) {
+	if !v.apply || slices.Contains(activeTypes, elemType) {
 		return nil
 	}
 
@@ -564,7 +591,7 @@ func initNilStructPointer(field reflect.Value, fullKey string, onDefault func(ke
 
 	field.Set(newVal)
 
-	return recurseDefaults(field.Elem(), fullKey, onDefault, inheritedSecret, activeTypes, activePtrs)
+	return recurseDefaults(field.Elem(), fullKey, v, inheritedSecret, activeTypes, activePtrs)
 }
 
 func isPromotedSetDefaults(target any) bool {

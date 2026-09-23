@@ -214,12 +214,14 @@ func rewriteTOMLValue(val any, targetType reflect.Type) (any, error) {
 
 // Encode encodes value as TOML bytes.
 //
-// The document is terminated by a newline.
+// Struct fields are written under their configuration keys, so the document
+// uses the same keys as every other layer. The document is terminated by a
+// newline.
 //
 // It returns an error wrapping the go-toml/v2 failure if value cannot be
 // represented in TOML.
 func (c *TOMLCodec) Encode(value any) ([]byte, error) {
-	data, err := toml.Marshal(value)
+	data, err := toml.Marshal(keyedValue(value))
 	if err != nil {
 		return nil, fmt.Errorf("toml marshal: %w", err)
 	}
