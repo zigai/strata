@@ -106,29 +106,37 @@ strata then checks `/etc/xdg/myapp/` and `~/.config/myapp/` for a `config.toml`,
 
 ### CLI flags
 
-Tag the fields you want as flags:
+With [Cobra](https://github.com/spf13/cobra), keep the config struct free of CLI tags and choose flags on the commands that use them:
 
 ```go
-type Config struct {
-	Host string `flag:"host"`
-	Port int    `flag:"port,p"` // -p, --port
+var cfg Config
+root := &cobra.Command{Use: "myapp"}
+b := stratacobra.Bind(root, &cfg, strata.WithEnvPrefix("MYAPP_"))
+
+serve := &cobra.Command{Use: "serve", Run: func(cmd *cobra.Command, args []string) {
+	fmt.Println(cfg.Host, cfg.Port)
+}}
+b.FlagP(serve.Flags(), "port", "p", "port to listen on")
+b.Flag(serve.Flags(), "host", "host to listen on")
+root.AddCommand(serve, b.ConfigCommand())
+```
+
+`Bind` adds `-c/--config`, loads the config before commands run, and uses `myapp` for user and system file discovery. Flag types and help defaults come from `Config`; only flags the user actually typed override other layers. If a child defines its own `PersistentPreRunE`, call `b.Load(cmd)` there because Cobra runs only the nearest hook. Assign root hooks before calling `Bind`.
+
+[`urfave/cli`](https://github.com/urfave/cli) has the same key-based binding:
+
+```go
+var cfg Config
+b := strataurfave.Bind(&cfg, strata.WithEnvPrefix("MYAPP_"))
+app := &cli.Command{
+	Name:   "myapp",
+	Before: b.Before,
+	Flags:  []cli.Flag{b.ConfigFlag(), b.Flag("port", "port to listen on", "p")},
+	Commands: []*cli.Command{b.ConfigCommand()},
 }
 ```
 
-Then, with [Cobra](https://github.com/spf13/cobra):
-
-```go
-cfg.SetDefaults() // so --help shows them
-stratacobra.RegisterFlags(cmd, &cfg)
-
-// later, in PersistentPreRunE:
-cfg, err := strata.Load[Config](
-	strata.WithAppName("myapp"),
-	stratacobra.WithFlags(cmd),
-)
-```
-
-Only the flags the user actually typed override anything. [`urfave/cli`](https://github.com/urfave/cli) works the same way through `strataurfave`. Both bridges are separate modules:
+Both bridges are separate modules:
 
 ```sh
 go get github.com/zigai/strata/bridge/cobra
@@ -170,6 +178,8 @@ config error: unknown key "prot" (did you mean "port"?)
   --> set by /home/you/project/config.toml
 ```
 
+YAML keys that only hold an anchor for other keys to reuse, like `base` in `base: &b {...}` merged with `<<: *b`, aren't counted as unknown. An anchor that nothing reuses still is.
+
 ## Checking values
 
 Add a `Validate` method and strata runs it after all the layers, flags included, have been merged:
@@ -199,15 +209,40 @@ config error: above the privileged ceiling for port: "9090"
   --> set by /home/you/project/config.toml
 ```
 
+If your app already uses `go-playground/validator`, `KeyName` makes its field paths match strata keys. Install `github.com/go-playground/validator/v10`, then adapt its errors in `ValidateWith`:
+
+```go
+var validate = func() *validator.Validate {
+	v := validator.New()
+	v.RegisterTagNameFunc(strata.KeyName)
+	return v
+}()
+
+func (c *Config) ValidateWith(meta *strata.Metadata) error {
+	err := validate.Struct(c)
+	var fieldErrs validator.ValidationErrors
+	if !errors.As(err, &fieldErrs) {
+		return err
+	}
+
+	errs := make([]error, 0, len(fieldErrs))
+	for _, fe := range fieldErrs {
+		_, key, _ := strings.Cut(fe.Namespace(), ".")
+		errs = append(errs, meta.NewConfigError(key, fmt.Errorf("fails %s=%s", fe.Tag(), fe.Param())))
+	}
+	return errors.Join(errs...)
+}
+```
+
 ## Editing config files
 
 `Set` changes one key and leaves the rest of the file alone:
 
 ```go
-err := strata.Set("config.toml", "database.port", 5433)
+err := strata.Set[Config]("config.toml", "database.port", "5433")
 ```
 
-TOML files keep everything: comments, blank lines, and key order. YAML files keep their comments but lose blank lines. JSON files get their keys sorted.
+`Set[Config]` checks the key and field type before writing, including custom text decoders. Dotted paths can set map entries such as `labels.env`. For slice fields, a string such as `"a,b"` becomes two items. `SetBytes` edits arbitrary documents without a config type. TOML files keep comments, blank lines, and key order. YAML files keep comments but lose blank lines. JSON files keep number text in untouched values and sort keys.
 
 For files only your program touches, like saved state, `Save` writes the whole struct at once:
 
@@ -235,7 +270,7 @@ Pass `strata.WithSchemaURL(url)` to `Init` to link the two.
 
 ## Days and weeks
 
-Go's `time.Duration` stops at hours. `strata.Duration` also understands `7d`, `2w`, and `1w2d`:
+Plain `time.Duration` loads and saves strings such as `"30s"` in TOML, YAML, and JSON. `strata.Duration` also understands `7d`, `2w`, and `1w2d`:
 
 ```go
 type Config struct {
@@ -271,32 +306,33 @@ type Config struct {
 
 A field's key comes from its `strata`, `toml`, `yaml`, or `json` tag, whichever it finds first. Without one, the field name is converted to snake case. Nested structs use dots: `database.port`.
 
+Keys are matched exactly. `max_conns` sets `MaxConns`, but `MaxConns` or `maxconns` in a file does nothing, and strata reports it as an unknown key.
+
 An `env` tag gives a field an exact variable name. It's read even without `WithEnvPrefix`. Fields without one are only read from the environment once you set a prefix, so a stray `PORT` or `HOST` in the environment never changes your config.
 
-Tag a field `secret` to keep its value out of provenance output (it shows `[REDACTED]`) and out of `--help`:
+Use `strata.Secret` for a string that redacts itself in formatting and logs. `Value()` retrieves its real value. The `secret` tag remains available for other field types. Secret values are left out of `Init` templates and cannot be bound as flags:
 
 ```go
 type Config struct {
 	DatabaseURL string `strata:"db_url"`
-	APIKey      string `env:"API_KEY,secret"`
+	APIKey      strata.Secret
 }
 ```
 
 </details>
 
 <details>
-<summary><b>Flag tags</b></summary>
+<summary><b>Flag binding</b></summary>
 
 <br>
 
-| Tag | Flag |
+| Cobra call | Flag |
 | --- | --- |
-| `flag:"port"` | `--port` |
-| `flag:"port,p"` | `-p, --port` |
-| `flag:",p"` | Name from the field, plus `-p` |
-| `flag:""` | Name from the field |
+| `b.Flag(fs, "port", "port to listen on")` | `--port` |
+| `b.FlagP(fs, "port", "p", "port to listen on")` | `-p, --port` |
+| `b.Flag(fs, "db.max_conns", "maximum connections")` | `--db-max-conns` |
 
-Fields without a `flag` tag never become flags. Flags on an embedded struct are added as if they were declared on the parent. A tagged nested struct prefixes its flags, so `flag:"db"` on a `Database` field gives `--db-host`.
+Pass a command's `Flags()` for local flags or `PersistentFlags()` for inherited flags. `b.Flag` panics at setup time for an unknown, unsupported, or secret key.
 
 </details>
 
