@@ -36,6 +36,11 @@ const (
 // The error carries the path.
 var ErrPathIsDirectory = errors.New("explicit configuration path is a directory")
 
+var (
+	errNoConfigFormat = errors.New("no configuration format is enabled")
+	errNoHome         = errors.New("home directory is not available")
+)
+
 // Layer is one configuration source discovered in the cascade order.
 //
 // Source is one of the Source* constants. Data holds the bytes of a stdin layer
@@ -65,13 +70,12 @@ type Params struct {
 
 // Discover returns the configuration layers to merge, in ascending precedence.
 //
-// The system and user tiers are searched under AppName, and each contributes at
-// most one layer. A tier with no configuration file contributes nothing; that is
-// not an error. An empty AppName or WithoutFiles skips both tiers.
+// AppName selects up to one system and one user file. Extensions are tried in
+// the order in Params. A missing tier file contributes nothing. Empty AppName
+// or WithoutFiles skips both tiers.
 //
-// An explicit path is layered above both tiers, and still applies under
-// WithoutFiles. The path "-" reads standard input in place of a file. A missing
-// explicit path is an error unless OptionalPath is set.
+// ExplicitPath applies above them even with WithoutFiles. "-" reads stdin;
+// missing paths fail unless OptionalPath is set.
 //
 // It returns [ErrPathIsDirectory] if an explicit path names a directory.
 func Discover(p Params) ([]Layer, error) {
@@ -113,6 +117,57 @@ func Discover(p Params) ([]Layer, error) {
 	}
 
 	return layers, nil
+}
+
+func UserConfigFile(appName string) (string, error) {
+	return UserConfigFileForExtensions(appName, []string{".toml", ".yaml", ".yml", ".json"})
+}
+
+func UserConfigFileForExtensions(appName string, exts []string) (string, error) {
+	if len(exts) == 0 {
+		return "", errNoConfigFormat
+	}
+
+	base, err := userConfigBase()
+	if err != nil {
+		return "", err
+	}
+
+	dir := filepath.Join(base, appName)
+	if found := findConfigFile(dir, exts); found != "" {
+		return found, nil
+	}
+
+	return filepath.Join(dir, "config"+exts[0]), nil
+}
+
+func userConfigBase() (string, error) {
+	if runtime.GOOS == "windows" {
+		if base := os.Getenv("APPDATA"); base != "" {
+			return base, nil
+		}
+	} else if base := os.Getenv("XDG_CONFIG_HOME"); base != "" {
+		return base, nil
+	}
+
+	home, err := os.UserHomeDir()
+	if err != nil && home == "" {
+		home = os.Getenv("HOME")
+	}
+
+	if home == "" {
+		if err != nil {
+			return "", fmt.Errorf("find home directory: %w", err)
+		}
+
+		return "", errNoHome
+	}
+
+	if runtime.GOOS == "windows" {
+		return filepath.Join(home, "AppData", "Roaming"), nil
+	}
+
+	return filepath.Join(home, ".config"), nil
 }
 
 func discoverExplicitLayer(p Params) ([]Layer, error) {
@@ -192,46 +247,12 @@ func discoverSystemTier(appName string, exts []string) string {
 }
 
 func discoverUserTier(appName string, exts []string) string {
-	home, err := os.UserHomeDir()
-	if err != nil && home == "" {
-		home = os.Getenv("HOME")
+	base, err := userConfigBase()
+	if err != nil {
+		return ""
 	}
 
-	if runtime.GOOS == "windows" {
-		return discoverWindowsUserTier(appName, home, exts)
-	}
-
-	return discoverUnixUserTier(appName, home, exts)
-}
-
-func discoverWindowsUserTier(appName, home string, exts []string) string {
-	appData := os.Getenv("APPDATA")
-	if appData == "" && home != "" {
-		appData = filepath.Join(home, "AppData", "Roaming")
-	}
-
-	if appData != "" {
-		appDir := filepath.Join(appData, appName)
-
-		return findConfigFile(appDir, exts)
-	}
-
-	return ""
-}
-
-func discoverUnixUserTier(appName, home string, exts []string) string {
-	xdgHome := os.Getenv("XDG_CONFIG_HOME")
-	if xdgHome == "" && home != "" {
-		xdgHome = filepath.Join(home, ".config")
-	}
-
-	if xdgHome != "" {
-		appDir := filepath.Join(xdgHome, appName)
-
-		return findConfigFile(appDir, exts)
-	}
-
-	return ""
+	return findConfigFile(filepath.Join(base, appName), exts)
 }
 
 func findConfigFile(dir string, exts []string) string {

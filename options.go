@@ -71,19 +71,13 @@ func WithEnvPrefix(prefix string) Option {
 	}
 }
 
-// WithPath names one configuration file to load on top of the system and user
-// files.
+// WithPath loads one file above the system and user files.
 //
-// A missing file is an error; use [WithOptionalPath] for a file that may not
-// exist. The file is reported in [Metadata] as [SourceFile].
+// Missing files are errors; use [WithOptionalPath] to allow one.
 //
-// The path "-" reads from standard input instead. The process standard input is
-// read once and buffered for the lifetime of the process, so a later load sees
-// the same bytes rather than an exhausted stream.
+// The path "-" reads process stdin, which is cached after the first read.
 //
-// NB: A reader supplied through [WithStdin] is not cached. It is consumed
-// directly, so a second load over an exhausted reader produces defaults without
-// reporting an error.
+// A reader from [WithStdin] is consumed directly and is not cached.
 func WithPath(path string) Option {
 	return func(o *loadOptions) {
 		o.explicitPath = path
@@ -99,13 +93,6 @@ func WithOptionalPath(path string) Option {
 		o.explicitPath = path
 		o.optionalPath = true
 	}
-}
-
-// WithExplicitPath is the former name of [WithPath].
-//
-// Deprecated: Use [WithPath].
-func WithExplicitPath(path string) Option {
-	return WithPath(path)
 }
 
 // WithoutFiles disables tier discovery, leaving only the environment and

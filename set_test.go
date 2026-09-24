@@ -4,8 +4,10 @@ import (
 	"errors"
 	"os"
 	"path/filepath"
+	"reflect"
 	"strings"
 	"testing"
+	"time"
 
 	"gopkg.in/yaml.v3"
 
@@ -13,7 +15,39 @@ import (
 	"github.com/zigai/strata/codec"
 )
 
+type narrowEditConfig struct {
+	Narrow   int8
+	Unsigned uint8
+}
+
+type listEditConfig struct {
+	Tags    []string
+	Numbers []int
+}
+
+type editLevel string
+
+func (l *editLevel) UnmarshalText(data []byte) error {
+	if string(data) != "info" && string(data) != "debug" {
+		return errors.New("unknown level")
+	}
+
+	*l = editLevel(data)
+
+	return nil
+}
+
+type richEditConfig struct {
+	Level  editLevel
+	Labels map[string]string
+	Ratio  float32
+}
+
 func TestSetEndToEnd(t *testing.T) {
+	type serverConfig struct{ Server struct{ Port int } }
+
+	type portConfig struct{ Port int }
+
 	t.Parallel()
 
 	tmpDir := t.TempDir()
@@ -31,7 +65,7 @@ server:
 			t.Fatalf("WriteFile: %v", err)
 		}
 
-		if err := strata.Set(p, "server.port", 9090); err != nil {
+		if err := strata.Set[serverConfig](p, "server.port", 9090); err != nil {
 			t.Fatalf("strata.Set error: %v", err)
 		}
 
@@ -63,7 +97,7 @@ port = 8080 # listen port
 			t.Fatalf("WriteFile: %v", err)
 		}
 
-		if err := strata.Set(p, "server.port", 9090); err != nil {
+		if err := strata.Set[serverConfig](p, "server.port", 9090); err != nil {
 			t.Fatalf("strata.Set error: %v", err)
 		}
 
@@ -92,7 +126,7 @@ port = 8080 # listen port
 			t.Fatalf("WriteFile: %v", err)
 		}
 
-		if err := strata.Set(p, "port", 9090); err != nil {
+		if err := strata.Set[portConfig](p, "port", 9090); err != nil {
 			t.Fatalf("strata.Set error: %v", err)
 		}
 
@@ -124,6 +158,11 @@ func TestSetBytes(t *testing.T) {
 }
 
 func TestSetScientificNotationAndSingleLetter(t *testing.T) {
+	type config struct {
+		Rate   float64
+		Format string
+	}
+
 	t.Parallel()
 
 	tmpDir := t.TempDir()
@@ -134,11 +173,11 @@ func TestSetScientificNotationAndSingleLetter(t *testing.T) {
 		t.Fatalf("WriteFile: %v", err)
 	}
 
-	if err := strata.Set(p, "rate", "1e5"); err != nil {
+	if err := strata.Set[config](p, "rate", "1e5"); err != nil {
 		t.Fatalf("strata.Set rate error: %v", err)
 	}
 
-	if err := strata.Set(p, "format", "t"); err != nil {
+	if err := strata.Set[config](p, "format", "t"); err != nil {
 		t.Fatalf("strata.Set format error: %v", err)
 	}
 
@@ -208,13 +247,6 @@ func TestSetBytesFailuresAreClassifiable(t *testing.T) {
 			func() ([]byte, error) { return strata.SetBytes(".toml", []byte("a = 1\n"), "a..b", 2) },
 			strata.ErrInvalidEmptyPathSegment,
 		},
-		{
-			"an ambiguous key",
-			func() ([]byte, error) {
-				return strata.SetBytes(".toml", []byte("port = 1\nPort = 2\n"), "PORT", 3)
-			},
-			strata.ErrAmbiguousKey,
-		},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			t.Parallel()
@@ -253,5 +285,236 @@ func TestMultiDocumentYAMLIsRefused(t *testing.T) {
 	// The same condition reached through either API MUST carry one identity.
 	if !errors.Is(err, strata.ErrMultipleDocuments) {
 		t.Errorf("SetBytes err = %v, want it to match strata.ErrMultipleDocuments", err)
+	}
+}
+
+// A key is matched exactly. A key differing only in case is a different key,
+// so it is left alone and the requested key is added beside it.
+func TestSetMatchesKeysExactly(t *testing.T) {
+	t.Parallel()
+
+	for _, tc := range []struct {
+		format string
+		input  string
+	}{
+		{format: ".toml", input: "Port = 1\n"},
+		{format: ".yaml", input: "Port: 1\n"},
+		{format: ".json", input: "{\"Port\": 1}"},
+	} {
+		t.Run(tc.format, func(t *testing.T) {
+			t.Parallel()
+
+			out, err := strata.SetBytes(tc.format, []byte(tc.input), "port", 2)
+			if err != nil {
+				t.Fatalf("SetBytes: %v", err)
+			}
+
+			text := string(out)
+			if !strings.Contains(text, "Port") || !strings.Contains(text, "1") || !strings.Contains(text, "port") || !strings.Contains(text, "2") {
+				t.Fatalf("SetBytes changed the wrong key or dropped one:\n%s", text)
+			}
+		})
+	}
+}
+
+func TestSetBytesAppendedTOMLKeyEndsWithNewline(t *testing.T) {
+	for _, input := range []string{"level = 'info'", "level = 'info'\n"} {
+		out, err := strata.SetBytes("toml", []byte(input), "zeta", 5)
+		if err != nil {
+			t.Fatal(err)
+		}
+
+		if !strings.HasSuffix(string(out), "zeta = 5\n") {
+			t.Fatalf("appended TOML = %q", out)
+		}
+	}
+}
+
+// Set rejects unknown keys and badly typed values, and writes valid values in a
+// form that loads back.
+func TestSetChecksKeysAndValues(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "config.toml")
+	if err := strata.Init[primitiveConfig](path); err != nil {
+		t.Fatal(err)
+	}
+
+	if err := strata.Set[primitiveConfig](path, "prot", "9000"); err == nil || !strings.Contains(err.Error(), "did you mean \"port\"") {
+		t.Fatalf("unknown key error = %v", err)
+	}
+
+	if err := strata.Set[primitiveConfig](path, "port", "abc"); err == nil || !strings.Contains(err.Error(), path) {
+		t.Fatalf("bad value error = %v", err)
+	}
+
+	if err := strata.Set[primitiveConfig](path, "timeout", "30s"); err != nil {
+		t.Fatal(err)
+	}
+
+	if err := strata.Set[primitiveConfig](path, "secret", strata.Secret("private-value")); err != nil {
+		t.Fatal(err)
+	}
+
+	cfg, err := strata.Load[primitiveConfig](strata.WithPath(path))
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	if cfg.Timeout != 30*time.Second || cfg.Secret.Value() != "private-value" {
+		t.Fatalf("config = %+v", cfg)
+	}
+}
+
+func TestSetRejectsNumericOverflow(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "config.toml")
+	if err := os.WriteFile(path, []byte("narrow = 1\nunsigned = 1\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+
+	if err := strata.Set[narrowEditConfig](path, "narrow", 300); err == nil {
+		t.Fatal("signed overflow was accepted")
+	}
+
+	if err := strata.Set[narrowEditConfig](path, "unsigned", -1); err == nil {
+		t.Fatal("negative unsigned value was accepted")
+	}
+
+	data, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	if string(data) != "narrow = 1\nunsigned = 1\n" {
+		t.Fatalf("file changed: %s", data)
+	}
+}
+
+func TestSetParsesLists(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "config.toml")
+	if err := os.WriteFile(path, []byte("tags = []\nnumbers = []\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+
+	if err := strata.Set[listEditConfig](path, "tags", "a,b"); err != nil {
+		t.Fatal(err)
+	}
+
+	if err := strata.Set[listEditConfig](path, "numbers", "1, 2"); err != nil {
+		t.Fatal(err)
+	}
+
+	cfg, err := strata.Load[listEditConfig](strata.WithPath(path))
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	if !reflect.DeepEqual(cfg.Tags, []string{"a", "b"}) || !reflect.DeepEqual(cfg.Numbers, []int{1, 2}) {
+		t.Fatalf("lists = %+v", cfg)
+	}
+
+	if err := strata.Set[listEditConfig](path, "numbers", "1,nope"); err == nil || !strings.Contains(err.Error(), `"nope" is not an integer`) {
+		t.Fatalf("list error = %v", err)
+	}
+}
+
+func TestSetDecodesByFieldType(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "config.toml")
+	if err := os.WriteFile(path, []byte("level = 'info'\nratio = 0\n[labels]\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+
+	if err := strata.Set[richEditConfig](path, "level", "bogus"); err == nil || !strings.Contains(err.Error(), "unknown level") {
+		t.Fatalf("invalid level error = %v", err)
+	}
+
+	if err := strata.Set[richEditConfig](path, "labels.env", "prod"); err != nil {
+		t.Fatal(err)
+	}
+
+	if err := strata.Set[richEditConfig](path, "ratio", "0.1"); err != nil {
+		t.Fatal(err)
+	}
+
+	data, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	if strings.Contains(string(data), "0.100000001") || !strings.Contains(string(data), "ratio = 0.1") {
+		t.Fatalf("float32 edit = %s", data)
+	}
+
+	cfg, err := strata.Load[richEditConfig](strata.WithPath(path))
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	if cfg.Level != "info" || cfg.Labels["env"] != "prod" || cfg.Ratio != float32(0.1) {
+		t.Fatalf("config = %+v", cfg)
+	}
+}
+
+func TestSetMapEntryInEachFormat(t *testing.T) {
+	for ext, initial := range map[string]string{
+		".toml": "[labels]\n",
+		".yaml": "labels: {}\n",
+		".json": `{"labels":{}}`,
+	} {
+		t.Run(ext, func(t *testing.T) {
+			path := filepath.Join(t.TempDir(), "config"+ext)
+			if err := os.WriteFile(path, []byte(initial), 0o600); err != nil {
+				t.Fatal(err)
+			}
+
+			if err := strata.Set[richEditConfig](path, "labels.env", "prod"); err != nil {
+				t.Fatal(err)
+			}
+
+			cfg, err := strata.Load[richEditConfig](strata.WithPath(path))
+			if err != nil {
+				t.Fatal(err)
+			}
+
+			if cfg.Labels["env"] != "prod" {
+				t.Fatalf("labels = %v", cfg.Labels)
+			}
+		})
+	}
+}
+
+func TestSaveThenSetUsesOneKeySpelling(t *testing.T) {
+	t.Parallel()
+
+	for _, ext := range []string{".toml", ".yaml", ".json"} {
+		t.Run(ext, func(t *testing.T) {
+			t.Parallel()
+
+			path := filepath.Join(t.TempDir(), "state"+ext)
+
+			if err := strata.Save(path, typoConfig{Host: "h", Database: typoDatabase{MaxConns: 3}}); err != nil {
+				t.Fatalf("Save: %v", err)
+			}
+
+			if err := strata.Set[typoConfig](path, "database.max_conns", 9); err != nil {
+				t.Fatalf("Set: %v", err)
+			}
+
+			data, err := os.ReadFile(path)
+			if err != nil {
+				t.Fatalf("read: %v", err)
+			}
+
+			if strings.Count(string(data), "max_conns") != 1 || strings.Contains(string(data), "MaxConns") {
+				t.Fatalf("file names the key more than one way:\n%s", data)
+			}
+
+			cfg, err := strata.Load[typoConfig](strata.WithPath(path), strata.WithStrict())
+			if err != nil {
+				t.Fatalf("Load: %v", err)
+			}
+
+			if cfg.Database.MaxConns != 9 || cfg.Host != "h" {
+				t.Fatalf("cfg = %+v, want max_conns 9 and host h", cfg)
+			}
+		})
 	}
 }

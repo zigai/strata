@@ -4,7 +4,6 @@ import (
 	"encoding"
 	"encoding/json/jsontext"
 	"encoding/json/v2"
-	"errors"
 	"fmt"
 	"reflect"
 	"sort"
@@ -14,20 +13,10 @@ import (
 	"github.com/zigai/strata/internal/defaulter"
 )
 
-// A JSON document names configuration keys the way every other layer does: a
-// field is named by the first of its strata, toml, yaml, and json tags that
-// names it, or by the snake_case form of its Go name. encoding/json matches
-// neither of those on its own, so a document is rewritten before it is decoded.
-// Each member that names a field is renamed to the name encoding/json matches,
-// which is the field's json tag when it declares one and its Go name otherwise.
-//
-// The rewritten document is then handed to encoding/json, so type conversion,
-// custom decoders, and the errors they report are unchanged. A member that names
-// no field is carried through untouched and stays ignored, and a document that
-// needs no renaming is decoded from the bytes it was read from, byte for byte.
-//
-// Two members that name one field are refused rather than resolved by picking
-// one, matching the duplicate keys the other formats reject.
+// JSON members use configuration keys: the first named strata, toml, yaml, or
+// json tag, then the snake_case Go name. Before decoding, matching members are
+// renamed for encoding/json and unknown members are dropped. encoding/json
+// still handles conversion, custom decoders, and errors.
 
 // jsonDecoderInterfaces are the interfaces whose implementations decode a JSON
 // value themselves. A type listed here names its own members, so the rewrite
@@ -37,13 +26,6 @@ var jsonDecoderInterfaces = [...]reflect.Type{
 	reflect.TypeFor[json.UnmarshalerFrom](),
 	reflect.TypeFor[encoding.TextUnmarshaler](),
 }
-
-// errMemberConflict is the base of the failure reported when two members of one
-// JSON object name the same field. Which of the two the field takes is not
-// something a document decides, and picking one would discard the other without
-// reporting it. The condition is the JSON spelling of the duplicate key the
-// other formats reject.
-var errMemberConflict = errors.New("two members name the same field")
 
 // jsonBindingsCache holds the binding sets already derived, keyed by the struct
 // type they describe. A Codec is safe for concurrent use, hence the lock; a set
@@ -64,17 +46,10 @@ type jsonFieldBinding struct {
 	Type reflect.Type
 }
 
-// rewriteJSONDocument renames the members of a parsed JSON document that name a
-// field of target, and reports whether the document changed.
+// rewriteJSONDocument renames parsed members for target and reports changes.
 //
-// A target that is not a pointer names no fields, and its document is left for
-// encoding/json to reject. The document arrives here already parsed, so a
-// syntactic failure, a duplicate member, and invalid UTF-8 stay the parse
-// failures they are, whatever the rewrite would have done with the members
-// around them.
-//
-// A failure of the rewrite is reported as [ErrMalformed] because that is what
-// the document has become: one that cannot be decoded into the target.
+// Non-pointer targets are left to encoding/json to reject. Rewrite failures
+// wrap [ErrMalformed].
 func rewriteJSONDocument(document jsontext.Value, target any) (jsontext.Value, bool, error) {
 	typ := reflect.TypeOf(target)
 	if typ == nil || typ.Kind() != reflect.Pointer {
@@ -175,9 +150,7 @@ func rewriteJSONMapValues(value jsontext.Value, elemType reflect.Type) (jsontext
 // rewriteJSONObject rewrites the members of a JSON object, renaming each member
 // the bind function resolves.
 //
-// A member bind does not resolve is carried through untouched. Two members that
-// resolve to one name are refused: the document names one field twice, and
-// resolving it by picking a member would discard the other without reporting it.
+// A member bind does not resolve is dropped.
 func rewriteJSONObject(value jsontext.Value, bind func(member string) (jsonFieldBinding, bool)) (jsontext.Value, bool, error) {
 	if value.Kind() != jsontext.KindBeginObject {
 		return value, false, nil
@@ -190,23 +163,16 @@ func rewriteJSONObject(value jsontext.Value, bind func(member string) (jsonField
 	}
 
 	rewritten := make(map[string]jsontext.Value, len(members))
-	named := make(map[string]string, len(members))
 
 	changed := false
 
 	for member, raw := range members {
 		binding, ok := bind(member)
 		if !ok {
-			rewritten[member] = raw
+			changed = true
 
 			continue
 		}
-
-		if first, seen := named[binding.Name]; seen {
-			return nil, false, fmt.Errorf("%w: %q and %q", errMemberConflict, first, member)
-		}
-
-		named[binding.Name] = member
 
 		nested, nestedChanged, err := rewriteJSONValue(raw, binding.Type)
 		if err != nil {
@@ -287,23 +253,11 @@ func appendJSONArray(dst []byte, elements []jsontext.Value) []byte {
 	return append(dst, ']')
 }
 
-// jsonBindings maps every member name that may name a field of typ to the
-// binding that name selects.
+// jsonBindings maps each configuration key of typ to its JSON field binding.
 //
-// A field accepts the name encoding/json matches and the configuration key
-// [defaulter.FieldKey] derives for it: the first of its strata, toml, yaml, and
-// json tags that names the field, else the snake_case form of its Go name. A
-// field that declares no tag therefore accepts both its Go name and its
-// snake_case form, which is the key style provenance reports and the environment
-// tier binds.
+// Direct fields shadow promoted fields with the same key.
 //
-// Fields declared on typ itself are collected before the fields an embedded
-// struct promotes, and the first binding for a name wins, so a field here
-// shadows a promoted field of the same name.
-//
-// The set depends on the type alone, so it is computed once and reused: a
-// document holding many values of one type walks that type's fields once. The
-// returned map is shared and MUST NOT be modified.
+// Bindings are cached by type. The returned map is shared and must not be changed.
 func jsonBindings(typ reflect.Type) map[string]jsonFieldBinding {
 	jsonBindingsCacheMu.RLock()
 
@@ -330,18 +284,12 @@ func jsonBindings(typ reflect.Type) map[string]jsonFieldBinding {
 	return bindings
 }
 
-// collectJSONBindings adds the bindings of typ, and of the structs embedded in
-// it, to bindings.
+// collectJSONBindings adds bindings for typ and its embedded structs.
 //
-// A field its json tag excludes, as in `json:"-"`, and a field its configuration
-// key excludes, as in `strata:"-"`, contribute nothing: the first is invisible to
-// encoding/json, and the second names no configuration key. An unexported field
-// contributes nothing either, unless it is an embedded struct, whose exported
-// fields are promoted.
+// Excluded and unexported fields are skipped; exported fields of embedded
+// structs are promoted.
 //
-// path holds the struct types visited on this path. A type that repeats on one
-// path contributes nothing further, so an embedded pointer to the enclosing type
-// terminates the walk.
+// path prevents recursion through repeated embedded types.
 func collectJSONBindings(bindings map[string]jsonFieldBinding, typ reflect.Type, path map[reflect.Type]bool) {
 	if path[typ] {
 		return
@@ -373,10 +321,7 @@ func collectJSONBindings(bindings map[string]jsonFieldBinding, typ reflect.Type,
 			name = field.Name
 		}
 
-		binding := jsonFieldBinding{Name: name, Type: field.Type}
-
-		addJSONBinding(bindings, name, binding)
-		addJSONBinding(bindings, key, binding)
+		addJSONBinding(bindings, key, jsonFieldBinding{Name: name, Type: field.Type})
 	}
 
 	for _, field := range embedded {

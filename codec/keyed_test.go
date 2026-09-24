@@ -36,6 +36,45 @@ type keyedNode struct {
 	Children []keyedNode
 }
 
+type mergeDatabase struct {
+	Host string `strata:"dbHost"`
+}
+
+type mergeConfig struct {
+	Database mergeDatabase
+	Replica  mergeDatabase
+}
+
+func TestYAMLMergeKeepsAliasedConfigurationKeys(t *testing.T) {
+	for _, tc := range []struct {
+		data         string
+		wantDatabase string
+		wantReplica  string
+	}{
+		{data: "base: &base\n  dbHost: merged.example\ndatabase:\n  <<: *base\n", wantDatabase: "merged.example"},
+		{data: "database: &base\n  dbHost: merged.example\nreplica:\n  <<: *base\n", wantDatabase: "merged.example", wantReplica: "merged.example"},
+	} {
+		var cfg mergeConfig
+
+		if err := codec.NewYAMLCodec().Decode([]byte(tc.data), &cfg); err != nil {
+			t.Fatal(err)
+		}
+
+		if cfg.Database.Host != tc.wantDatabase || cfg.Replica.Host != tc.wantReplica {
+			t.Fatalf("merge lost database host: %+v", cfg)
+		}
+	}
+}
+
+func TestYAMLMergeRejectsAliasCycle(t *testing.T) {
+	data := []byte("database: &db\n  <<: *db\n")
+
+	var cfg mergeConfig
+	if err := codec.NewYAMLCodec().Decode(data, &cfg); err == nil {
+		t.Fatal("cyclic merge was accepted")
+	}
+}
+
 // TestEncodersWriteConfigurationKeys pins that every built-in encoder names a
 // field by its configuration key, so a written file uses the keys that
 // provenance, Set, and the documentation use.
@@ -121,5 +160,37 @@ func TestEncodersKeepRecursiveTypes(t *testing.T) {
 
 	if !strings.Contains(string(encoded), "leaf") {
 		t.Fatalf("encoded document lacks nested value:\n%s", encoded)
+	}
+}
+
+// TestDecodersAcceptOnlyConfigurationKeys pins that a field is named by its
+// configuration key, spelled exactly. The spellings a decoder would match on its
+// own, such as the Go name, are ignored in every format.
+func TestDecodersAcceptOnlyConfigurationKeys(t *testing.T) {
+	t.Parallel()
+
+	tests := []struct {
+		name     string
+		codec    codec.Codec
+		document string
+	}{
+		{name: "toml", codec: codec.NewTOMLCodec(), document: "http_port = 1\nHTTPPort = 2\nhttpport = 3\n[database]\nmax_conns = 4\nMaxConns = 5\n"},
+		{name: "yaml", codec: codec.NewYAMLCodec(), document: "http_port: 1\nHTTPPort: 2\nhttpport: 3\ndatabase:\n  max_conns: 4\n  MaxConns: 5\n"},
+		{name: "json", codec: codec.NewJSONCodec(), document: `{"http_port": 1, "HTTPPort": 2, "httpport": 3, "database": {"max_conns": 4, "MaxConns": 5}}`},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+
+			var target keyedConfig
+			if err := tt.codec.Decode([]byte(tt.document), &target); err != nil {
+				t.Fatalf("Decode: %v", err)
+			}
+
+			if target.HTTPPort != 1 || target.Database.MaxConns != 4 {
+				t.Fatalf("got http_port=%d max_conns=%d, want 1 and 4 from the configuration keys", target.HTTPPort, target.Database.MaxConns)
+			}
+		})
 	}
 }

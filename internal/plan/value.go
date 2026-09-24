@@ -5,22 +5,13 @@ import (
 	"errors"
 	"fmt"
 	"reflect"
-	"strings"
 )
 
-var (
-	// ErrDuplicateFlag is returned when two fields map to the same flag name or
-	// the same shorthand.
-	//
-	// [ValidateUniqueTargets] reports it for a plan whose targets disagree.
-	ErrDuplicateFlag = errors.New("two fields map to the same flag")
-
-	// ErrValueOverflow is returned when a configuration value does not fit the
-	// destination field's width.
-	//
-	// The assignment helpers raise it when a value cannot be stored.
-	ErrValueOverflow = errors.New("value does not fit the destination field")
-)
+// ErrValueOverflow is returned when a configuration value does not fit the
+// destination field's width.
+//
+// The assignment helpers raise it when a value cannot be stored.
+var ErrValueOverflow = errors.New("value does not fit the destination field")
 
 // StructTarget reports the struct value cfg points at. A cfg that is nil, is not
 // a pointer, or does not point to a struct produces an error wrapping
@@ -250,70 +241,6 @@ func AssignSlice(dst, src reflect.Value) error {
 	}
 
 	dst.Set(out)
-
-	return nil
-}
-
-// ValidateUniqueTargets reports the first flag name or shorthand that two
-// targets claim.
-//
-// A duplicate is reported as [ErrDuplicateFlag], naming the earlier and later
-// claimants by their display paths.
-func ValidateUniqueTargets(targets []Target) error {
-	names := make(map[string]string, len(targets))
-	shorthands := make(map[string]string, len(targets))
-
-	for i := range targets {
-		target := &targets[i]
-
-		if previous, duplicate := names[target.Name]; duplicate {
-			return fmt.Errorf("%w: %q is claimed by %s and %s", ErrDuplicateFlag, target.Name, previous, target.Display)
-		}
-
-		names[target.Name] = target.Display
-
-		if target.Shorthand == "" {
-			continue
-		}
-
-		if previous, duplicate := shorthands[target.Shorthand]; duplicate {
-			return fmt.Errorf("%w: shorthand %q is claimed by %s and %s", ErrDuplicateFlag, target.Shorthand, previous, target.Display)
-		}
-
-		shorthands[target.Shorthand] = target.Display
-	}
-
-	return nil
-}
-
-// CandidateFlagNames reports the flag names an untagged field is matched
-// against, in order: the name itself, its kebab-case and snake_case spellings,
-// and its last dot-separated element.
-func CandidateFlagNames(name string) []string {
-	parts := strings.Split(name, ".")
-	kebab := strings.Join(parts, "-")
-	snake := strings.Join(parts, "_")
-	leaf := parts[len(parts)-1]
-
-	return []string{name, kebab, snake, leaf}
-}
-
-// ForEachTarget builds the flag plan for root under policy and calls fn once per
-// target in declaration order, stopping at the first error.
-//
-// A [Build] failure is wrapped as "build flag plan". The error fn returns is
-// reported unwrapped.
-func ForEachTarget(root reflect.Value, policy Policy, fn func(root reflect.Value, target *Target) error) error {
-	targets, err := Build(root.Type(), policy)
-	if err != nil {
-		return fmt.Errorf("build flag plan: %w", err)
-	}
-
-	for i := range targets {
-		if err := fn(root, &targets[i]); err != nil {
-			return err
-		}
-	}
 
 	return nil
 }

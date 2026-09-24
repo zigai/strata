@@ -75,9 +75,6 @@ var (
 	// ErrInvalidEmptyPathSegment is returned when a dotted key path contains an empty segment.
 	ErrInvalidEmptyPathSegment = edit.ErrInvalidEmptyPathSegment
 
-	// ErrAmbiguousKey is returned when a dotted key matches multiple keys in a document.
-	ErrAmbiguousKey = edit.ErrAmbiguousKey
-
 	// ErrDefaultsTypeMismatch is returned when the type given to [WithDefaults]
 	// differs from the type being loaded.
 	ErrDefaultsTypeMismatch = errors.New("defaults type does not match the loaded type")

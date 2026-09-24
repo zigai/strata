@@ -23,17 +23,11 @@ func WithFileMode(mode os.FileMode) SaveOption {
 	}
 }
 
-// Save writes the complete T to targetPath, replacing the file atomically.
+// Save writes all of cfg to targetPath, replacing the file atomically. Existing
+// content is discarded; use [Set] to preserve it.
 //
-// The output is the encoded value of cfg. No schema directive is added, and
-// nothing the previous file contained is preserved, unlike [Init]. Save is
-// intended for files the application owns outright; [Set] is intended for files
-// a human maintains.
-//
-// The file extension selects one of the built-in codecs; a codec bound for one
-// load with [WithCodec] takes part in loading, not in writing. An extension that
-// matches no supported format is reported as [ErrUnsupportedFormat]. The file is
-// created with mode 0o644 unless [WithFileMode] sets another one.
+// The extension selects a built-in format. Unsupported extensions return
+// [ErrUnsupportedFormat]. Files use mode 0o644 unless [WithFileMode] changes it.
 func Save[T any](targetPath string, cfg T, opts ...SaveOption) error {
 	options := &saveOptions{
 		mode: 0o644,

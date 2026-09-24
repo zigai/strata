@@ -119,6 +119,10 @@ func Classify(typ reflect.Type) (Kind, reflect.Type, error) {
 	}
 
 	if implementsTextCodec(typ) {
+		if leaf.PkgPath() == "github.com/zigai/strata" && leaf.Name() == "Duration" {
+			return KindDuration, leaf, nil
+		}
+
 		return KindText, leaf, nil
 	}
 
@@ -135,12 +139,6 @@ func Classify(typ reflect.Type) (Kind, reflect.Type, error) {
 	}
 
 	return KindUnsupported, nil, fmt.Errorf("%w: type %s has no flag mapping", ErrUnsupportedFieldType, typ)
-}
-
-// IsSlice reports whether the kind carries a slice value, which a write path
-// replaces as a whole rather than rendering as one scalar.
-func (k Kind) IsSlice() bool {
-	return k == KindStringSlice || k == KindIntSlice || k == KindInt64Slice
 }
 
 // StorageTypeFor reports the canonical type that detached storage holds for a
@@ -176,17 +174,4 @@ func implementsTextCodec(typ reflect.Type) bool {
 
 	return (typ.Implements(marshaller) || reflect.PointerTo(typ).Implements(marshaller)) &&
 		reflect.PointerTo(typ).Implements(unmarshaller)
-}
-
-func isContainerType(typ reflect.Type) bool {
-	base := typ
-	if base.Kind() == reflect.Pointer {
-		base = base.Elem()
-	}
-
-	if base.Kind() != reflect.Struct {
-		return false
-	}
-
-	return !implementsTextCodec(typ)
 }

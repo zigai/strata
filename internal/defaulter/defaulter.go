@@ -52,20 +52,15 @@ type visitor struct {
 	apply  bool
 }
 
-// Apply applies the defaults declared by target's type and reports every leaf
-// field that ends up non-zero to onDefault. Unexported fields and fields that a
-// "-" tag excludes are not walked.
+// Apply applies defaults to target and reports nonzero leaves to onDefault.
+// Unexported and "-" tagged fields are skipped.
 //
-// target MUST be a non-nil pointer to a struct. [ErrTargetNotPointer] is
-// returned otherwise.
+// target must be a non-nil struct pointer or Apply returns [ErrTargetNotPointer].
 //
-// onDefault receives the dotted key of the leaf and its rendered value. A leaf
-// whose field is tagged secret is reported as a redacted placeholder. A nil
-// onDefault disables reporting; defaults are still applied.
+// onDefault receives dotted keys and rendered values, with secrets redacted.
+// A nil callback disables reporting only.
 //
-// A panic from a nested SetDefaults aborts the walk. The error returned for it
-// wraps [ErrSetDefaultsPanicked] and is prefixed with the dotted key of the
-// struct that panicked.
+// A nested SetDefaults panic wraps [ErrSetDefaultsPanicked] with its dotted key.
 func Apply(target any, onDefault func(key, rawVal string)) error {
 	if target == nil {
 		return ErrTargetNotPointer
@@ -159,19 +154,12 @@ func IsNestedStructType(typ reflect.Type) bool {
 	return true
 }
 
-// FieldKey resolves the configuration key of a struct field.
-//
-// The first tag among strata, toml, yaml, and json that names the field wins,
-// with surrounding whitespace trimmed and the option list after the first comma
-// discarded. When no tag names the field, the snake_case form of the Go field
-// name is used.
-//
-// A name of "-" is returned as-is; the walkers that call FieldKey skip such
-// fields. Note that a tag with an empty name, as in `strata:",secret"`, does not
-// name the field, and the remaining tags are consulted before the fallback.
-//
-// FieldKey performs no nesting. The returned string is one path segment, and
-// callers that need a nested key join segments with ".".
+// FieldKey returns one configuration path segment for a struct field. The first
+// named strata, toml, yaml, or json tag wins, with whitespace trimmed and the
+// option list after its first comma discarded. Otherwise it uses the snake_case
+// Go name. An empty tag name, such as `strata:",secret"`, lets later tags name
+// the field. A name of "-" is returned unchanged for callers to skip. FieldKey
+// does not join nested path segments.
 func FieldKey(f reflect.StructField) string {
 	for _, tagName := range candidateTags {
 		tag := f.Tag.Get(tagName)
@@ -236,22 +224,24 @@ func ShouldInsertUnderscore(s string, i, n int) bool {
 
 // IsSecret reports whether a struct field is tagged as secret.
 //
-// A field is secret when its strata or env tag carries an option equal to
-// "secret", either alone or after a comma, as in `strata:"token,secret"`.
-// Whitespace around an option is ignored. A tag name that merely contains the
-// word, as in `strata:"secret_key"`, does not mark the field.
+// The strata or env tag must contain a "secret" option; a name containing that
+// word does not count. Whitespace around options is ignored.
 //
-// Callers that record or print a field value MUST redact it when this reports
-// true. Both CLI bridges consult IsSecret when they derive flags, and the
-// environment tier consults it before reporting a bound value.
+// Callers must redact values when this returns true.
 func IsSecret(f reflect.StructField) bool {
+	typ := f.Type
+	for typ.Kind() == reflect.Pointer {
+		typ = typ.Elem()
+	}
+
+	if typ.PkgPath() == "github.com/zigai/strata" && typ.Name() == "Secret" {
+		return true
+	}
+
 	for _, tagName := range secretTags {
 		tag := f.Tag.Get(tagName)
 
-		// NB: almost every field carries no secret option, so a substring
-		// reject avoids splitting the tag for every leaf of every load. The
-		// substring can only over-accept, and the option comparison below
-		// rejects those cases.
+		// Skip splitting tags without "secret"; the option check confirms matches.
 		if !strings.Contains(tag, secretDirective) {
 			continue
 		}
@@ -458,7 +448,7 @@ func recurseDefaults(val reflect.Value, prefix string, v *visitor, inheritedSecr
 }
 
 func recordDefaultLeaf(field reflect.Value, sf reflect.StructField, fullKey string, v *visitor, isSecret bool) {
-	if v.report == nil || field.IsZero() {
+	if v.report == nil {
 		return
 	}
 
@@ -476,23 +466,18 @@ func recordDefaultLeaf(field reflect.Value, sf reflect.StructField, fullKey stri
 // reach here: the caller skips zero fields before rendering.
 func rawValueOf(field reflect.Value) string {
 	if field.Kind() == reflect.Pointer {
+		if field.IsNil() {
+			return ""
+		}
+
 		return formatLeafValue(field.Elem())
 	}
 
 	return formatLeafValue(field)
 }
 
-// formatLeafValue renders a leaf value exactly as fmt's %v verb would, without
-// boxing it into an interface on the paths that do not need the fmt printer.
-//
-// A type with no methods cannot intercept %v. Its rendering is fully determined
-// by its kind and strconv is exact. A type with any method in its value method
-// set goes through %v instead, because Stringer, error, and Formatter must keep
-// working: a [time.Duration] default records "10s", not "10000000000".
-//
-// The method set that matters is the value type's. A type whose String method is
-// on the pointer receiver has no String in its value method set, so %v does not
-// call it either and the strconv path stays exact.
+// formatLeafValue matches fmt's %v output. Types with value methods use fmt so
+// Stringer and Formatter still apply; other types use strconv where possible.
 func formatLeafValue(field reflect.Value) string {
 	if field.Type().NumMethod() != 0 {
 		return fmt.Sprintf("%v", field.Interface())
@@ -538,7 +523,15 @@ func handlePointerStructField(field reflect.Value, fullKey string, v *visitor, i
 	}
 
 	if field.IsNil() {
-		return initNilStructPointer(field, fullKey, v, inheritedSecret, activeTypes, activePtrs)
+		if err := initNilStructPointer(field, fullKey, v, inheritedSecret, activeTypes, activePtrs); err != nil {
+			return err
+		}
+
+		if field.IsNil() && v.report != nil {
+			return recurseDefaults(reflect.New(elemType).Elem(), fullKey, &visitor{report: v.report, apply: false}, inheritedSecret, activeTypes, activePtrs)
+		}
+
+		return nil
 	}
 
 	ptr := field.Pointer()

@@ -2,6 +2,7 @@ package strata
 
 import (
 	"slices"
+	"sort"
 	"strings"
 	"sync"
 	"unicode"
@@ -20,6 +21,7 @@ import (
 // Metadata as an empty one without a nil check.
 type Metadata struct {
 	origins     map[string]Origin
+	order       []string
 	secrets     map[string]bool
 	canonical   map[string]string
 	activeFiles []string
@@ -32,6 +34,7 @@ type Metadata struct {
 func NewMetadata() *Metadata {
 	return &Metadata{
 		origins:     make(map[string]Origin),
+		order:       nil,
 		secrets:     make(map[string]bool),
 		canonical:   make(map[string]string),
 		activeFiles: make([]string, 0),
@@ -106,7 +109,12 @@ func (m *Metadata) Record(origin Origin) {
 		m.markSecret(normalizeKey(origin.Key), snakeKey, cleanKey)
 	}
 
-	m.origins[normalizeKey(origin.Key)] = origin
+	resolved := normalizeKey(origin.Key)
+	if _, exists := m.origins[resolved]; !exists {
+		m.order = append(m.order, resolved)
+	}
+
+	m.origins[resolved] = origin
 }
 
 // RecordSecret marks a configuration key as secret, ensuring any origin recorded
@@ -167,7 +175,7 @@ func (m *Metadata) ActiveFiles() []string {
 	return slices.Clone(m.activeFiles)
 }
 
-// Origins returns the origin of every resolved key, sorted by key.
+// Origins returns the origin of every resolved key in struct declaration order.
 //
 // It is the whole of what [Metadata.Where] answers one key at a time, for a
 // caller that prints the effective configuration. The returned slice is a copy
@@ -181,13 +189,9 @@ func (m *Metadata) Origins() []Origin {
 	defer m.mu.RUnlock()
 
 	origins := make([]Origin, 0, len(m.origins))
-	for _, origin := range m.origins {
-		origins = append(origins, origin)
+	for _, key := range m.order {
+		origins = append(origins, m.origins[key])
 	}
-
-	slices.SortFunc(origins, func(a, b Origin) int {
-		return strings.Compare(a.Key, b.Key)
-	})
 
 	return origins
 }
@@ -231,6 +235,41 @@ func (m *Metadata) NewConfigError(key string, err error) *ConfigError {
 		Err:    err,
 		Origin: origin,
 	}
+}
+
+func (m *Metadata) orderBy(names []string) {
+	if m == nil {
+		return
+	}
+
+	m.mu.Lock()
+	defer m.mu.Unlock()
+
+	ranks := make(map[string]int, len(names))
+	for i, name := range names {
+		ranks[normalizeKey(name)] = i
+	}
+
+	orderRanks := make(map[string]int, len(m.order))
+	for _, key := range m.order {
+		current := key
+		for {
+			if rank, ok := ranks[current]; ok {
+				orderRanks[key] = rank
+				break
+			}
+
+			lastDot := strings.LastIndexByte(current, '.')
+			if lastDot < 0 {
+				orderRanks[key] = len(names)
+				break
+			}
+
+			current = current[:lastDot]
+		}
+	}
+
+	sort.SliceStable(m.order, func(i, j int) bool { return orderRanks[m.order[i]] < orderRanks[m.order[j]] })
 }
 
 func (m *Metadata) initMapsLocked() {

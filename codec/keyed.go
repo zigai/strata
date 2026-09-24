@@ -24,7 +24,7 @@ var (
 	// field name. They are copied onto the mirror field unchanged.
 	keyedPassthroughTags = []string{"comment", "commented", "multiline"}
 
-	keyedMirrors sync.Map // reflect.Type -> *keyedMirror
+	keyedMirrors sync.Map
 
 	textMarshalerType = reflect.TypeFor[encoding.TextMarshaler]()
 	jsonMarshalerType = reflect.TypeFor[json.Marshaler]()
@@ -35,7 +35,9 @@ var (
 // keyedMirror is the encoding shape of one source type. A nil typ means the
 // source type encodes correctly as it is.
 type keyedMirror struct {
-	typ reflect.Type
+	typ             reflect.Type
+	omitSecrets     bool
+	durationStrings bool
 	// paths holds, for a struct mirror, the source index path of each mirror
 	// field in order.
 	paths [][]int
@@ -44,30 +46,37 @@ type keyedMirror struct {
 // structMirrorBuilder gathers the fields of a struct mirror, flattening embedded
 // structs the way Go promotes their fields.
 type structMirrorBuilder struct {
-	fields []reflect.StructField
-	paths  [][]int
-	seen   map[string]bool
+	omitSecrets     bool
+	durationStrings bool
+	fields          []reflect.StructField
+	paths           [][]int
+	seen            map[string]bool
 }
 
-// keyedValue returns value re-typed so that every struct field is encoded under
-// its configuration key, the name [defaulter.FieldKey] resolves.
+type mirrorKey struct {
+	typ             reflect.Type
+	omitSecrets     bool
+	durationStrings bool
+}
+
+func WithoutSecrets(value any) any { return keyedValueMode(value, true, false) }
+
+// keyedValue maps struct fields to their configuration keys before encoding.
 //
-// Without it the encoders use their own naming (the Go field name for TOML and
-// JSON, the lowercased name for YAML), and a file written by one of them names
-// keys differently from the dotted keys the rest of strata accepts.
-//
-// Embedded structs are flattened, matching how the decoders bind them. Fields
-// excluded with "-" and unexported fields are dropped. A type that describes
-// itself (a text, JSON, or YAML marshaler, or [time.Time]) is kept as is,
-// and so is a recursive type, which a mirror cannot express.
-func keyedValue(value any) any {
+// It flattens embedded structs and omits excluded or unexported fields.
+// Custom marshalers, [time.Time], and recursive types stay unchanged.
+func keyedValue(value any) any { return keyedValueMode(value, false, false) }
+
+func keyedTOMLValue(value any) any { return keyedValueMode(value, false, true) }
+
+func keyedValueMode(value any, omitSecrets, durationStrings bool) any {
 	if value == nil {
 		return nil
 	}
 
 	src := reflect.ValueOf(value)
 
-	mirror := mirrorOf(src.Type())
+	mirror := mirrorOfMode(src.Type(), omitSecrets, durationStrings)
 	if mirror.typ == nil {
 		return value
 	}
@@ -75,52 +84,59 @@ func keyedValue(value any) any {
 	return convertKeyed(src, mirror).Interface()
 }
 
-func mirrorOf(typ reflect.Type) *keyedMirror {
-	if cached, ok := keyedMirrors.Load(typ); ok {
+func mirrorOfMode(typ reflect.Type, omitSecrets, durationStrings bool) *keyedMirror {
+	key := mirrorKey{typ: typ, omitSecrets: omitSecrets, durationStrings: durationStrings}
+	if cached, ok := keyedMirrors.Load(key); ok {
 		mirror, _ := cached.(*keyedMirror)
 		return mirror
 	}
 
-	mirror := buildMirror(typ)
-	keyedMirrors.Store(typ, mirror)
+	var mirror *keyedMirror
+
+	switch {
+	case durationStrings && typ == reflect.TypeFor[time.Duration]():
+		mirror = &keyedMirror{typ: reflect.TypeFor[string](), paths: nil, omitSecrets: omitSecrets, durationStrings: durationStrings}
+	case describesItself(typ) || isRecursive(typ, nil):
+		mirror = &keyedMirror{typ: nil, paths: nil, omitSecrets: omitSecrets, durationStrings: durationStrings}
+	default:
+		mirror = buildMirror(typ, omitSecrets, durationStrings)
+	}
+
+	keyedMirrors.Store(key, mirror)
 
 	return mirror
 }
 
-func buildMirror(typ reflect.Type) *keyedMirror {
-	if describesItself(typ) || isRecursive(typ, nil) {
-		return &keyedMirror{typ: nil, paths: nil}
-	}
-
+func buildMirror(typ reflect.Type, omitSecrets, durationStrings bool) *keyedMirror {
 	var mirrored reflect.Type
 
 	//nolint:exhaustive // only container kinds can hold struct fields that need renaming
 	switch typ.Kind() {
 	case reflect.Pointer:
-		if elem := mirrorOf(typ.Elem()); elem.typ != nil {
+		if elem := mirrorOfMode(typ.Elem(), omitSecrets, durationStrings); elem.typ != nil {
 			mirrored = reflect.PointerTo(elem.typ)
 		}
 	case reflect.Slice:
-		if elem := mirrorOf(typ.Elem()); elem.typ != nil {
+		if elem := mirrorOfMode(typ.Elem(), omitSecrets, durationStrings); elem.typ != nil {
 			mirrored = reflect.SliceOf(elem.typ)
 		}
 	case reflect.Array:
-		if elem := mirrorOf(typ.Elem()); elem.typ != nil {
+		if elem := mirrorOfMode(typ.Elem(), omitSecrets, durationStrings); elem.typ != nil {
 			mirrored = reflect.ArrayOf(typ.Len(), elem.typ)
 		}
 	case reflect.Map:
-		if elem := mirrorOf(typ.Elem()); elem.typ != nil {
+		if elem := mirrorOfMode(typ.Elem(), omitSecrets, durationStrings); elem.typ != nil {
 			mirrored = reflect.MapOf(typ.Key(), elem.typ)
 		}
 	case reflect.Struct:
-		var builder structMirrorBuilder
+		builder := structMirrorBuilder{omitSecrets: omitSecrets, durationStrings: durationStrings, fields: nil, paths: nil, seen: nil}
 
 		builder.collect(typ, nil)
 
-		return &keyedMirror{typ: reflect.StructOf(builder.fields), paths: builder.paths}
+		return &keyedMirror{typ: reflect.StructOf(builder.fields), paths: builder.paths, omitSecrets: omitSecrets, durationStrings: durationStrings}
 	}
 
-	return &keyedMirror{typ: mirrored, paths: nil}
+	return &keyedMirror{typ: mirrored, paths: nil, omitSecrets: omitSecrets, durationStrings: durationStrings}
 }
 
 func (b *structMirrorBuilder) collect(typ reflect.Type, prefix []int) {
@@ -131,6 +147,10 @@ func (b *structMirrorBuilder) collect(typ reflect.Type, prefix []int) {
 	var embeds []reflect.StructField
 
 	for field := range typ.Fields() {
+		if b.omitSecrets && defaulter.IsSecret(field) {
+			continue
+		}
+
 		if embedsStruct(field) {
 			embeds = append(embeds, field)
 			continue
@@ -158,7 +178,7 @@ func (b *structMirrorBuilder) add(field reflect.StructField, prefix []int) {
 	b.seen[field.Name] = true
 
 	fieldType := field.Type
-	if mirror := mirrorOf(fieldType); mirror.typ != nil {
+	if mirror := mirrorOfMode(fieldType, b.omitSecrets, b.durationStrings); mirror.typ != nil {
 		fieldType = mirror.typ
 	}
 
@@ -231,6 +251,10 @@ func convertKeyed(src reflect.Value, mirror *keyedMirror) reflect.Value {
 		return src
 	}
 
+	if mirror.durationStrings && src.Type() == reflect.TypeFor[time.Duration]() {
+		return reflect.ValueOf(time.Duration(src.Int()).String())
+	}
+
 	dst := reflect.New(mirror.typ).Elem()
 
 	//nolint:exhaustive // buildMirror produces mirrors for these kinds only
@@ -238,18 +262,18 @@ func convertKeyed(src reflect.Value, mirror *keyedMirror) reflect.Value {
 	case reflect.Pointer:
 		if !src.IsNil() {
 			ptr := reflect.New(mirror.typ.Elem())
-			ptr.Elem().Set(convertKeyed(src.Elem(), mirrorOf(src.Type().Elem())))
+			ptr.Elem().Set(convertKeyed(src.Elem(), mirrorOfMode(src.Type().Elem(), mirror.omitSecrets, mirror.durationStrings)))
 			dst.Set(ptr)
 		}
 	case reflect.Slice:
 		if !src.IsNil() {
 			dst.Set(reflect.MakeSlice(mirror.typ, src.Len(), src.Len()))
-			convertElements(src, dst)
+			convertElements(src, dst, mirror.omitSecrets, mirror.durationStrings)
 		}
 	case reflect.Array:
-		convertElements(src, dst)
+		convertElements(src, dst, mirror.omitSecrets, mirror.durationStrings)
 	case reflect.Map:
-		convertMap(src, dst)
+		convertMap(src, dst, mirror.omitSecrets, mirror.durationStrings)
 	case reflect.Struct:
 		convertStruct(src, dst, mirror)
 	}
@@ -257,14 +281,14 @@ func convertKeyed(src reflect.Value, mirror *keyedMirror) reflect.Value {
 	return dst
 }
 
-func convertMap(src, dst reflect.Value) {
+func convertMap(src, dst reflect.Value, omitSecrets, durationStrings bool) {
 	if src.IsNil() {
 		return
 	}
 
 	dst.Set(reflect.MakeMapWithSize(dst.Type(), src.Len()))
 
-	elemMirror := mirrorOf(src.Type().Elem())
+	elemMirror := mirrorOfMode(src.Type().Elem(), omitSecrets, durationStrings)
 	for iter := src.MapRange(); iter.Next(); {
 		dst.SetMapIndex(iter.Key(), convertKeyed(iter.Value(), elemMirror))
 	}
@@ -278,12 +302,12 @@ func convertStruct(src, dst reflect.Value, mirror *keyedMirror) {
 			continue
 		}
 
-		dst.Field(i).Set(convertKeyed(field, mirrorOf(field.Type())))
+		dst.Field(i).Set(convertKeyed(field, mirrorOfMode(field.Type(), mirror.omitSecrets, mirror.durationStrings)))
 	}
 }
 
-func convertElements(src, dst reflect.Value) {
-	elemMirror := mirrorOf(src.Type().Elem())
+func convertElements(src, dst reflect.Value, omitSecrets, durationStrings bool) {
+	elemMirror := mirrorOfMode(src.Type().Elem(), omitSecrets, durationStrings)
 	for i := range src.Len() {
 		dst.Index(i).Set(convertKeyed(src.Index(i), elemMirror))
 	}

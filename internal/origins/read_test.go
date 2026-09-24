@@ -139,6 +139,30 @@ func TestReadReportsNothingForUnreadableInput(t *testing.T) {
 	}
 }
 
+// Keys under an anchor that an alias reuses are templates. Keys a merge brings
+// in, and keys under an anchor nothing reuses, are ordinary records.
+func TestReadMarksReusedYAMLAnchorsAsTemplates(t *testing.T) {
+	t.Parallel()
+
+	records := collect(t, "base: &b\n  host: h\nunused: &u\n  host: x\ndatabase:\n  <<: *b\n  port: 1\n", ".yaml")
+
+	for key, want := range map[string]bool{
+		"base.host":     true,
+		"unused.host":   false,
+		"database.host": false,
+		"database.port": false,
+	} {
+		record, ok := records[key]
+		if !ok {
+			t.Fatalf("no record for %q, got %v", key, keysOf(records))
+		}
+
+		if record.Template != want {
+			t.Errorf("%s Template = %t, want %t", key, record.Template, want)
+		}
+	}
+}
+
 func keysOf(records map[string]origins.Record) []string {
 	keys := make([]string, 0, len(records))
 

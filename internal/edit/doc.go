@@ -1,16 +1,7 @@
-// Package edit replaces one key in a configuration document while keeping as
-// much of the document's layout as the format allows.
+// Package edit replaces one configuration key while preserving available layout.
 //
-// Three editors are provided, one per format, and they preserve different
-// amounts:
+// TOML keeps surrounding text; YAML keeps comments and indentation but drops
+// blank lines; JSON keeps indentation, sorts keys, and adds a trailing newline.
 //
-//   - TOML is edited line by line, so indentation and the surrounding text are
-//     kept exactly.
-//   - YAML keeps comments, keys, and the document's indentation. Blank lines do
-//     not survive, because a parsed document does not represent them.
-//   - JSON keeps the document's indentation. Object keys are sorted, and a
-//     trailing newline is added. JSON carries no comments.
-//
-// An editor refuses input it cannot rewrite without losing content, rather than
-// silently discarding the parts it does not understand.
+// Editors reject input they cannot rewrite without losing content.
 package edit

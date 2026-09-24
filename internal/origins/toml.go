@@ -19,7 +19,7 @@ func readTOML(data []byte, emit func(Record)) bool {
 	}
 
 	walkMap(document, "", func(key string, value any) {
-		emit(Record{Key: key, Line: 0, RawValue: fmt.Sprintf("%v", value)})
+		emit(Record{Key: key, Line: 0, RawValue: fmt.Sprintf("%v", value), Template: false})
 	})
 
 	return true

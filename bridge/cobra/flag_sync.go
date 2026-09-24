@@ -11,53 +11,11 @@ import (
 	"github.com/zigai/strata/internal/plan"
 )
 
-// WithFlags returns a [strata.Option] that injects explicitly supplied CLI flags
-// into the configuration cascade before validation runs.
-//
-// Supplied flags are recorded in the load's Metadata as SourceFlag.
-// Flags not explicitly supplied by the user leave the loaded configuration untouched.
-func WithFlags(cmd *cobra.Command, opts ...FlagOption) strata.Option {
-	return strata.WithContribution(func(target any, meta *strata.Metadata) error {
-		mergedOpts := make([]FlagOption, 0, len(opts)+1)
-		mergedOpts = append(mergedOpts, opts...)
-		mergedOpts = append(mergedOpts, withMetadata(meta))
-
-		return syncFlagsToStruct(cmd, target, mergedOpts...)
-	})
-}
-
-// syncFlagsToStruct copies flag values into the corresponding fields of cfg, but
-// only for flags the parser marked as explicitly supplied by the user. A flag
-// whose value came from configuration is left alone, and a field whose flag was
-// not registered is untouched.
-//
-// An optional (pointer) field is allocated only when one of its flags was
-// explicitly supplied. A nil subtree the configuration never populated stays
-// nil.
-//
-// When withMetadata is supplied, every value written here is recorded with
-// SourceFlag and the flag's long name as its path. A field tagged as secret is
-// recorded with a redacted raw value.
-func syncFlagsToStruct(cmd *cobra.Command, cfg any, opts ...FlagOption) error {
-	if cmd == nil {
-		return nil
-	}
-
-	options := resolveFlagOptions(opts)
-
-	root, err := plan.StructTarget(cfg)
-	if err != nil {
-		return err
-	}
-
-	return plan.ForEachTarget(root, plan.Registration, func(root reflect.Value, target *plan.Target) error {
-		return syncTarget(cmd, root, target, options.metadata)
-	})
-}
-
-func syncTarget(cmd *cobra.Command, root reflect.Value, target *plan.Target, meta *strata.Metadata) error {
+func syncTarget(cmd *cobra.Command, root reflect.Value, bound *boundFlag, meta *strata.Metadata) error {
+	target := &bound.target
 	flag := cmd.Flag(target.Name)
-	if flag == nil || !flag.Changed {
+
+	if flag != bound.flag || !flag.Changed {
 		return nil
 	}
 
@@ -84,7 +42,6 @@ func syncTarget(cmd *cobra.Command, root reflect.Value, target *plan.Target, met
 }
 
 func decodeFlag(fs *pflag.FlagSet, target *plan.Target, dst reflect.Value) error {
-	//nolint:exhaustive // plan.KindUnsupported is never produced by plan.Classify for a tagged field
 	switch target.Kind {
 	case plan.KindString, plan.KindText:
 		return decodeString(fs, target, dst)
@@ -94,8 +51,10 @@ func decodeFlag(fs *pflag.FlagSet, target *plan.Target, dst reflect.Value) error
 		return decodeNumeric(fs, target, dst)
 	case plan.KindStringSlice, plan.KindIntSlice, plan.KindInt64Slice:
 		return decodeSlice(fs, target, dst)
+	case plan.KindUnsupported:
+		return fmt.Errorf("%w: %s", plan.ErrUnsupportedFieldType, target.Display)
 	default:
-		return fmt.Errorf("%w: %s", ErrUnsupportedFieldType, target.Display)
+		return fmt.Errorf("%w: %s", plan.ErrUnsupportedFieldType, target.Display)
 	}
 }
 
@@ -126,21 +85,19 @@ func decodeBool(fs *pflag.FlagSet, target *plan.Target, dst reflect.Value) error
 }
 
 func decodeNumeric(fs *pflag.FlagSet, target *plan.Target, dst reflect.Value) error {
-	//nolint:exhaustive // the default branch rejects every non-numeric kind
 	switch target.Kind {
 	case plan.KindInt, plan.KindInt64, plan.KindDuration:
 		return decodeSigned(fs, target, dst)
-	case plan.KindUint, plan.KindUint64:
-		return decodeUnsigned(fs, target, dst)
-	case plan.KindFloat32, plan.KindFloat64:
-		return decodeFloat(fs, target, dst)
+	case plan.KindUint, plan.KindUint64, plan.KindFloat32, plan.KindFloat64:
+		return decodeOtherNumeric(fs, target, dst)
+	case plan.KindUnsupported, plan.KindString, plan.KindBool, plan.KindText, plan.KindStringSlice, plan.KindIntSlice, plan.KindInt64Slice:
+		return fmt.Errorf("%w: %s", plan.ErrUnsupportedFieldType, target.Display)
 	default:
-		return fmt.Errorf("%w: %s", ErrUnsupportedFieldType, target.Display)
+		return fmt.Errorf("%w: %s", plan.ErrUnsupportedFieldType, target.Display)
 	}
 }
 
 func decodeSigned(fs *pflag.FlagSet, target *plan.Target, dst reflect.Value) error {
-	//nolint:exhaustive // called only for signed kinds; the default is unreachable
 	switch target.Kind {
 	case plan.KindInt:
 		value, err := fs.GetInt(target.Name)
@@ -163,13 +120,14 @@ func decodeSigned(fs *pflag.FlagSet, target *plan.Target, dst reflect.Value) err
 		}
 
 		return plan.AssignInt(dst, int64(value))
+	case plan.KindUnsupported, plan.KindString, plan.KindBool, plan.KindUint, plan.KindUint64, plan.KindFloat32, plan.KindFloat64, plan.KindText, plan.KindStringSlice, plan.KindIntSlice, plan.KindInt64Slice:
+		return fmt.Errorf("%w: %s", plan.ErrUnsupportedFieldType, target.Display)
 	default:
-		return fmt.Errorf("%w: %s", ErrUnsupportedFieldType, target.Display)
+		return fmt.Errorf("%w: %s", plan.ErrUnsupportedFieldType, target.Display)
 	}
 }
 
-func decodeUnsigned(fs *pflag.FlagSet, target *plan.Target, dst reflect.Value) error {
-	//nolint:exhaustive // called only for unsigned kinds; the default is unreachable
+func decodeOtherNumeric(fs *pflag.FlagSet, target *plan.Target, dst reflect.Value) error {
 	switch target.Kind {
 	case plan.KindUint:
 		value, err := fs.GetUint(target.Name)
@@ -185,14 +143,6 @@ func decodeUnsigned(fs *pflag.FlagSet, target *plan.Target, dst reflect.Value) e
 		}
 
 		return plan.AssignUint(dst, value)
-	default:
-		return fmt.Errorf("%w: %s", ErrUnsupportedFieldType, target.Display)
-	}
-}
-
-func decodeFloat(fs *pflag.FlagSet, target *plan.Target, dst reflect.Value) error {
-	//nolint:exhaustive // called only for floating-point kinds; the default is unreachable
-	switch target.Kind {
 	case plan.KindFloat32:
 		value, err := fs.GetFloat32(target.Name)
 		if err != nil {
@@ -207,13 +157,14 @@ func decodeFloat(fs *pflag.FlagSet, target *plan.Target, dst reflect.Value) erro
 		}
 
 		return plan.AssignFloat(dst, value)
+	case plan.KindUnsupported, plan.KindString, plan.KindBool, plan.KindInt, plan.KindInt64, plan.KindDuration, plan.KindText, plan.KindStringSlice, plan.KindIntSlice, plan.KindInt64Slice:
+		return fmt.Errorf("%w: %s", plan.ErrUnsupportedFieldType, target.Display)
 	default:
-		return fmt.Errorf("%w: %s", ErrUnsupportedFieldType, target.Display)
+		return fmt.Errorf("%w: %s", plan.ErrUnsupportedFieldType, target.Display)
 	}
 }
 
 func decodeSlice(fs *pflag.FlagSet, target *plan.Target, dst reflect.Value) error {
-	//nolint:exhaustive // called only for slice kinds; the default is unreachable
 	switch target.Kind {
 	case plan.KindStringSlice:
 		value, err := fs.GetStringSlice(target.Name)
@@ -236,8 +187,10 @@ func decodeSlice(fs *pflag.FlagSet, target *plan.Target, dst reflect.Value) erro
 		}
 
 		return plan.AssignSlice(dst, reflect.ValueOf(value))
+	case plan.KindUnsupported, plan.KindString, plan.KindBool, plan.KindInt, plan.KindInt64, plan.KindUint, plan.KindUint64, plan.KindFloat32, plan.KindFloat64, plan.KindDuration, plan.KindText:
+		return fmt.Errorf("%w: %s", plan.ErrUnsupportedFieldType, target.Display)
 	default:
-		return fmt.Errorf("%w: %s", ErrUnsupportedFieldType, target.Display)
+		return fmt.Errorf("%w: %s", plan.ErrUnsupportedFieldType, target.Display)
 	}
 }
 
@@ -257,16 +210,4 @@ func recordOrigin(meta *strata.Metadata, target *plan.Target, raw string) {
 		Line:     0,
 		RawValue: raw,
 	})
-}
-
-// withMetadata makes syncFlagsToStruct record the origin of every flag value
-// that becomes the winning configuration for its key. A field tagged as secret is
-// recorded with a redacted raw value.
-//
-// The option affects syncFlagsToStruct only; registration does not report
-// provenance.
-func withMetadata(meta *strata.Metadata) FlagOption {
-	return func(config *flagConfig) {
-		config.metadata = meta
-	}
 }

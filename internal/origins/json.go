@@ -41,7 +41,7 @@ func walkJSONObject(document map[string]jsontext.Value, prefix string, emit func
 			}
 		}
 
-		emit(Record{Key: fullKey, Line: 0, RawValue: renderJSONValue(raw)})
+		emit(Record{Key: fullKey, Line: 0, RawValue: renderJSONValue(raw), Template: false})
 	}
 }
 

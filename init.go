@@ -9,6 +9,7 @@ import (
 	"os"
 	"path/filepath"
 
+	"github.com/zigai/strata/codec"
 	"github.com/zigai/strata/internal/atomicfile"
 	"github.com/zigai/strata/internal/defaulter"
 )
@@ -47,21 +48,16 @@ func WithOverwrite(overwrite bool) InitOption {
 	}
 }
 
-// Init writes a configuration template for T to targetPath.
+// Init writes T's defaults as a configuration template at targetPath. The file
+// extension selects a built-in format. Secret fields are omitted.
+// [WithSchemaURL] adds a #:schema header in TOML, a yaml-language-server
+// header in YAML, or a $schema property in JSON.
 //
-// The template holds the defaults of T, encoded in the format implied by the
-// file extension. When [WithSchemaURL] is set, the schema URL is recorded for
-// editors: as the "#:schema <url>" comment header for TOML, the
-// "# yaml-language-server: $schema=<url>" header for YAML, and a top-level
-// "$schema" property for JSON.
-//
-// An existing file is left untouched and reported as [ErrFileExists], unless
-// [WithOverwrite] is set. An extension that matches no supported format is
-// reported as [ErrUnsupportedFormat]. A codec bound for one load with [WithCodec]
-// takes part in loading, not in writing.
-//
-// The write is atomic. The file is staged beside the target and renamed into
-// place. A failure does not leave a partial template.
+// Existing files remain untouched and return [ErrFileExists] unless
+// [WithOverwrite] is set. Unsupported extensions return
+// [ErrUnsupportedFormat]. The write is staged beside the target and renamed
+// atomically; a failure does not leave a partial template. Per-load codecs
+// registered with [WithCodec] do not take part in writing.
 func Init[T any](targetPath string, opts ...InitOption) error {
 	options := &initOptions{
 		schemaURL: "",
@@ -89,7 +85,7 @@ func Init[T any](targetPath string, opts ...InitOption) error {
 		return fmt.Errorf("apply defaults for template: %w", err)
 	}
 
-	data, err := formatInitData(target, filepath.Ext(targetPath), options.schemaURL)
+	data, err := formatInitData(codec.WithoutSecrets(target), filepath.Ext(targetPath), options.schemaURL)
 	if err != nil {
 		return err
 	}

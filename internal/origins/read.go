@@ -15,6 +15,11 @@ type Record struct {
 
 	// RawValue is the value as text, with a string's surrounding quotes removed.
 	RawValue string
+
+	// Template reports that the key sits under a YAML anchor the document
+	// reuses through an alias, as in a `base: &b {...}` entry that exists to be
+	// merged elsewhere. Only the YAML reader sets it.
+	Template bool
 }
 
 // Read reports one Record per key in data, using the reader for format.

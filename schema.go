@@ -43,17 +43,12 @@ func WithSchemaTitle(title string) SchemaOption {
 
 // Schema returns the JSON Schema for T as indented JSON.
 //
-// Field names are derived from Go field names with the same snake_case
-// conversion used elsewhere in the package, and a doc comment on a field of T
-// becomes that field's description in the schema.
+// Field names use snake_case Go names; field doc comments become descriptions.
 //
-// [WithSchemaID] and [WithSchemaTitle] set the root $id and the title. Without
-// them the reflector derives an $id from the type's package path.
+// [WithSchemaID] and [WithSchemaTitle] set root metadata. By default, $id comes
+// from the type's package path.
 //
-// A T the reflector cannot describe is reported as an error wrapping
-// [ErrReflectSchema]. A panic raised by the reflector is converted to that same
-// error and does not escape. An interface-typed T has no fields to reflect, and
-// a type containing a channel, function, or complex field has no JSON Schema.
+// Unsupported types and reflector panics wrap [ErrReflectSchema].
 func Schema[T any](opts ...SchemaOption) ([]byte, error) {
 	options := &schemaOptions{
 		id:    "",

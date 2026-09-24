@@ -114,6 +114,8 @@ func LoadInto[T any](target *T, opts ...Option) (*Metadata, error) {
 		}
 	}
 
+	meta.orderBy(options.keys.names)
+
 	if vErr := runValidation(target, meta); vErr != nil {
 		return nil, vErr
 	}
@@ -466,6 +468,12 @@ func recordLayerOrigins(data []byte, layer cascade.Layer, ext string, keys *keyT
 
 		if keys.known(record.Key) {
 			meta.Record(origin)
+			return
+		}
+
+		// A key under a reused YAML anchor is a template that other keys merge
+		// or alias; it sets nothing by itself, so it is not a typo either.
+		if record.Template {
 			return
 		}
 

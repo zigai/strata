@@ -88,9 +88,9 @@ func TestJSONCodecBindsConfigurationKeys(t *testing.T) {
 			bindingConfig{JSONKey: "d"},
 		},
 		{
-			"Go name",
+			"Go name is not a key",
 			`{"Untagged": 2}`,
-			bindingConfig{Untagged: 2},
+			bindingConfig{},
 		},
 		{
 			"acronym",
@@ -188,21 +188,20 @@ func TestJSONCodecKeepsOmittedFields(t *testing.T) {
 	}
 }
 
-// Two members that name one field leave the configuration ambiguous. Refusing
-// them keeps a document from deciding which of the two the application runs on,
-// which is what the other formats do with a key they find twice.
-func TestJSONCodecRefusesTwoMembersForOneField(t *testing.T) {
+// Only the configuration key names a field. A member spelled the way
+// encoding/json would match on its own is ignored, so it cannot compete with the
+// key for the same field.
+func TestJSONCodecIgnoresOtherSpellings(t *testing.T) {
 	t.Parallel()
 
 	var target bindingNested
 
-	err := codec.NewJSONCodec().Decode([]byte(`{"max_conns": 1, "MaxConns": 2}`), &target)
-	if err == nil {
-		t.Fatalf("Decode accepted both names of one field and produced %+v", target)
+	if err := codec.NewJSONCodec().Decode([]byte(`{"max_conns": 1, "MaxConns": 2, "maxconns": 3}`), &target); err != nil {
+		t.Fatalf("Decode error: %v", err)
 	}
 
-	if !errors.Is(err, codec.ErrMalformed) {
-		t.Errorf("errors.Is(err, ErrMalformed) = false (err = %v)", err)
+	if target.MaxConns != 1 {
+		t.Errorf("MaxConns = %d, want 1 from the configuration key", target.MaxConns)
 	}
 }
 

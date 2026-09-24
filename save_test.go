@@ -76,7 +76,7 @@ func TestFileModesSurviveWrites(t *testing.T) {
 			t.Fatalf("chmod: %v", err)
 		}
 
-		if err := strata.Set(path, "small", 2); err != nil {
+		if err := strata.Set[narrowConfig](path, "small", 2); err != nil {
 			t.Fatalf("Set: %v", err)
 		}
 

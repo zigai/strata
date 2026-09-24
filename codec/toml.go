@@ -3,22 +3,15 @@ package codec
 import (
 	"fmt"
 	"reflect"
-	"strings"
+	"time"
 
 	"github.com/pelletier/go-toml/v2"
-
-	"github.com/zigai/strata/internal/defaulter"
 )
 
 // TOMLCodec implements [Codec] for TOML documents using go-toml/v2.
 //
 // A TOMLCodec is stateless and safe for concurrent use.
 type TOMLCodec struct{}
-
-type tomlFieldBinding struct {
-	Name string
-	Type reflect.Type
-}
 
 // NewTOMLCodec returns a codec that decodes and encodes TOML documents.
 func NewTOMLCodec() *TOMLCodec {
@@ -27,8 +20,9 @@ func NewTOMLCodec() *TOMLCodec {
 
 // Decode overlays a TOML document onto target.
 //
-// A field the document omits keeps the value it already holds, and a key the
-// target does not declare is ignored rather than reported.
+// A field the document omits keeps the value it already holds. A struct field
+// is named by its configuration key, spelled exactly; any other key is ignored
+// rather than reported.
 //
 // It returns [ErrNilTarget] if target is nil. A malformed document returns an
 // error wrapping the go-toml/v2 failure.
@@ -72,79 +66,30 @@ func (c *TOMLCodec) Decode(data []byte, target any) error {
 	return nil
 }
 
-func tomlTagName(field reflect.StructField) (string, bool) {
-	tag := field.Tag.Get("toml")
-	if tag == "" {
-		return "", false
-	}
-
-	name, _, _ := strings.Cut(tag, ",")
-	name = strings.TrimSpace(name)
-
-	return name, name != ""
-}
-
-func tomlBindings(typ reflect.Type) map[string]tomlFieldBinding {
-	bindings := make(map[string]tomlFieldBinding)
-	collectTOMLBindings(bindings, typ, make(map[reflect.Type]bool))
-
-	return bindings
-}
-
-func collectTOMLBindings(bindings map[string]tomlFieldBinding, typ reflect.Type, path map[reflect.Type]bool) {
-	if path[typ] {
-		return
-	}
-
-	path[typ] = true
-	defer delete(path, typ)
-
-	for field := range typ.Fields() {
-		if field.Anonymous {
-			collectTOMLBindings(bindings, derefType(field.Type), path)
-			continue
-		}
-
-		name, named := tomlTagName(field)
-		if !field.IsExported() || (named && name == "-") {
-			continue
-		}
-
-		key := defaulter.FieldKey(field)
-		if key == "-" {
-			continue
-		}
-
+// tomlBindings binds each configuration key of typ to the name go-toml matches:
+// the field's toml tag, or its Go name.
+func tomlBindings(typ reflect.Type) map[string]fieldBinding {
+	return keyBindings(typ, func(field reflect.StructField) (string, bool) {
+		name, named := tagName(field, "toml")
 		if !named {
-			name = field.Name
+			return field.Name, true
 		}
 
-		binding := tomlFieldBinding{Name: name, Type: field.Type}
-		bindings[name] = binding
-		bindings[field.Name] = binding
-		bindings[key] = binding
-		bindings[defaulter.ToSnakeCase(field.Name)] = binding
-		bindings[strings.ToLower(field.Name)] = binding
-	}
+		return name, name != "-"
+	})
 }
 
 func rewriteTOMLStruct(m map[string]any, targetType reflect.Type) (any, error) {
 	bindings := tomlBindings(targetType)
 	rewritten := make(map[string]any, len(m))
-	named := make(map[string]string, len(m))
 
 	for k, v := range m {
 		binding, ok := bindings[k]
 		if !ok {
-			rewritten[k] = v
+			// Not a configuration key. Dropping it keeps go-toml from matching
+			// it to a field by its own, case-insensitive rules.
 			continue
 		}
-
-		if first, seen := named[binding.Name]; seen && first != k {
-			return nil, fmt.Errorf("%w: %q and %q", errMemberConflict, first, k)
-		}
-
-		named[binding.Name] = k
 
 		nested, err := rewriteTOMLValue(v, binding.Type)
 		if err != nil {
@@ -191,6 +136,17 @@ func rewriteTOMLValue(val any, targetType reflect.Type) (any, error) {
 		return val, nil
 	}
 
+	if targetType == reflect.TypeFor[time.Duration]() {
+		if raw, ok := val.(string); ok {
+			d, err := time.ParseDuration(raw)
+			if err != nil {
+				return nil, fmt.Errorf("parse duration: %w", err)
+			}
+
+			return int64(d), nil
+		}
+	}
+
 	//nolint:exhaustive // reflect.Kind is an external standard-library enum; non-container kinds require no rewriting
 	switch targetType.Kind() {
 	case reflect.Struct:
@@ -215,13 +171,13 @@ func rewriteTOMLValue(val any, targetType reflect.Type) (any, error) {
 // Encode encodes value as TOML bytes.
 //
 // Struct fields are written under their configuration keys, so the document
-// uses the same keys as every other layer. The document is terminated by a
-// newline.
+// uses the same keys as every other layer. Plain [time.Duration] values are
+// written as strings, such as "30s". The document ends with a newline.
 //
 // It returns an error wrapping the go-toml/v2 failure if value cannot be
 // represented in TOML.
 func (c *TOMLCodec) Encode(value any) ([]byte, error) {
-	data, err := toml.Marshal(keyedValue(value))
+	data, err := toml.Marshal(keyedTOMLValue(value))
 	if err != nil {
 		return nil, fmt.Errorf("toml marshal: %w", err)
 	}

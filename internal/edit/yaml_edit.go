@@ -25,19 +25,16 @@ var ErrRootNotMapping = errors.New("root yaml node is not a mapping")
 // The key would otherwise be left with no value to set.
 var ErrEmptyEncodedValue = errors.New("encoded value produced an empty document")
 
-// UpdateYAML returns data with value written at the dotted key, keeping the
-// document's comments and its surrounding formatting.
+// UpdateYAML writes value at dottedKey, preserving comments and indentation.
 //
-// An existing key is updated in place and keeps its comments. A key that is
-// absent is created, along with any missing parent mappings. An intermediate key
-// that holds a value other than a mapping is replaced by a mapping.
+// Missing parent mappings are created. Non-mapping intermediate values are
+// replaced by mappings.
 //
-// Keys are matched exactly first, with a case-insensitive fallback. The document
-// keeps the indentation it was written with, which is measured from the source.
+// Keys are matched exactly.
 //
-// It returns [codec.ErrMultipleDocuments] if the input carries more than one document,
-// [ErrRootNotMapping] if the root node is not a mapping, and
-// [ErrEmptyEncodedValue] if value encodes to an empty document.
+// It returns [codec.ErrMultipleDocuments] for multiple documents,
+// [ErrRootNotMapping] for a non-mapping root, and [ErrEmptyEncodedValue] for an
+// empty encoded value.
 func UpdateYAML(data []byte, dottedKey string, value any) ([]byte, error) {
 	if err := ensureSingleYAMLDocument(data); err != nil {
 		return nil, err
@@ -260,17 +257,8 @@ func updateMappingNode(mapping *yaml.Node, parts []string, newVal *yaml.Node) er
 }
 
 func findMatchingKeyIndex(mapping *yaml.Node, key string) int {
-	// An exact match wins: YAML keys are case sensitive.
 	for i := 0; i < len(mapping.Content)-1; i += 2 {
 		if mapping.Content[i].Value == key {
-			return i
-		}
-	}
-
-	// Only when no key matches exactly is the comparison repeated
-	// case-insensitively.
-	for i := 0; i < len(mapping.Content)-1; i += 2 {
-		if strings.EqualFold(mapping.Content[i].Value, key) {
 			return i
 		}
 	}

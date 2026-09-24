@@ -9,19 +9,14 @@ import (
 	"strings"
 
 	"gopkg.in/yaml.v3"
-
-	"github.com/zigai/strata/internal/defaulter"
 )
+
+var errCyclicYAMLAlias = errors.New("cyclic YAML alias")
 
 // YAMLCodec implements [Codec] for YAML documents using yaml.v3.
 //
 // A YAMLCodec is stateless and safe for concurrent use.
 type YAMLCodec struct{}
-
-type yamlFieldBinding struct {
-	Name string
-	Type reflect.Type
-}
 
 // NewYAMLCodec returns a codec that decodes and encodes YAML documents.
 func NewYAMLCodec() *YAMLCodec {
@@ -30,8 +25,10 @@ func NewYAMLCodec() *YAMLCodec {
 
 // Decode overlays a YAML document onto target.
 //
-// A field the document omits keeps the value it already holds, and a key the
-// target does not declare is ignored rather than reported.
+// A field the document omits keeps the value it already holds. A struct field
+// is named by its configuration key, spelled exactly; any other key is ignored
+// rather than reported. YAML merge keys are preserved, including merges from
+// aliases whose source mapping is outside the configuration struct.
 //
 // It returns [ErrNilTarget] if target is nil. A malformed document returns an
 // error wrapping the yaml.v3 failure, and a stream carrying more than one
@@ -68,6 +65,12 @@ func (c *YAMLCodec) Decode(data []byte, target any) error {
 
 	val := reflect.ValueOf(target)
 	if val.Kind() == reflect.Pointer && val.Elem().Kind() == reflect.Struct {
+		if hasYAMLAliasCycle(&doc, make(map[*yaml.Node]bool), make(map[*yaml.Node]bool)) {
+			return fmt.Errorf("%w: %w", ErrMalformed, errCyclicYAMLAlias)
+		}
+
+		snapshotYAMLAliases(&doc)
+
 		if err := rewriteYAMLNode(&doc, val.Elem().Type()); err != nil {
 			return fmt.Errorf("%w: yaml unmarshal: %w", ErrMalformed, err)
 		}
@@ -80,60 +83,17 @@ func (c *YAMLCodec) Decode(data []byte, target any) error {
 	return nil
 }
 
-func yamlTagName(field reflect.StructField) (string, bool) {
-	tag := field.Tag.Get("yaml")
-	if tag == "" {
-		return "", false
-	}
-
-	name, _, _ := strings.Cut(tag, ",")
-	name = strings.TrimSpace(name)
-
-	return name, name != ""
-}
-
-func yamlBindings(typ reflect.Type) map[string]yamlFieldBinding {
-	bindings := make(map[string]yamlFieldBinding)
-	collectYAMLBindings(bindings, typ, make(map[reflect.Type]bool))
-
-	return bindings
-}
-
-func collectYAMLBindings(bindings map[string]yamlFieldBinding, typ reflect.Type, path map[reflect.Type]bool) {
-	if path[typ] {
-		return
-	}
-
-	path[typ] = true
-	defer delete(path, typ)
-
-	for field := range typ.Fields() {
-		if field.Anonymous {
-			collectYAMLBindings(bindings, derefType(field.Type), path)
-			continue
-		}
-
-		name, named := yamlTagName(field)
-		if !field.IsExported() || (named && name == "-") {
-			continue
-		}
-
-		key := defaulter.FieldKey(field)
-		if key == "-" {
-			continue
-		}
-
+// yamlBindings binds each configuration key of typ to the name yaml.v3 matches:
+// the field's yaml tag, or its lowercased Go name.
+func yamlBindings(typ reflect.Type) map[string]fieldBinding {
+	return keyBindings(typ, func(field reflect.StructField) (string, bool) {
+		name, named := tagName(field, "yaml")
 		if !named {
-			name = strings.ToLower(field.Name)
+			return strings.ToLower(field.Name), true
 		}
 
-		binding := yamlFieldBinding{Name: name, Type: field.Type}
-		bindings[name] = binding
-		bindings[field.Name] = binding
-		bindings[key] = binding
-		bindings[defaulter.ToSnakeCase(field.Name)] = binding
-		bindings[strings.ToLower(field.Name)] = binding
-	}
+		return name, name != "-"
+	})
 }
 
 func rewriteYAMLMapping(node *yaml.Node, targetType reflect.Type) error {
@@ -152,30 +112,111 @@ func rewriteYAMLMapping(node *yaml.Node, targetType reflect.Type) error {
 	}
 
 	bindings := yamlBindings(targetType)
-	named := make(map[string]string)
+	content := node.Content[:0]
 
 	for i := 0; i+1 < len(node.Content); i += 2 {
 		keyNode := node.Content[i]
 		valNode := node.Content[i+1]
 
-		binding, ok := bindings[keyNode.Value]
-		if !ok {
+		if keyNode.Value == "<<" && keyNode.Tag == "!!merge" {
+			if err := rewriteYAMLMerge(valNode, targetType); err != nil {
+				return err
+			}
+
+			content = append(content, keyNode, valNode)
+
 			continue
 		}
 
-		if first, seen := named[binding.Name]; seen && first != keyNode.Value {
-			return fmt.Errorf("%w: %q and %q", errMemberConflict, first, keyNode.Value)
+		binding, ok := bindings[keyNode.Value]
+		if !ok {
+			// Not a configuration key. Dropping it keeps yaml.v3 from matching it
+			// to a field by its own naming rules.
+			continue
 		}
 
-		named[binding.Name] = keyNode.Value
 		keyNode.Value = binding.Name
 
 		if err := rewriteYAMLNode(valNode, binding.Type); err != nil {
 			return err
 		}
+
+		content = append(content, keyNode, valNode)
+	}
+
+	node.Content = content
+
+	return nil
+}
+
+func rewriteYAMLMerge(node *yaml.Node, targetType reflect.Type) error {
+	switch node.Kind {
+	case yaml.AliasNode:
+		if node.Alias == nil {
+			return nil
+		}
+
+		return rewriteYAMLNode(node.Alias, targetType)
+	case yaml.MappingNode:
+		return rewriteYAMLMapping(node, targetType)
+	case yaml.SequenceNode:
+		for _, item := range node.Content {
+			if err := rewriteYAMLMerge(item, targetType); err != nil {
+				return err
+			}
+		}
+	case yaml.DocumentNode, yaml.ScalarNode:
+		return nil
 	}
 
 	return nil
+}
+
+func snapshotYAMLAliases(node *yaml.Node) {
+	if node.Kind == yaml.AliasNode && node.Alias != nil {
+		node.Alias = cloneYAMLNode(node.Alias)
+	}
+
+	for _, child := range node.Content {
+		snapshotYAMLAliases(child)
+	}
+}
+
+func cloneYAMLNode(node *yaml.Node) *yaml.Node {
+	clone := *node
+	clone.Content = make([]*yaml.Node, len(node.Content))
+
+	for i, child := range node.Content {
+		clone.Content[i] = cloneYAMLNode(child)
+	}
+
+	return &clone
+}
+
+func hasYAMLAliasCycle(node *yaml.Node, active, done map[*yaml.Node]bool) bool {
+	if node == nil || done[node] {
+		return false
+	}
+
+	if active[node] {
+		return true
+	}
+
+	active[node] = true
+	for _, child := range node.Content {
+		if hasYAMLAliasCycle(child, active, done) {
+			return true
+		}
+	}
+
+	if node.Kind == yaml.AliasNode && hasYAMLAliasCycle(node.Alias, active, done) {
+		return true
+	}
+
+	delete(active, node)
+	done[node] = true
+
+	return false
 }
 
 func rewriteYAMLSequence(node *yaml.Node, targetType reflect.Type) error {

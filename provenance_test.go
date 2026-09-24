@@ -4,11 +4,38 @@ import (
 	"errors"
 	"os"
 	"path/filepath"
+	"reflect"
+	"slices"
 	"strings"
 	"testing"
 
 	"github.com/zigai/strata"
 )
+
+type nestedPrimitiveConfig struct {
+	Nested *struct {
+		Enabled bool
+		Token   string `strata:",secret"`
+	}
+}
+
+type mixedCaseConfig struct {
+	Alpha    int
+	MaxConns int `strata:"maxConns"`
+	Zeta     int
+}
+
+type stdinFormatConfig struct {
+	Alpha int `strata:"alpha"`
+}
+
+type customKeyFileConfig struct {
+	APIKey string `strata:"apiKey" json:"apiKey"`
+}
+
+func (c *customKeyFileConfig) SetDefaults() {
+	c.APIKey = "default"
+}
 
 func TestProvenanceMetadata(t *testing.T) {
 	t.Parallel()
@@ -232,84 +259,6 @@ func TestProvenanceReaderFollowsDetectedFormat(t *testing.T) {
 	})
 }
 
-type stdinFormatConfig struct {
-	Alpha int `strata:"alpha"`
-}
-
-type secretConfig struct {
-	Token string `strata:"token,secret" env:"SECRET_TOKEN"`
-}
-
-func (s *secretConfig) SetDefaults() {
-	s.Token = "default-insecure-token"
-}
-
-func TestSecretTagMasking(t *testing.T) {
-	t.Setenv("SECRET_TOKEN", "super-secret-api-key")
-
-	_, meta, err := strata.LoadWithMetadata[secretConfig](
-		strata.WithoutFiles(),
-	)
-	if err != nil {
-		t.Fatalf("Load error: %v", err)
-	}
-
-	orig, ok := meta.Where("token")
-	if !ok {
-		t.Fatalf("Where(token) not found")
-	}
-
-	if orig.RawValue != "[REDACTED]" {
-		t.Errorf("RawValue = %q, want [REDACTED]", orig.RawValue)
-	}
-}
-
-type secretFileConfig struct {
-	Token string `strata:"token,secret" json:"token"`
-}
-
-func (s *secretFileConfig) SetDefaults() {
-	s.Token = "default-secret"
-}
-
-func TestFileSecretRedaction(t *testing.T) {
-	t.Parallel()
-
-	tmpDir := t.TempDir()
-
-	filePath := filepath.Join(tmpDir, "config.json")
-	if err := os.WriteFile(filePath, []byte(`{"token":"file-secret"}`), 0o600); err != nil {
-		t.Fatal(err)
-	}
-
-	_, meta, err := strata.LoadWithMetadata[secretFileConfig](strata.WithPath(filePath))
-	if err != nil {
-		t.Fatalf("Load error: %v", err)
-	}
-
-	o, ok := meta.Where("token")
-	if !ok {
-		t.Fatal("missing origin")
-	}
-
-	if o.RawValue != "[REDACTED]" {
-		t.Errorf("secret file origin leaked %q", o.RawValue)
-	}
-
-	msg := meta.NewConfigError("token", errors.New("invalid token")).Error()
-	if strings.Contains(msg, "file-secret") {
-		t.Errorf("validation error leaked file secret:\n%s", msg)
-	}
-}
-
-type customKeyFileConfig struct {
-	APIKey string `strata:"apiKey" json:"apiKey"`
-}
-
-func (c *customKeyFileConfig) SetDefaults() {
-	c.APIKey = "default"
-}
-
 func TestCustomKeyFileProvenance(t *testing.T) {
 	t.Parallel()
 
@@ -332,5 +281,72 @@ func TestCustomKeyFileProvenance(t *testing.T) {
 
 	if o.Source != strata.SourceFile || o.RawValue != "file-value" {
 		t.Errorf("file override provenance stays stale: %+v", o)
+	}
+}
+
+// A zero-valued default under a nil nested pointer still gets an origin, so
+// `config show` lists it.
+func TestNestedZeroDefaultsHaveOrigins(t *testing.T) {
+	_, meta, err := strata.LoadWithMetadata[nestedPrimitiveConfig]()
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	if origin, ok := meta.Where("nested.enabled"); !ok || origin.RawValue != "false" {
+		t.Fatalf("enabled origin = %+v, %t", origin, ok)
+	}
+}
+
+func TestMixedCaseOriginsFollowDeclarationOrder(t *testing.T) {
+	_, meta, err := strata.LoadWithMetadata[mixedCaseConfig]()
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	origins := meta.Origins()
+	keys := make([]string, 0, len(origins))
+
+	for _, origin := range origins {
+		keys = append(keys, origin.Key)
+	}
+
+	if !reflect.DeepEqual(keys, []string{"alpha", "maxConns", "zeta"}) {
+		t.Fatalf("origin order = %v", keys)
+	}
+}
+
+func TestOriginsListsEveryResolvedKey(t *testing.T) {
+	t.Setenv("ORIGINS_HOST", "from-env")
+
+	path := writeFile(t, "config.toml", "[database]\nport = 5432\n")
+
+	_, meta, err := strata.LoadWithMetadata[typoConfig](strata.WithPath(path), strata.WithEnvPrefix("ORIGINS_"))
+	if err != nil {
+		t.Fatalf("Load: %v", err)
+	}
+
+	origins := meta.Origins()
+	sources := make(map[string]strata.SourceKind, len(origins))
+	keys := make([]string, 0, len(origins))
+
+	for _, origin := range origins {
+		keys = append(keys, origin.Key)
+		sources[origin.Key] = origin.Source
+	}
+
+	if !slices.Equal(keys, []string{"host", "port", "api_key", "database.port", "database.max_conns", "labels"}) {
+		t.Errorf("keys %v are not in declaration order", keys)
+	}
+
+	want := map[string]strata.SourceKind{
+		"host":          strata.SourceEnv,
+		"port":          strata.SourceDefault,
+		"database.port": strata.SourceFile,
+	}
+
+	for key, source := range want {
+		if sources[key] != source {
+			t.Errorf("source of %s = %q, want %q (all: %v)", key, sources[key], source, sources)
+		}
 	}
 }

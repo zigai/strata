@@ -57,20 +57,13 @@ func ReadBounded(r io.Reader, maxBytes int64) ([]byte, error) {
 	return data, nil
 }
 
-// ReadStdin reads configuration from standard input, or from the reader the
-// caller supplies in r.
+// ReadStdin reads from r, or process stdin when r is nil.
 //
-// A nil r selects the process stdin. That reader, and only that reader, is
-// cached for the lifetime of the process; a second read returns the data read
-// the first time. A reader supplied by the caller is read directly on every
-// call and is not cached. A successful call reads such a reader to end of input,
-// and a second read over the same reader returns no data.
+// Process stdin is read once and cached; supplied readers are read on every
+// call. Access to process stdin is serialized.
 //
-// A maxBytes of zero or less selects [DefaultMaxFileSize].
-//
-// It returns [ErrFileTooLarge] if the input, or the cached data, exceeds the
-// limit. The returned slice is a copy owned by the caller. Reads of the process
-// stdin are serialized by a mutex.
+// A nonpositive maxBytes uses [DefaultMaxFileSize]. Oversized input returns
+// [ErrFileTooLarge]. The returned slice is owned by the caller.
 func ReadStdin(r io.Reader, maxBytes int64) ([]byte, error) {
 	if maxBytes <= 0 {
 		maxBytes = DefaultMaxFileSize

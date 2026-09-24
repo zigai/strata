@@ -14,28 +14,12 @@ import (
 	"github.com/zigai/strata/codec"
 )
 
-// UpdateTOML returns data with value written at the dotted key.
-//
-// An existing assignment for the key is rewritten in place and only the value is
-// substituted. The document's comments, blank lines, and surrounding formatting
-// survive that substitution. The continuation lines of a multiline string that
-// held the key are removed.
-//
-// A key with no assignment is appended: in the root region, inside the matching
-// table when the file declares one, or under a new table header at the end of
-// the document.
-//
-// A key and a table header are matched case-insensitively, and a header written
-// as [table."sub.key"] names the same table as [table.sub.key].
 var (
 	// ErrInvalidEmptyKeyPath is returned when a dotted key path is empty.
 	ErrInvalidEmptyKeyPath = errors.New("invalid empty key path")
 
 	// ErrInvalidEmptyPathSegment is returned when a dotted key path contains an empty segment.
 	ErrInvalidEmptyPathSegment = errors.New("invalid empty path segment")
-
-	// ErrAmbiguousKey is returned when a dotted key matches multiple keys in a TOML document.
-	ErrAmbiguousKey = errors.New("ambiguous key matches multiple keys in TOML document")
 )
 
 type candAssignment struct {
@@ -45,6 +29,9 @@ type candAssignment struct {
 	fullKey      []string
 }
 
+// UpdateTOML writes value at dottedKey. Existing assignments retain surrounding
+// formatting, except replaced multiline values lose their continuation lines.
+// Missing keys are added to the matching table or a new one. Keys match exactly.
 func UpdateTOML(data []byte, dottedKey string, value any) ([]byte, error) {
 	formattedVal, err := formatTOMLValue(value)
 	if err != nil {
@@ -75,12 +62,12 @@ func UpdateFormatted(data []byte, dottedKey string, value any, formattedVal stri
 
 	candidates := collectAssignments(lines)
 
-	matchIdx, err := findMatchingCandidate(candidates, targetParts, dottedKey)
-	if err != nil {
-		return nil, err
-	}
+	matchIdx := findMatchingCandidate(candidates, targetParts)
 
-	var keyUpdated bool
+	var (
+		keyUpdated bool
+		err        error
+	)
 
 	if matchIdx != -1 {
 		cand := candidates[matchIdx]
@@ -98,6 +85,10 @@ func UpdateFormatted(data []byte, dottedKey string, value any, formattedVal stri
 		result = joinLines(lines, crlf)
 	} else {
 		appended := appendTOMLKey(lines, targetParts, formattedVal)
+		if len(appended) > 0 && appended[len(appended)-1] != '\n' {
+			appended = append(appended, '\n')
+		}
+
 		if crlf {
 			result = bytes.ReplaceAll(appended, []byte("\n"), []byte("\r\n"))
 		} else {
@@ -171,33 +162,19 @@ func collectAssignments(lines []string) []candAssignment {
 	return candidates
 }
 
-func findMatchingCandidate(candidates []candAssignment, targetParts []string, dottedKey string) (int, error) {
+func findMatchingCandidate(candidates []candAssignment, targetParts []string) int {
 	for idx, cand := range candidates {
 		if partsEqual(cand.fullKey, targetParts) {
-			return idx, nil
+			return idx
 		}
 	}
 
-	matchIdx := -1
-	foldMatches := 0
-
-	for idx, cand := range candidates {
-		if partsEqualFold(cand.fullKey, targetParts) {
-			foldMatches++
-			matchIdx = idx
-		}
-	}
-
-	if foldMatches > 1 {
-		return -1, fmt.Errorf("%w: %q", ErrAmbiguousKey, dottedKey)
-	}
-
-	return matchIdx, nil
+	return -1
 }
 
 func handleInlineTableUpdate(lines []string, candidates []candAssignment, targetParts []string, value any) ([]string, bool, error) {
 	for _, cand := range candidates {
-		if len(cand.fullKey) >= len(targetParts) || !partsEqualFold(cand.fullKey, targetParts[:len(cand.fullKey)]) {
+		if len(cand.fullKey) >= len(targetParts) || !partsEqual(cand.fullKey, targetParts[:len(cand.fullKey)]) {
 			continue
 		}
 
@@ -319,20 +296,6 @@ func splitDottedKey(s string) []string {
 	}
 
 	return parts
-}
-
-func partsEqualFold(a, b []string) bool {
-	if len(a) != len(b) {
-		return false
-	}
-
-	for i := range a {
-		if !strings.EqualFold(a[i], b[i]) {
-			return false
-		}
-	}
-
-	return true
 }
 
 func stripInlineComment(s string) string {
@@ -720,7 +683,7 @@ func appendTableKey(lines []string, tableParts []string, leaf, formattedVal stri
 	for i, line := range lines {
 		trimmed := strings.TrimSpace(line)
 		if tbl, ok := parseTableHeader(trimmed); ok {
-			if partsEqualFold(tbl, tableParts) {
+			if partsEqual(tbl, tableParts) {
 				tableIdx = i
 				break
 			}

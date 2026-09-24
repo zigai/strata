@@ -19,19 +19,13 @@ const defaultJSONIndent = "  "
 // The error names the key that blocked navigation.
 var ErrNonObjectNavigation = errors.New("cannot navigate through non-object key")
 
-// UpdateJSON returns data with value written at the dotted key, creating
-// intermediate objects as needed.
+// UpdateJSON writes value at dottedKey, creating intermediate objects as needed.
 //
-// Values the path does not touch are carried through as their original text,
-// not decoded and re-encoded; an integer too large for float64 keeps its exact
-// value.
+// Untouched values retain their original text, including large integers. The
+// result keeps indentation, sorts object keys, and ends with a newline.
 //
-// The document keeps its original indentation, which is measured from the source.
-// Object keys are sorted, and a trailing newline is appended. JSON carries no
-// comments, so there is nothing else of the original layout to keep.
-//
-// A null document is treated as an empty object. It returns
-// [ErrNonObjectNavigation] if the path crosses a value that is not an object.
+// A null document becomes an empty object. Non-object path segments return
+// [ErrNonObjectNavigation].
 func UpdateJSON(data []byte, dottedKey string, value any) ([]byte, error) {
 	var root map[string]jsontext.Value
 

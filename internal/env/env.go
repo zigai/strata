@@ -38,19 +38,10 @@ var (
 
 // Options configures environment variable binding.
 //
-// Prefix is prepended to every environment variable name, after being trimmed
-// and uppercased. An underscore is appended when the result does not already end
-// in one.
-//
-// Lookup resolves an environment variable name. A nil Lookup uses [os.LookupEnv].
-//
-// OnBind is invoked for every value taken from the environment, with the dotted
-// configuration key, the environment variable name, and the raw value. It is not
-// called for a key that Lookup does not resolve, and the value of a field marked
-// secret is replaced before the call.
-//
-// ParseDuration parses the text of a [time.Duration] field. A nil ParseDuration
-// uses [time.ParseDuration].
+// Prefix is trimmed, uppercased, and given a trailing underscore if needed.
+// Nil Lookup and ParseDuration use [os.LookupEnv] and [time.ParseDuration].
+// OnBind receives each bound key, variable name, and raw value; secrets are
+// redacted before the callback.
 type Options struct {
 	Prefix        string
 	Lookup        func(string) (string, bool)
@@ -70,31 +61,22 @@ type Var struct {
 	Secret bool
 }
 
-// Apply binds environment variables into target and reports every value it
-// takes through [Options.OnBind].
+// Apply binds environment variables into target and reports each binding
+// through [Options.OnBind].
 //
-// target MUST be a non-nil pointer to a struct. [defaulter.ErrTargetNotPointer]
-// is returned otherwise.
+// target must be a non-nil struct pointer, or Apply returns
+// [defaulter.ErrTargetNotPointer].
 //
-// A field is matched by its env tag when the tag names one, with the prefixed
-// name tried before the bare one and the tag text used as written. Otherwise the
-// name is the prefix followed by the upper-snake form of the dotted key, and the
-// segments of a nested key are tried joined by "__" before they are tried joined
-// by "_".
+// An explicit env tag is tried with the prefix, then without it. Otherwise,
+// the prefixed upper-snake key is used, trying "__" before "_" for nested keys.
 //
-// A field that no variable resolves to is left unchanged. A nil struct pointer
-// is allocated only when at least one variable binds within it.
+// Unmatched fields stay unchanged. Nil struct pointers are allocated only for
+// fields that bind.
 //
-// A value that does not decode into its field fails the bind with an error
-// wrapping [ErrInvalidEnvValue]. A leaf field whose kind has no decoder fails
-// with [ErrUnsupportedType].
+// Invalid or out-of-range values wrap [ErrInvalidEnvValue]; unsupported leaf
+// types return [ErrUnsupportedType].
 //
-// A value that does not fit the field's type is rejected rather than wrapped or
-// saturated.
-//
-// A field marked secret by [defaulter.IsSecret] never has its value reproduced.
-// [Options.OnBind] receives a redacted value for it, and the error reported for
-// a failed bind names only the key and the variable.
+// Secret values are redacted in [Options.OnBind] and errors.
 func Apply(target any, opts Options) error {
 	if target == nil {
 		return defaulter.ErrTargetNotPointer

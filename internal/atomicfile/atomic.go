@@ -11,21 +11,15 @@ const (
 	defaultFilePerm os.FileMode = 0o644
 )
 
-// WriteFileAtomic writes data to targetPath atomically, using a temporary file
-// in the destination directory as the intermediate.
+// WriteFileAtomic writes data to targetPath through a temporary file in the
+// same directory.
 //
-// Missing parent directories are created. The data is written, synced, and
-// renamed into place, in that order.
+// Parent directories are created if needed. Data is written, synced, and
+// renamed; an interrupted write leaves the old or complete new file. A zero
+// perm uses 0o644.
 //
-// The resulting file carries exactly the permission bits in perm. A perm of zero
-// selects 0o644.
-//
-// Because the file becomes visible under targetPath only at the rename, an
-// interrupted write leaves either the previous file or the complete new one,
-// never a partial file.
-//
-// NB: an error that wraps the directory sync means the new content is in place
-// but may not survive a crash. The rename is already committed at that point.
+// A directory sync error can occur after the rename, when the new file is in
+// place but may not survive a crash.
 func WriteFileAtomic(targetPath string, data []byte, perm os.FileMode) error {
 	return writeFileAtomic(targetPath, data, perm, true)
 }

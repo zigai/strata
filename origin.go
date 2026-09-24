@@ -1,5 +1,7 @@
 package strata
 
+import "fmt"
+
 const (
 	// SourceDefault is the layer supplied by Go struct defaults or a [Defaulter].
 	// It ranks below every other layer.
@@ -54,18 +56,23 @@ type Origin struct {
 	// positions; the TOML and JSON readers report the file with no line.
 	Line int
 
-	// RawValue is the value as text, for diagnostics. It is not guaranteed to
-	// parse back into the field's type.
-	//
-	// The environment and flag layers report the text the caller supplied. A file
-	// layer reports the literal the document contained where the format exposes
-	// one, so a large integer keeps its exact digits in YAML and JSON. The TOML
-	// reader reports a rendering of the decoded value instead.
-	//
-	// A value from Go defaults has no source text. It is rendered with fmt's %v,
-	// so a [time.Duration] default reads "10s" and a slice reads "[a b]". Those
-	// are Go renderings, not the syntax of any configuration format.
-	//
-	// A field marked secret by its tag always reports "[REDACTED]".
+	// RawValue is diagnostic text, not necessarily valid configuration syntax.
+	// Environment and flag values retain their input text. YAML and JSON retain
+	// file literals; TOML and Go defaults use rendered values. Secrets are always
+	// "[REDACTED]".
 	RawValue string
+}
+
+// Location formats this origin as a layer and location, such as
+// "user /path/config.toml:3", "env MYAPP_PORT", "flag --port", or "default".
+func (o Origin) Location() string {
+	if o.Line > 0 {
+		return fmt.Sprintf("%s %s:%d", o.Source, o.Path, o.Line)
+	}
+
+	if o.Path != "" {
+		return fmt.Sprintf("%s %s", o.Source, o.Path)
+	}
+
+	return string(o.Source)
 }

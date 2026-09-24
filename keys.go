@@ -1,6 +1,7 @@
 package strata
 
 import (
+	"fmt"
 	"reflect"
 	"slices"
 	"strings"
@@ -39,6 +40,26 @@ type keyNode struct {
 type keyTree struct {
 	root  *keyNode
 	names []string
+}
+
+// String formats the unknown key and its did-you-mean suggestion, when present.
+func (k UnknownKey) String() string {
+	if k.Suggestion != "" {
+		return fmt.Sprintf("unknown key %q (did you mean %q?)", k.Key, k.Suggestion)
+	}
+
+	return fmt.Sprintf("unknown key %q", k.Key)
+}
+
+// KeyName returns a field's strata key segment for validator tag-name hooks.
+// It returns an empty string for a field excluded with a "-" tag.
+func KeyName(field reflect.StructField) string {
+	name := defaulter.FieldKey(field)
+	if name == "-" {
+		return ""
+	}
+
+	return name
 }
 
 func keyTreeFor(typ reflect.Type) *keyTree {
@@ -93,29 +114,10 @@ func (t *keyTree) collect(node *keyNode, typ reflect.Type, prefix string, active
 			t.collect(child, fieldType, dotted, active)
 		}
 
-		for _, alias := range keyAliases(field, key) {
-			node.children[alias] = child
+		if _, taken := node.children[key]; !taken {
+			node.children[key] = child
 		}
 	}
-}
-
-// keyAliases lists every spelling a decoder binds to the field, lowercased,
-// since at least one decoder matches names case-insensitively.
-func keyAliases(field reflect.StructField, key string) []string {
-	aliases := []string{key, field.Name, defaulter.ToSnakeCase(field.Name)}
-
-	for _, tag := range []string{"strata", "toml", "yaml", "json"} {
-		name, _, _ := strings.Cut(field.Tag.Get(tag), ",")
-		if name = strings.TrimSpace(name); name != "" && name != "-" {
-			aliases = append(aliases, name)
-		}
-	}
-
-	for i, alias := range aliases {
-		aliases[i] = strings.ToLower(alias)
-	}
-
-	return aliases
 }
 
 func derefFieldType(typ reflect.Type) reflect.Type {
@@ -126,8 +128,8 @@ func derefFieldType(typ reflect.Type) reflect.Type {
 	return typ
 }
 
-// known reports whether a dotted key, as a document wrote it, names a declared
-// field or lies below one that accepts any key.
+// known reports whether a dotted key, as a document wrote it, is exactly a
+// declared configuration key or lies below one that accepts any key.
 func (t *keyTree) known(dotted string) bool {
 	node := t.root
 
@@ -136,7 +138,7 @@ func (t *keyTree) known(dotted string) bool {
 			return true
 		}
 
-		child, ok := node.children[strings.ToLower(segment)]
+		child, ok := node.children[segment]
 		if !ok {
 			return false
 		}
