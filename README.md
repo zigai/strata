@@ -144,6 +144,8 @@ app := &cli.Command{
 }
 ```
 
+In both bridges, a key's flag name swaps dots and underscores for dashes, so `db.max_conns` becomes `--db-max-conns`. `b.Flag` panics at setup time for an unknown, unsupported, or secret key.
+
 Both bridges are separate modules:
 
 ```sh
@@ -298,11 +300,11 @@ type Config struct {
 | `WithPath(path)` | Load this file on top of the system and user files. Use `-` for standard input. |
 | `WithOptionalPath(path)` | Same as `WithPath`, but a missing file is skipped. |
 | `WithAppName(name)` | Look for system and user config files under this name. |
+| `WithFormats("toml", "yaml")` | Read these formats, trying them in this order. Required to read any file. The first one parses standard input. |
 | `WithEnvPrefix(prefix)` | Read environment variables that start with this prefix. |
 | `WithStrict()` | Fail when a config file sets a key your struct doesn't have. |
 | `WithDefaults(value)` | Use this value as the defaults, in place of what `SetDefaults` set. |
 | `WithoutFiles()` | Skip system and user files. A `WithPath` file still loads. |
-| `WithFormats("toml", "yaml")` | Read only these formats, trying them in this order. Required whenever a file is read. The first one is also used for standard input and for a new user config file. |
 | `WithMaxFileSize(bytes)` | Reject bigger files with `ErrFileTooLarge`. The default is 1 MiB. |
 
 </details>
@@ -312,13 +314,11 @@ type Config struct {
 
 <br>
 
-A field's key comes from its `strata`, `toml`, `yaml`, or `json` tag, whichever it finds first. Without one, the field name is converted to snake case. Nested structs use dots: `database.port`.
+A field's key comes from its `strata`, `toml`, `yaml`, or `json` tag, whichever it finds first, or else its name in snake case. Nested structs use dots: `database.port`. Keys match exactly, so `max_conns` sets `MaxConns` but `maxconns` is reported as an unknown key.
 
-Keys are matched exactly. `max_conns` sets `MaxConns`, but `MaxConns` or `maxconns` in a file does nothing, and strata reports it as an unknown key.
+An `env` tag gives a field an exact variable name, read even without `WithEnvPrefix`. Other fields are only read from the environment once you set a prefix, so a stray `PORT` or `HOST` never changes your config.
 
-An `env` tag gives a field an exact variable name. It's read even without `WithEnvPrefix`. Fields without one are only read from the environment once you set a prefix, so a stray `PORT` or `HOST` in the environment never changes your config.
-
-Use `strata.Secret` for a string that redacts itself in formatting and logs. `Value()` retrieves its real value. The `secret` tag remains available for other field types. Secret values are left out of `Init` templates and cannot be bound as flags:
+`strata.Secret` is a string that redacts itself in formatting and logs; `Value()` returns the real value. Secrets are left out of `Init` templates and can't be bound as flags. For other field types, use the `secret` tag.
 
 ```go
 type Config struct {
@@ -330,40 +330,11 @@ type Config struct {
 </details>
 
 <details>
-<summary><b>Flag binding</b></summary>
-
-<br>
-
-| Cobra call | Flag |
-| --- | --- |
-| `b.Flag(fs, "port", "port to listen on")` | `--port` |
-| `b.FlagP(fs, "port", "p", "port to listen on")` | `-p, --port` |
-| `b.Flag(fs, "db.max_conns", "maximum connections")` | `--db-max-conns` |
-
-Pass a command's `Flags()` for local flags or `PersistentFlags()` for inherited flags. `b.Flag` panics at setup time for an unknown, unsupported, or secret key.
-
-</details>
-
-<details>
 <summary><b>Other file formats</b></summary>
 
 <br>
 
-```go
-// Treat .conf files as TOML.
-strata.WithFormatAlias(".conf", "toml")
-
-// Use any unmarshal function.
-strata.WithDecoder(".json5", json5.Unmarshal)
-
-// Decode straight into your type.
-strata.WithDecoderFunc(".env", func(data []byte, target *Config) error {
-	// ...
-	return nil
-})
-```
-
-List the new extension in `WithFormats` as well. strata reads only the formats you list there:
+`WithFormatAlias` reads another extension as a built-in format. Like every format, it has to be listed in `WithFormats`:
 
 ```go
 cfg, err := strata.Load[Config](
@@ -373,7 +344,7 @@ cfg, err := strata.Load[Config](
 )
 ```
 
-To write the format as well, implement `Codec` and register it with `WithCodec`.
+For a format strata doesn't ship, pass a decoder such as `json5.Unmarshal` to `WithDecoder`, or use `WithDecoderFunc` to decode straight into your type. To write the format too, implement `Codec` and register it with `WithCodec`.
 
 </details>
 
@@ -382,17 +353,17 @@ To write the format as well, implement `Codec` and register it with `WithCodec`.
 
 <br>
 
-A missing system or user file is skipped, and so is a missing `WithOptionalPath` file. Everything else is an error: a missing `WithPath` file, a file in a format you didn't enable, a file that can't be read or parsed, and a failed validation. When `Load` fails, it returns the zero value.
+A missing system or user file is skipped, and so is a missing `WithOptionalPath` file. Anything else that goes wrong is an error, and `Load` returns the zero value with it. Check for a specific failure with `errors.Is`:
 
-Every error can be matched with `errors.Is` against a sentinel in the `strata` package:
+| Failure | Error |
+| --- | --- |
+| A `WithPath` file doesn't exist | `fs.ErrNotExist` |
+| A file can't be parsed | `strata.ErrMalformed` |
+| A file is bigger than `WithMaxFileSize` | `strata.ErrFileTooLarge` |
+| A file's format isn't in `WithFormats` | `strata.ErrUnsupportedFormat` |
+| Files are read without `WithFormats` | `strata.ErrNoFormats` |
 
-```go
-if errors.Is(err, strata.ErrMalformed) {
-	// The file exists but couldn't be parsed.
-}
-```
-
-Reading files without `WithFormats` returns `ErrNoFormats`. A file in a format you didn't list, like `--config settings.yaml` in a TOML-only app, returns `ErrUnsupportedFormat`. Validation failures are always a `*strata.ConfigError`.
+Validation failures and unknown keys under `WithStrict` are a `*strata.ConfigError`. Use `errors.As` to get its key and origin.
 
 </details>
 
