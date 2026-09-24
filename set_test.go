@@ -354,7 +354,7 @@ func TestSetChecksKeysAndValues(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	cfg, err := strata.Load[primitiveConfig](strata.WithPath(path))
+	cfg, err := strata.Load[primitiveConfig](strata.WithPath(path), strata.WithFormats("toml"))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -402,7 +402,7 @@ func TestSetParsesLists(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	cfg, err := strata.Load[listEditConfig](strata.WithPath(path))
+	cfg, err := strata.Load[listEditConfig](strata.WithPath(path), strata.WithFormats("toml"))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -443,7 +443,7 @@ func TestSetDecodesByFieldType(t *testing.T) {
 		t.Fatalf("float32 edit = %s", data)
 	}
 
-	cfg, err := strata.Load[richEditConfig](strata.WithPath(path))
+	cfg, err := strata.Load[richEditConfig](strata.WithPath(path), strata.WithFormats("toml"))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -469,7 +469,7 @@ func TestSetMapEntryInEachFormat(t *testing.T) {
 				t.Fatal(err)
 			}
 
-			cfg, err := strata.Load[richEditConfig](strata.WithPath(path))
+			cfg, err := strata.Load[richEditConfig](strata.WithPath(path), strata.WithFormats(ext))
 			if err != nil {
 				t.Fatal(err)
 			}
@@ -507,7 +507,7 @@ func TestSaveThenSetUsesOneKeySpelling(t *testing.T) {
 				t.Fatalf("file names the key more than one way:\n%s", data)
 			}
 
-			cfg, err := strata.Load[typoConfig](strata.WithPath(path), strata.WithStrict())
+			cfg, err := strata.Load[typoConfig](strata.WithPath(path), strata.WithStrict(), strata.WithFormats(ext))
 			if err != nil {
 				t.Fatalf("Load: %v", err)
 			}

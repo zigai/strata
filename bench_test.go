@@ -83,7 +83,7 @@ features = ["auth", "db"]
 	b.ResetTimer()
 
 	for b.Loop() {
-		_, err := strata.Load[BenchConfig](strata.WithPath(tomlPath))
+		_, err := strata.Load[BenchConfig](strata.WithPath(tomlPath), strata.WithFormats("toml"))
 		if err != nil {
 			b.Fatal(err)
 		}

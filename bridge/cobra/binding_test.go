@@ -2,6 +2,7 @@ package stratacobra_test
 
 import (
 	"bytes"
+	"errors"
 	"io"
 	"maps"
 	"os"
@@ -26,7 +27,9 @@ type cobraApp struct {
 
 func newCobraApp(_ *testing.T, cfg *bridgetest.Config, app bridgetest.App) bridgetest.Instance {
 	root := &cobra.Command{Use: bridgetest.AppName, SilenceErrors: true, SilenceUsage: true}
-	b := stratacobra.Bind(root, cfg, app.Options...)
+
+	options := append([]strata.Option{strata.WithFormats("toml")}, app.Options...)
+	b := stratacobra.Bind(root, cfg, options...)
 
 	for _, name := range slices.Sorted(maps.Keys(app.Commands)) {
 		cmd := &cobra.Command{Use: name, RunE: noop}
@@ -61,13 +64,25 @@ func TestCobraSharedBehavior(t *testing.T) {
 	bridgetest.Run(t, newCobraApp)
 }
 
+func TestCobraRequiresFormatsOnExecute(t *testing.T) {
+	var cfg bridgetest.Config
+
+	root := &cobra.Command{Use: bridgetest.AppName, SilenceErrors: true, SilenceUsage: true, RunE: noop}
+	stratacobra.Bind(root, &cfg)
+	root.SetArgs(nil)
+
+	if err := root.Execute(); !errors.Is(err, strata.ErrNoFormats) {
+		t.Fatalf("Execute error = %v, want ErrNoFormats", err)
+	}
+}
+
 // Help shows each flag's default from SetDefaults, nested structs included, and
 // a strata.Duration flag is a duration flag.
 func TestCobraHelpShowsDefaultsAndTypes(t *testing.T) {
 	var cfg bridgetest.Config
 
 	root := &cobra.Command{Use: bridgetest.AppName}
-	b := stratacobra.Bind(root, &cfg)
+	b := stratacobra.Bind(root, &cfg, strata.WithFormats("toml"))
 	b.Flag(root.Flags(), "db.port", "database port")
 	b.Flag(root.Flags(), "timeout", "timeout")
 
@@ -92,7 +107,7 @@ func TestCobraRootHookRunsForSkippedCommands(t *testing.T) {
 	root := &cobra.Command{Use: bridgetest.AppName}
 	hooks := 0
 	root.PersistentPreRunE = func(*cobra.Command, []string) error { hooks++; return nil }
-	b := stratacobra.Bind(root, &cfg)
+	b := stratacobra.Bind(root, &cfg, strata.WithFormats("toml"))
 	root.AddCommand(b.ConfigCommand())
 	root.SetOut(io.Discard)
 	root.SetArgs([]string{"--config", path, "config", "set", "port", "9000"})
@@ -112,7 +127,7 @@ func TestCobraLoadFromChildHook(t *testing.T) {
 	var cfg bridgetest.Config
 
 	root := &cobra.Command{Use: bridgetest.AppName}
-	b := stratacobra.Bind(root, &cfg, strata.WithEnvPrefix("CHILD_"))
+	b := stratacobra.Bind(root, &cfg, strata.WithFormats("toml"), strata.WithEnvPrefix("CHILD_"))
 	child := &cobra.Command{Use: "child", PersistentPreRunE: func(cmd *cobra.Command, _ []string) error { return b.Load(cmd) }, RunE: noop}
 	b.Flag(child.Flags(), "port", "port")
 	root.AddCommand(child)
@@ -147,7 +162,7 @@ func TestCobraFlagKinds(t *testing.T) {
 
 	root := &cobra.Command{Use: bridgetest.AppName, RunE: noop}
 
-	b := stratacobra.Bind(root, &cfg)
+	b := stratacobra.Bind(root, &cfg, strata.WithFormats("toml"))
 	for _, key := range []string{"name", "enabled", "narrow", "unsigned", "ratio", "tags", "numbers", "timeout"} {
 		b.Flag(root.Flags(), key, key)
 	}
@@ -168,7 +183,7 @@ func TestCobraPersistentFlagOnChild(t *testing.T) {
 	var cfg bridgetest.Config
 
 	root := &cobra.Command{Use: bridgetest.AppName}
-	b := stratacobra.Bind(root, &cfg)
+	b := stratacobra.Bind(root, &cfg, strata.WithFormats("toml"))
 	b.Flag(root.PersistentFlags(), "port", "port")
 
 	child := &cobra.Command{Use: "child", RunE: noop}
@@ -195,7 +210,7 @@ func TestCobraChainsBothRootHooks(t *testing.T) {
 
 	root.PersistentPreRun = func(*cobra.Command, []string) { calls = append(calls, "plain") }
 	root.PersistentPreRunE = func(*cobra.Command, []string) error { calls = append(calls, "error"); return nil }
-	stratacobra.Bind(root, &cfg)
+	stratacobra.Bind(root, &cfg, strata.WithFormats("toml"))
 	root.SetArgs(nil)
 
 	if err := root.Execute(); err != nil {
@@ -219,7 +234,7 @@ func TestCobraSkipsShellCompletion(t *testing.T) {
 			var cfg bridgetest.Config
 
 			root := &cobra.Command{Use: bridgetest.AppName}
-			stratacobra.Bind(root, &cfg, strata.WithPath(path))
+			stratacobra.Bind(root, &cfg, strata.WithPath(path), strata.WithFormats("toml"))
 			root.AddCommand(&cobra.Command{Use: "serve", RunE: noop})
 			root.SetOut(io.Discard)
 			root.SetArgs([]string{name, "serve", "--p"})
@@ -242,7 +257,7 @@ func TestCobraSkipsOnlyRootLevelBuiltIns(t *testing.T) {
 	var cfg bridgetest.Config
 
 	root := &cobra.Command{Use: bridgetest.AppName}
-	stratacobra.Bind(root, &cfg, strata.WithPath(path))
+	stratacobra.Bind(root, &cfg, strata.WithPath(path), strata.WithFormats("toml"))
 
 	docs := &cobra.Command{Use: "docs"}
 	docs.AddCommand(&cobra.Command{Use: "help", RunE: noop})

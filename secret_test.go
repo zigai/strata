@@ -51,7 +51,7 @@ func TestSecretAndDurationRoundTripEveryFormat(t *testing.T) {
 				t.Fatal(err)
 			}
 
-			cfg, meta, err := strata.LoadWithMetadata[primitiveConfig](strata.WithPath(path))
+			cfg, meta, err := strata.LoadWithMetadata[primitiveConfig](strata.WithPath(path), strata.WithFormats(ext))
 			if err != nil {
 				t.Fatal(err)
 			}
@@ -111,7 +111,7 @@ func TestFileSecretRedaction(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	_, meta, err := strata.LoadWithMetadata[secretFileConfig](strata.WithPath(filePath))
+	_, meta, err := strata.LoadWithMetadata[secretFileConfig](strata.WithPath(filePath), strata.WithFormats("json"))
 	if err != nil {
 		t.Fatalf("Load error: %v", err)
 	}

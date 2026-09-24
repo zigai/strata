@@ -50,6 +50,7 @@ func TestWithContributionOverridesLowerTiers(t *testing.T) {
 
 			return nil
 		}),
+		strata.WithFormats("yaml"),
 	)
 	if err != nil {
 		t.Fatalf("Load error: %v", err)
@@ -74,7 +75,7 @@ func TestWithContributionCanSatisfyValidation(t *testing.T) {
 
 	filePath := writeFile(t, "invalid.yaml", "port: 80\n")
 
-	_, err := strata.Load[contributionValidatedConfig](strata.WithPath(filePath))
+	_, err := strata.Load[contributionValidatedConfig](strata.WithPath(filePath), strata.WithFormats("yaml"))
 	if err == nil {
 		t.Fatal("expected validation failure without contribution")
 	}
@@ -91,6 +92,7 @@ func TestWithContributionCanSatisfyValidation(t *testing.T) {
 
 			return nil
 		}),
+		strata.WithFormats("yaml"),
 	)
 	if err != nil {
 		t.Fatalf("Load with correcting contribution failed: %v", err)
@@ -118,6 +120,7 @@ func TestWithContributionCanViolateValidation(t *testing.T) {
 
 			return nil
 		}),
+		strata.WithFormats("yaml"),
 	)
 	if err == nil {
 		t.Fatal("expected validation failure from invalid contribution")

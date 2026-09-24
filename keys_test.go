@@ -23,7 +23,7 @@ func TestUnknownKeysAreReportedWithSuggestions(t *testing.T) {
 
 	path := writeFile(t, "config.yaml", "prot: 9000\ndatabase:\n  max_con: 5\n  port: 5432\nlabels:\n  anything: goes\napi_kye: hunter2\ncompletely_unrelated: 1\n")
 
-	cfg, meta, err := strata.LoadWithMetadata[typoConfig](strata.WithPath(path))
+	cfg, meta, err := strata.LoadWithMetadata[typoConfig](strata.WithPath(path), strata.WithFormats("yaml"))
 	if err != nil {
 		t.Fatalf("Load: %v", err)
 	}
@@ -77,7 +77,7 @@ func TestStrictRejectsUnknownKeys(t *testing.T) {
 
 	path := writeFile(t, "config.toml", "prot = 9000\n")
 
-	_, err := strata.Load[typoConfig](strata.WithPath(path), strata.WithStrict())
+	_, err := strata.Load[typoConfig](strata.WithPath(path), strata.WithStrict(), strata.WithFormats("toml"))
 	if !errors.Is(err, strata.ErrUnknownKey) {
 		t.Fatalf("err = %v, want ErrUnknownKey", err)
 	}
@@ -94,7 +94,7 @@ func TestStrictRejectsUnknownKeys(t *testing.T) {
 		}
 	}
 
-	if _, err := strata.Load[typoConfig](strata.WithPath(writeFile(t, "ok.toml", "port = 1\n")), strata.WithStrict()); err != nil {
+	if _, err := strata.Load[typoConfig](strata.WithPath(writeFile(t, "ok.toml", "port = 1\n")), strata.WithStrict(), strata.WithFormats("toml")); err != nil {
 		t.Fatalf("strict load of a valid file: %v", err)
 	}
 }
@@ -107,7 +107,7 @@ func TestReusedYAMLAnchorsAreNotUnknownKeys(t *testing.T) {
 
 	path := writeFile(t, "config.yaml", "base: &b\n  port: 5432\ndatabase:\n  <<: *b\n")
 
-	cfg, meta, err := strata.LoadWithMetadata[typoConfig](strata.WithPath(path), strata.WithStrict())
+	cfg, meta, err := strata.LoadWithMetadata[typoConfig](strata.WithPath(path), strata.WithStrict(), strata.WithFormats("yaml"))
 	if err != nil {
 		t.Fatalf("strict load: %v", err)
 	}
@@ -122,7 +122,7 @@ func TestReusedYAMLAnchorsAreNotUnknownKeys(t *testing.T) {
 
 	unused := writeFile(t, "unused.yaml", "base: &b\n  port: 5432\n")
 
-	_, err = strata.Load[typoConfig](strata.WithPath(unused), strata.WithStrict())
+	_, err = strata.Load[typoConfig](strata.WithPath(unused), strata.WithStrict(), strata.WithFormats("yaml"))
 	if !errors.Is(err, strata.ErrUnknownKey) {
 		t.Fatalf("err = %v, want ErrUnknownKey for an anchor nothing reuses", err)
 	}

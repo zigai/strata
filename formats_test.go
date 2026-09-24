@@ -50,6 +50,7 @@ func TestCustomCodecRegistration(t *testing.T) {
 	_, err := strata.Load[SimpleCfg](
 		strata.WithPath(customPath),
 		strata.WithCodec(".custom", customCodec),
+		strata.WithFormats(".custom"),
 	)
 	if err != nil {
 		t.Fatalf("Load error: %v", err)
@@ -80,19 +81,16 @@ func TestWithFormatsRestrictsDiscovery(t *testing.T) {
 
 	t.Setenv("XDG_CONFIG_HOME", dir)
 
-	defaultCfg, defaultMeta, err := strata.LoadWithMetadata[formatsTestConfig](
+	if _, err := strata.Load[formatsTestConfig](strata.WithAppName("myapp")); !errors.Is(err, strata.ErrNoFormats) {
+		t.Fatalf("Load without formats error = %v, want ErrNoFormats", err)
+	}
+
+	tomlCfg, tomlMeta, err := strata.LoadWithMetadata[formatsTestConfig](
 		strata.WithAppName("myapp"),
+		strata.WithFormats("toml"),
 	)
-	if err != nil {
-		t.Fatalf("Load default: %v", err)
-	}
-
-	if defaultCfg.Port != 8080 {
-		t.Fatalf("defaultCfg.Port = %d, want 8080", defaultCfg.Port)
-	}
-
-	if defaultMeta.ActiveFiles()[0] != tomlPath {
-		t.Fatalf("active file = %s, want %s", defaultMeta.ActiveFiles()[0], tomlPath)
+	if err != nil || tomlCfg.Port != 8080 || tomlMeta.ActiveFiles()[0] != tomlPath {
+		t.Fatalf("TOML load = %+v, %v, %v", tomlCfg, tomlMeta, err)
 	}
 
 	yamlCfg, yamlMeta, err := strata.LoadWithMetadata[formatsTestConfig](
@@ -109,6 +107,86 @@ func TestWithFormatsRestrictsDiscovery(t *testing.T) {
 
 	if yamlMeta.ActiveFiles()[0] != yamlPath {
 		t.Fatalf("active file = %s, want %s", yamlMeta.ActiveFiles()[0], yamlPath)
+	}
+}
+
+func TestDiscoveryRequiresFormatsWithoutExistingFiles(t *testing.T) {
+	t.Setenv("XDG_CONFIG_HOME", t.TempDir())
+	t.Setenv("XDG_CONFIG_DIRS", t.TempDir())
+
+	for _, options := range [][]strata.Option{
+		{strata.WithAppName("myapp")},
+		{strata.WithAppName("myapp"), strata.WithPath(writeFile(t, "config.toml", "port = 8080\n"))},
+	} {
+		if _, err := strata.Load[formatsTestConfig](options...); !errors.Is(err, strata.ErrNoFormats) {
+			t.Fatalf("Load without discovery formats error = %v, want ErrNoFormats", err)
+		}
+	}
+
+	if _, err := strata.Load[defaultedFormatsConfig](); err != nil {
+		t.Fatalf("defaults-only load: %v", err)
+	}
+
+	if _, err := strata.Load[defaultedFormatsConfig](strata.WithAppName("myapp"), strata.WithoutFiles()); err != nil {
+		t.Fatalf("disabled file discovery: %v", err)
+	}
+}
+
+func TestNamedPathUsesExtension(t *testing.T) {
+	t.Parallel()
+
+	for _, name := range []string{"config", "config.conf"} {
+		path := writeFile(t, name, "port = 8080\n")
+		if _, err := strata.Load[formatsTestConfig](strata.WithPath(path)); !errors.Is(err, strata.ErrNoFormats) {
+			t.Fatalf("Load(%q) error = %v, want ErrNoFormats", path, err)
+		}
+
+		if _, err := strata.Load[formatsTestConfig](strata.WithPath(path), strata.WithFormats("toml")); !errors.Is(err, strata.ErrUnsupportedFormat) {
+			t.Fatalf("Load(%q) with TOML enabled error = %v, want ErrUnsupportedFormat", path, err)
+		}
+	}
+
+	jsonPath := writeFile(t, "config.json", "port = 8080\n")
+	if _, err := strata.Load[formatsTestConfig](strata.WithPath(jsonPath), strata.WithFormats("json")); !errors.Is(err, strata.ErrMalformed) {
+		t.Fatalf("Load JSON with TOML content error = %v, want ErrMalformed", err)
+	}
+
+	missingYAML := filepath.Join(t.TempDir(), "missing.yaml")
+	if _, err := strata.Load[formatsTestConfig](strata.WithOptionalPath(missingYAML)); !errors.Is(err, strata.ErrNoFormats) {
+		t.Fatalf("Load optional path without formats error = %v, want ErrNoFormats", err)
+	}
+
+	if _, err := strata.Load[formatsTestConfig](strata.WithOptionalPath(missingYAML), strata.WithFormats("toml")); !errors.Is(err, strata.ErrUnsupportedFormat) {
+		t.Fatalf("Load missing disallowed YAML error = %v, want ErrUnsupportedFormat", err)
+	}
+
+	aliasPath := writeFile(t, "config.conf", "port = 8080\n")
+	if _, err := strata.Load[formatsTestConfig](strata.WithPath(aliasPath), strata.WithFormatAlias(".conf", "toml"), strata.WithFormats("toml")); !errors.Is(err, strata.ErrUnsupportedFormat) {
+		t.Fatalf("Load unlisted alias error = %v, want ErrUnsupportedFormat", err)
+	}
+
+	customPath := writeFile(t, "config.custom", "data")
+	if _, err := strata.Load[formatsTestConfig](strata.WithPath(customPath), strata.WithCodec(".custom", &dummyCustomCodec{}), strata.WithFormats("toml")); !errors.Is(err, strata.ErrUnsupportedFormat) {
+		t.Fatalf("Load unlisted codec error = %v, want ErrUnsupportedFormat", err)
+	}
+}
+
+func TestStdinUsesFirstFormat(t *testing.T) {
+	t.Parallel()
+
+	for _, options := range [][]strata.Option{
+		nil,
+		{strata.WithFormats()},
+	} {
+		selected := append([]strata.Option{strata.WithPath("-"), strata.WithStdin(strings.NewReader("port = 8080\n"))}, options...)
+		if _, err := strata.Load[formatsTestConfig](selected...); !errors.Is(err, strata.ErrNoFormats) {
+			t.Fatalf("Load stdin with %d format options error = %v, want ErrNoFormats", len(options), err)
+		}
+	}
+
+	cfg, err := strata.Load[formatsTestConfig](strata.WithPath("-"), strata.WithStdin(strings.NewReader(`{"port": 8080}`)), strata.WithFormats("json", "toml"))
+	if err != nil || cfg.Port != 8080 {
+		t.Fatalf("Load JSON stdin = %+v, %v", cfg, err)
 	}
 }
 
@@ -199,8 +277,8 @@ func TestWithFormatsUnknownFormatError(t *testing.T) {
 		t.Fatal("expected error for unknown format, got nil")
 	}
 
-	if !errors.Is(err, strata.ErrNoCodec) {
-		t.Fatalf("err = %v, want it to wrap ErrNoCodec", err)
+	if !errors.Is(err, strata.ErrUnsupportedFormat) {
+		t.Fatalf("err = %v, want it to wrap ErrUnsupportedFormat", err)
 	}
 
 	if !strings.Contains(err.Error(), "tmol") {
@@ -257,8 +335,8 @@ func TestWithFormatsExplicitPathDisallowed(t *testing.T) {
 		t.Fatal("expected error for explicit path with disallowed format, got nil")
 	}
 
-	if !errors.Is(err, strata.ErrNoCodec) {
-		t.Fatalf("err = %v, want it to wrap ErrNoCodec", err)
+	if !errors.Is(err, strata.ErrUnsupportedFormat) {
+		t.Fatalf("err = %v, want it to wrap ErrUnsupportedFormat", err)
 	}
 }
 
@@ -270,6 +348,7 @@ func TestWithFormatAliasTOML(t *testing.T) {
 	cfg, meta, err := strata.LoadWithMetadata[formatsTestConfig](
 		strata.WithPath(confPath),
 		strata.WithFormatAlias(".conf", "toml"),
+		strata.WithFormats(".conf"),
 	)
 	if err != nil {
 		t.Fatalf("Load WithFormatAlias: %v", err)
@@ -301,6 +380,7 @@ func TestWithFormatAliasYAML(t *testing.T) {
 	cfg, meta, err := strata.LoadWithMetadata[formatsTestConfig](
 		strata.WithPath(confPath),
 		strata.WithFormatAlias(".conf", "yaml"),
+		strata.WithFormats(".conf"),
 	)
 	if err != nil {
 		t.Fatalf("Load WithFormatAlias yaml: %v", err)
@@ -325,8 +405,8 @@ func TestWithFormatAliasUnknownTarget(t *testing.T) {
 		t.Fatal("expected error for unknown alias target, got nil")
 	}
 
-	if !errors.Is(err, strata.ErrNoCodec) {
-		t.Fatalf("err = %v, want it to wrap ErrNoCodec", err)
+	if !errors.Is(err, strata.ErrUnsupportedFormat) {
+		t.Fatalf("err = %v, want it to wrap ErrUnsupportedFormat", err)
 	}
 }
 
@@ -338,6 +418,7 @@ func TestWithDecoder(t *testing.T) {
 	cfg, meta, err := strata.LoadWithMetadata[formatsTestConfig](
 		strata.WithPath(customPath),
 		strata.WithDecoder(".custom", json.Unmarshal),
+		strata.WithFormats(".custom"),
 	)
 	if err != nil {
 		t.Fatalf("Load WithDecoder: %v", err)
@@ -386,6 +467,7 @@ func TestWithDecoderFunc(t *testing.T) {
 
 			return nil
 		}),
+		strata.WithFormats(".ini"),
 	)
 	if err != nil {
 		t.Fatalf("Load WithDecoderFunc: %v", err)
@@ -434,6 +516,7 @@ func TestWithDecoderMalformed(t *testing.T) {
 	_, err := strata.Load[formatsTestConfig](
 		strata.WithPath(customPath),
 		strata.WithDecoder(".custom", json.Unmarshal),
+		strata.WithFormats(".custom"),
 	)
 	if err == nil {
 		t.Fatal("expected error for malformed decoder data, got nil")
@@ -453,6 +536,7 @@ func TestWithFormatAliasTransitive(t *testing.T) {
 		strata.WithPath(cfgPath),
 		strata.WithFormatAlias(".cfg", ".conf"),
 		strata.WithFormatAlias(".conf", "toml"),
+		strata.WithFormats(".cfg"),
 	)
 	if err != nil {
 		t.Fatalf("Load WithFormatAlias transitive: %v", err)
@@ -484,6 +568,7 @@ func TestWithFormatAliasJSON(t *testing.T) {
 	cfg, meta, err := strata.LoadWithMetadata[formatsTestConfig](
 		strata.WithPath(manifestPath),
 		strata.WithFormatAlias(".manifest", "json"),
+		strata.WithFormats(".manifest"),
 	)
 	if err != nil {
 		t.Fatalf("Load WithFormatAlias json: %v", err)
@@ -513,6 +598,7 @@ func TestWithFormatAliasNormalization(t *testing.T) {
 		strata.WithFormatAlias("CONF", "TOML"),
 		strata.WithFormatAlias("", "toml"),
 		strata.WithFormatAlias(".empty", ""),
+		strata.WithFormats(".conf"),
 	)
 	if err != nil {
 		t.Fatalf("Load WithFormatAlias normalized: %v", err)
@@ -531,6 +617,7 @@ func TestWithFormatAliasSparseOverlay(t *testing.T) {
 	cfg, err := strata.Load[defaultedFormatsConfig](
 		strata.WithPath(confPath),
 		strata.WithFormatAlias(".conf", "toml"),
+		strata.WithFormats(".conf"),
 	)
 	if err != nil {
 		t.Fatalf("Load WithFormatAlias sparse: %v", err)
@@ -615,6 +702,7 @@ func TestWithFormatAliasCascadingTiers(t *testing.T) {
 		strata.WithAppName("myapp"),
 		strata.WithPath(projConf),
 		strata.WithFormatAlias(".conf", "toml"),
+		strata.WithFormats(".conf"),
 	)
 	if err != nil {
 		t.Fatalf("Load cascading alias: %v", err)
@@ -641,6 +729,7 @@ func TestWithDecoderCodecContracts(t *testing.T) {
 	cfg, err := strata.Load[defaultedFormatsConfig](
 		strata.WithPath(customPath),
 		strata.WithDecoder(".custom", json.Unmarshal),
+		strata.WithFormats(".custom"),
 	)
 	if err != nil {
 		t.Fatalf("Load WithDecoder: %v", err)
@@ -668,6 +757,7 @@ func TestWithDecoderFuncTypeMismatch(t *testing.T) {
 		strata.WithDecoderFunc(".ini", func(_ []byte, _ *formatsTestConfig) error {
 			return nil
 		}),
+		strata.WithFormats(".ini"),
 	)
 	if err == nil {
 		t.Fatal("expected type mismatch error, got nil")
@@ -690,6 +780,7 @@ func TestWithDecoderFuncNilTargetAndErrorWrapping(t *testing.T) {
 		strata.WithDecoderFunc(".ini", func(_ []byte, _ *formatsTestConfig) error {
 			return customErr
 		}),
+		strata.WithFormats(".ini"),
 	)
 	if err == nil {
 		t.Fatal("expected error, got nil")
@@ -704,7 +795,7 @@ func TestWithDecoderFuncNilTargetAndErrorWrapping(t *testing.T) {
 	}
 }
 
-func TestWithFormatsEmptyArgDisablesDiscovery(t *testing.T) {
+func TestWithFormatsEmptyArgRejectsDiscovery(t *testing.T) {
 	dir := t.TempDir()
 
 	appDir := filepath.Join(dir, "myapp")
@@ -719,20 +810,12 @@ func TestWithFormatsEmptyArgDisablesDiscovery(t *testing.T) {
 
 	t.Setenv("XDG_CONFIG_HOME", dir)
 
-	cfg, meta, err := strata.LoadWithMetadata[defaultedFormatsConfig](
+	_, err := strata.Load[defaultedFormatsConfig](
 		strata.WithAppName("myapp"),
 		strata.WithFormats(),
 	)
-	if err != nil {
-		t.Fatalf("Load WithFormats(): %v", err)
-	}
-
-	if len(meta.ActiveFiles()) != 0 {
-		t.Fatalf("ActiveFiles = %v, want 0 files", meta.ActiveFiles())
-	}
-
-	if cfg.Port != 1234 {
-		t.Fatalf("cfg.Port = %d, want default 1234", cfg.Port)
+	if !errors.Is(err, strata.ErrNoFormats) {
+		t.Fatalf("Load WithFormats() error = %v, want ErrNoFormats", err)
 	}
 }
 
@@ -758,7 +841,7 @@ func TestWithFormatsWhitespaceAndCase(t *testing.T) {
 	}
 }
 
-func TestTableFirstTOMLStdinDetection(t *testing.T) {
+func TestStdinTableFirstTOML(t *testing.T) {
 	t.Parallel()
 
 	type serverCfg struct {
@@ -772,6 +855,7 @@ func TestTableFirstTOMLStdinDetection(t *testing.T) {
 	cfg, err := strata.Load[serverCfg](
 		strata.WithPath("-"),
 		strata.WithStdin(buf),
+		strata.WithFormats("toml"),
 	)
 	if err != nil {
 		t.Fatalf("Load stdin error: %v", err)
@@ -827,7 +911,7 @@ func TestWithFormatsYMLPathExcludedWhenYAMLOnly(t *testing.T) {
 		t.Fatal("expected error for explicit .yml path with only .yaml enabled, got nil")
 	}
 
-	if !errors.Is(err, strata.ErrNoCodec) {
-		t.Errorf("expected ErrNoCodec, got %v", err)
+	if !errors.Is(err, strata.ErrUnsupportedFormat) {
+		t.Errorf("expected ErrUnsupportedFormat, got %v", err)
 	}
 }

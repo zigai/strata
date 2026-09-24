@@ -233,7 +233,7 @@ func TestTOMLInitWritesPlainDurationsAsStrings(t *testing.T) {
 		t.Fatalf("template = %s", data)
 	}
 
-	cfg, err := strata.Load[plainDurationConfig](strata.WithPath(path))
+	cfg, err := strata.Load[plainDurationConfig](strata.WithPath(path), strata.WithFormats("toml"))
 	if err != nil {
 		t.Fatal(err)
 	}

@@ -3,6 +3,7 @@ package strataurfave_test
 import (
 	"bytes"
 	"context"
+	"errors"
 	"io"
 	"maps"
 	"os"
@@ -25,7 +26,8 @@ type urfaveApp struct {
 }
 
 func newUrfaveApp(_ *testing.T, cfg *bridgetest.Config, app bridgetest.App) bridgetest.Instance {
-	b := strataurfave.Bind(cfg, app.Options...)
+	options := append([]strata.Option{strata.WithFormats("toml")}, app.Options...)
+	b := strataurfave.Bind(cfg, options...)
 	root := &cli.Command{
 		Name:                  bridgetest.AppName,
 		EnableShellCompletion: true,
@@ -69,6 +71,17 @@ func TestUrfaveSharedBehavior(t *testing.T) {
 	bridgetest.Run(t, newUrfaveApp)
 }
 
+func TestUrfaveRequiresFormatsOnRun(t *testing.T) {
+	var cfg bridgetest.Config
+
+	b := strataurfave.Bind(&cfg)
+	root := &cli.Command{Name: bridgetest.AppName, Before: b.Before, Action: noop}
+
+	if err := root.Run(context.Background(), []string{bridgetest.AppName}); !errors.Is(err, strata.ErrNoFormats) {
+		t.Fatalf("Run error = %v, want ErrNoFormats", err)
+	}
+}
+
 type urfaveKinds struct {
 	Enabled bool
 	Port    int
@@ -81,7 +94,7 @@ type urfaveKinds struct {
 func TestUrfaveFlagKinds(t *testing.T) {
 	var cfg urfaveKinds
 
-	b := strataurfave.Bind(&cfg)
+	b := strataurfave.Bind(&cfg, strata.WithFormats("toml"))
 
 	cmd := &cli.Command{Name: bridgetest.AppName, Before: b.Before, Flags: []cli.Flag{
 		b.Flag("enabled", "enabled"), b.Flag("port", "port", "p"), b.Flag("tags", "tags"), b.Flag("timeout", "timeout"),
@@ -111,7 +124,7 @@ func TestUrfaveShellCompletionSkipsLoad(t *testing.T) {
 
 	var cfg bridgetest.Config
 
-	b := strataurfave.Bind(&cfg, strata.WithPath(path))
+	b := strataurfave.Bind(&cfg, strata.WithPath(path), strata.WithFormats("toml"))
 	root := &cli.Command{
 		Name:                  bridgetest.AppName,
 		EnableShellCompletion: true,

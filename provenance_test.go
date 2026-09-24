@@ -193,7 +193,7 @@ func TestProvenancePreservesExactIntegers(t *testing.T) {
 				t.Fatalf("seed: %v", err)
 			}
 
-			_, meta, err := strata.LoadWithMetadata[wideConfig](strata.WithPath(path))
+			_, meta, err := strata.LoadWithMetadata[wideConfig](strata.WithPath(path), strata.WithFormats(tc.ext))
 			if err != nil {
 				t.Fatalf("Load: %v", err)
 			}
@@ -213,7 +213,7 @@ func TestProvenancePreservesExactIntegers(t *testing.T) {
 // Provenance MUST be recorded by a reader for the format that decoded the layer.
 // It once ran its own detection cascade instead, so a JSON document read from
 // standard input was reported by the YAML reader.
-func TestProvenanceReaderFollowsDetectedFormat(t *testing.T) {
+func TestProvenanceFollowsStdinFormat(t *testing.T) {
 	t.Parallel()
 
 	t.Run("json", func(t *testing.T) {
@@ -222,6 +222,7 @@ func TestProvenanceReaderFollowsDetectedFormat(t *testing.T) {
 		_, meta, err := strata.LoadWithMetadata[stdinFormatConfig](
 			strata.WithPath("-"),
 			strata.WithStdin(strings.NewReader(`{"alpha": 7}`)),
+			strata.WithFormats("json"),
 		)
 		if err != nil {
 			t.Fatalf("Load: %v", err)
@@ -243,6 +244,7 @@ func TestProvenanceReaderFollowsDetectedFormat(t *testing.T) {
 		_, meta, err := strata.LoadWithMetadata[stdinFormatConfig](
 			strata.WithPath("-"),
 			strata.WithStdin(strings.NewReader("alpha: 7\n")),
+			strata.WithFormats("yaml"),
 		)
 		if err != nil {
 			t.Fatalf("Load: %v", err)
@@ -269,7 +271,7 @@ func TestCustomKeyFileProvenance(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	_, meta, err := strata.LoadWithMetadata[customKeyFileConfig](strata.WithPath(filePath))
+	_, meta, err := strata.LoadWithMetadata[customKeyFileConfig](strata.WithPath(filePath), strata.WithFormats("json"))
 	if err != nil {
 		t.Fatalf("Load error: %v", err)
 	}
@@ -320,7 +322,7 @@ func TestOriginsListsEveryResolvedKey(t *testing.T) {
 
 	path := writeFile(t, "config.toml", "[database]\nport = 5432\n")
 
-	_, meta, err := strata.LoadWithMetadata[typoConfig](strata.WithPath(path), strata.WithEnvPrefix("ORIGINS_"))
+	_, meta, err := strata.LoadWithMetadata[typoConfig](strata.WithPath(path), strata.WithEnvPrefix("ORIGINS_"), strata.WithFormats("toml"))
 	if err != nil {
 		t.Fatalf("Load: %v", err)
 	}

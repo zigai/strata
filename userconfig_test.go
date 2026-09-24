@@ -1,6 +1,7 @@
 package strata_test
 
 import (
+	"errors"
 	"os"
 	"path/filepath"
 	"strings"
@@ -8,20 +9,6 @@ import (
 
 	"github.com/zigai/strata"
 )
-
-// With no file in the user directory, UserConfigFile names config.toml there.
-func TestUserConfigFileDefaultsToTOML(t *testing.T) {
-	t.Setenv("XDG_CONFIG_HOME", t.TempDir())
-
-	path, err := strata.UserConfigFile("myapp")
-	if err != nil {
-		t.Fatal(err)
-	}
-
-	if !strings.HasSuffix(path, "myapp/config.toml") {
-		t.Fatalf("path = %s", path)
-	}
-}
 
 func TestConfigEditPathUsesLoadingOptions(t *testing.T) {
 	base := t.TempDir()
@@ -37,6 +24,10 @@ func TestConfigEditPathUsesLoadingOptions(t *testing.T) {
 		t.Fatal(err)
 	}
 
+	if _, err := strata.ConfigEditPath(strata.WithAppName("sample")); !errors.Is(err, strata.ErrNoFormats) {
+		t.Fatalf("edit path without formats error = %v, want ErrNoFormats", err)
+	}
+
 	path, err := strata.ConfigEditPath(strata.WithAppName("sample"), strata.WithFormats("toml"))
 	if err != nil || path != filepath.Join(appDir, "config.toml") {
 		t.Fatalf("TOML path = %q, %v", path, err)
@@ -49,8 +40,20 @@ func TestConfigEditPathUsesLoadingOptions(t *testing.T) {
 
 	explicit := filepath.Join(base, "explicit.toml")
 
-	path, err = strata.ConfigEditPath(strata.WithAppName("sample"), strata.WithPath(explicit))
+	path, err = strata.ConfigEditPath(strata.WithAppName("sample"), strata.WithPath(explicit), strata.WithFormats("toml"))
 	if err != nil || path != explicit {
 		t.Fatalf("explicit path = %q, %v", path, err)
+	}
+
+	if _, err := strata.ConfigEditPath(strata.WithPath(explicit)); !errors.Is(err, strata.ErrNoFormats) {
+		t.Fatalf("explicit path without formats error = %v, want ErrNoFormats", err)
+	}
+
+	if _, err := strata.ConfigEditPath(strata.WithPath(filepath.Join(base, "config.txt")), strata.WithFormats("toml")); !errors.Is(err, strata.ErrUnsupportedFormat) {
+		t.Fatalf("unsupported edit path error = %v, want ErrUnsupportedFormat", err)
+	}
+
+	if _, err := strata.ConfigEditPath(strata.WithPath("-")); err == nil || !strings.Contains(err.Error(), "standard input cannot be edited") || errors.Is(err, strata.ErrNoFormats) {
+		t.Fatalf("stdin edit path error = %v", err)
 	}
 }

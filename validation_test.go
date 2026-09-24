@@ -89,7 +89,7 @@ func loadFromYAML[T any](t *testing.T, body string) error {
 		t.Fatalf("seed: %v", err)
 	}
 
-	_, err := strata.Load[T](strata.WithPath(path))
+	_, err := strata.Load[T](strata.WithPath(path), strata.WithFormats("yaml"))
 
 	return err
 }
