@@ -59,7 +59,9 @@ func (e *missingConfigError) Unwrap() error { return fs.ErrNotExist }
 //
 // Bind adds persistent -c/--config flags. It uses root's name for system and
 // user file discovery unless a later WithAppName option overrides it. It panics
-// if root or cfg is nil, or cfg does not point to a struct.
+// if root or cfg is nil, or cfg does not point to a struct. Pass
+// [strata.WithFormats] to enable file loading; without it, command execution
+// returns [strata.ErrNoFormats].
 func Bind[T any](root *cobra.Command, cfg *T, opts ...strata.Option) *Binding[T] {
 	if root == nil || cfg == nil || reflect.TypeFor[T]().Kind() != reflect.Struct {
 		panic("stratacobra.Bind requires a command and a pointer to a struct")

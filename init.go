@@ -14,15 +14,9 @@ import (
 	"github.com/zigai/strata/internal/defaulter"
 )
 
-var (
-	// ErrFileExists is returned when [Init] targets an existing file and
-	// overwriting was not requested.
-	ErrFileExists = errors.New("configuration file already exists")
-
-	// ErrUnsupportedFormat is returned when a file extension matches no supported
-	// configuration format.
-	ErrUnsupportedFormat = errors.New("unsupported configuration format")
-)
+// ErrFileExists is returned when [Init] targets an existing file and
+// overwriting was not requested.
+var ErrFileExists = errors.New("configuration file already exists")
 
 type initOptions struct {
 	schemaURL string

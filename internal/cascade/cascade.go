@@ -119,10 +119,6 @@ func Discover(p Params) ([]Layer, error) {
 	return layers, nil
 }
 
-func UserConfigFile(appName string) (string, error) {
-	return UserConfigFileForExtensions(appName, []string{".toml", ".yaml", ".yml", ".json"})
-}
-
 func UserConfigFileForExtensions(appName string, exts []string) (string, error) {
 	if len(exts) == 0 {
 		return "", errNoConfigFormat

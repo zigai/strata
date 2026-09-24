@@ -31,6 +31,7 @@ func newRootCommand() *cobra.Command {
 	b := stratacobra.Bind(
 		root, &cfg,
 		strata.WithAppName("myapp"),
+		strata.WithFormats("toml"),
 		strata.WithEnvPrefix("MYAPP_"),
 	)
 

@@ -29,9 +29,8 @@ type loadOptions struct {
 	maxFileSize   int64
 	withoutFiles  bool
 	formats       []string
-	formatsSet    bool
 	formatAliases map[string]string
-	excludedExts  map[string]bool
+	stdinExt      string
 	contributions []Contribution
 	strict        bool
 	keys          *keyTree
@@ -73,9 +72,11 @@ func WithEnvPrefix(prefix string) Option {
 
 // WithPath loads one file above the system and user files.
 //
-// Missing files are errors; use [WithOptionalPath] to allow one.
+// Its extension must be enabled with [WithFormats]. Missing files are errors;
+// use [WithOptionalPath] to allow one.
 //
-// The path "-" reads process stdin, which is cached after the first read.
+// The path "-" reads process stdin using the first enabled format. Process
+// stdin is cached after the first read.
 //
 // A reader from [WithStdin] is consumed directly and is not cached.
 func WithPath(path string) Option {
@@ -87,7 +88,8 @@ func WithPath(path string) Option {
 
 // WithOptionalPath is [WithPath] for a file that may not exist. A missing file
 // contributes nothing; a file that exists but cannot be read or parsed is still
-// an error.
+// an error. Its extension must be enabled with [WithFormats]; "-" uses the
+// first enabled format for stdin.
 func WithOptionalPath(path string) Option {
 	return func(o *loadOptions) {
 		o.explicitPath = path
@@ -179,10 +181,8 @@ func WithDefaults[T any](defaults T) Option {
 
 // WithCodec registers a codec for a file extension on this load only.
 //
-// Registration affects both discovery and decoding. The extension joins the
-// candidate list, so a system or user tier can be satisfied by a .json5 file once
-// that codec is registered. An extension the registry already serves is replaced for
-// this load.
+// An extension the registry already serves is replaced for this load. The
+// codec is used for reading only when its extension is listed in [WithFormats].
 //
 // c MUST NOT be nil; [codec.Registry.Register] panics if it is.
 func WithCodec(ext string, c Codec) Option {
@@ -195,7 +195,7 @@ func WithCodec(ext string, c Codec) Option {
 	}
 }
 
-// WithFormats restricts configuration file discovery and decoding to the
+// WithFormats enables configuration file discovery and decoding for the
 // specified formats or extensions.
 //
 // Formats can be specified by format name (e.g. "toml", "yaml", "json") or by
@@ -204,14 +204,16 @@ func WithCodec(ext string, c Codec) Option {
 // ".yml" enables only that specific extension.
 //
 // The order of arguments determines auto-discovery priority across all file
-// tiers. Formats not specified are neither discovered nor decoded.
+// tiers and selects the first format for stdin and new user files. Formats not
+// specified are neither discovered nor decoded. At least one format is required
+// whenever files are read.
 //
 // If a format has no registered codec, the load fails with an error wrapping
-// [ErrNoCodec].
+// [ErrUnsupportedFormat]. An empty selection when files are read returns
+// [ErrNoFormats].
 func WithFormats(formats ...string) Option {
 	return func(o *loadOptions) {
 		o.formats = append([]string(nil), formats...)
-		o.formatsSet = true
 	}
 }
 
@@ -219,7 +221,8 @@ func WithFormats(formats ...string) Option {
 //
 // Discovery will search for files matching aliasExt and decode them using the
 // target format's codec. When recording provenance, strata analyzes the file
-// using the target format's syntax.
+// using the target format's syntax. The alias is read only when aliasExt is
+// listed in [WithFormats].
 func WithFormatAlias(aliasExt, targetFormat string) Option {
 	return func(o *loadOptions) {
 		normAlias := normalizeExt(aliasExt)
@@ -239,6 +242,7 @@ func WithFormatAlias(aliasExt, targetFormat string) Option {
 
 // WithDecoder registers a decoder function for a file extension on this load.
 //
+// It is used for reading only when the extension is listed in [WithFormats].
 // fn MUST NOT be nil; WithDecoder panics if it is.
 func WithDecoder(ext string, fn DecoderFunc) Option {
 	if fn == nil {
@@ -257,6 +261,7 @@ func WithDecoder(ext string, fn DecoderFunc) Option {
 // WithDecoderFunc registers a type-safe decoder function for a file extension on
 // this load.
 //
+// It is used for reading only when the extension is listed in [WithFormats].
 // fn MUST NOT be nil; WithDecoderFunc panics if it is.
 func WithDecoderFunc[T any](ext string, fn func(data []byte, target *T) error) Option {
 	if fn == nil {
@@ -364,9 +369,8 @@ func defaultLoadOptions() *loadOptions {
 		maxFileSize:   stream.DefaultMaxFileSize,
 		withoutFiles:  false,
 		formats:       nil,
-		formatsSet:    false,
 		formatAliases: nil,
-		excludedExts:  nil,
+		stdinExt:      "",
 		contributions: nil,
 		strict:        false,
 		keys:          nil,

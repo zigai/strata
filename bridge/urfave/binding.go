@@ -57,7 +57,9 @@ func (e *missingConfigError) Unwrap() error { return fs.ErrNotExist }
 
 // Bind prepares key-based flags for cfg. Set the root command's Before to
 // [Binding.Before] and include [Binding.ConfigFlag] to enable --config.
-// The root command name selects the default system and user config tiers.
+// The root command name selects the default system and user config tiers. Pass
+// [strata.WithFormats] to enable file loading; without it, command execution
+// returns [strata.ErrNoFormats].
 func Bind[T any](cfg *T, opts ...strata.Option) *Binding[T] {
 	if cfg == nil || reflect.TypeFor[T]().Kind() != reflect.Struct {
 		panic("strataurfave.Bind requires a pointer to a struct")

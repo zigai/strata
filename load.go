@@ -1,13 +1,11 @@
 package strata
 
 import (
-	"bytes"
 	"errors"
 	"fmt"
 	"os"
 	"path/filepath"
 	"reflect"
-	"slices"
 	"strings"
 
 	"github.com/zigai/strata/codec"
@@ -67,7 +65,7 @@ func LoadInto[T any](target *T, opts ...Option) (*Metadata, error) {
 		opt(options)
 	}
 
-	if err := prepareRegistry(options); err != nil {
+	if err := prepareLoadOptions(options); err != nil {
 		return nil, err
 	}
 
@@ -219,34 +217,27 @@ func readLayerData(layer cascade.Layer, maxFileSize int64) ([]byte, error) {
 	return data, nil
 }
 
-func resolveLayerCodec(data []byte, layer cascade.Layer, opts *loadOptions) (Codec, string, error) {
+func resolveLayerCodec(layer cascade.Layer, opts *loadOptions) (Codec, string, error) {
 	ext := normalizeExt(filepath.Ext(layer.Path))
-
-	if ext != "" && opts.excludedExts != nil && opts.excludedExts[ext] {
-		return nil, "", fmt.Errorf("%w for layer %s", ErrNoCodec, layer.Path)
+	if layer.Source == cascade.SourceStdin {
+		ext = opts.stdinExt
 	}
 
 	codecInstance, ok := opts.codecReg.Get(ext)
-	syntaxExt := ext
-
-	if !ok || ext == "" {
-		codecInstance, syntaxExt = detectCodec(data, opts)
+	if !ok {
+		return nil, "", fmt.Errorf("%w for layer %s", ErrUnsupportedFormat, layer.Path)
 	}
 
-	if codecInstance == nil {
-		return nil, "", fmt.Errorf("%w for layer %s", ErrNoCodec, layer.Path)
-	}
-
-	return codecInstance, syntaxExt, nil
+	return codecInstance, ext, nil
 }
 
 func applyLayer(target any, layer cascade.Layer, opts *loadOptions, meta *Metadata) error {
-	data, err := readLayerData(layer, opts.maxFileSize)
+	codecInstance, syntaxExt, err := resolveLayerCodec(layer, opts)
 	if err != nil {
 		return err
 	}
 
-	codecInstance, syntaxExt, err := resolveLayerCodec(data, layer, opts)
+	data, err := readLayerData(layer, opts.maxFileSize)
 	if err != nil {
 		return err
 	}
@@ -266,79 +257,13 @@ func applyLayer(target any, layer cascade.Layer, opts *loadOptions, meta *Metada
 	return nil
 }
 
-func detectEmptyCodec(reg *codec.Registry) (Codec, string) {
-	if c, ok := reg.Get(".toml"); ok {
-		return c, ".toml"
-	}
-
-	exts := reg.Extensions()
-	if len(exts) > 0 {
-		c, _ := reg.Get(exts[0])
-		return c, exts[0]
-	}
-
-	return nil, ""
-}
-
-func tryDecodeCodec(reg *codec.Registry, ext string, data []byte) (Codec, string, bool) {
-	if c, ok := reg.Get(ext); ok {
-		var dummy any
-		if err := c.Decode(data, &dummy); err == nil {
-			return c, ext, true
-		}
-	}
-
-	return nil, "", false
-}
-
-func detectOtherCodec(reg *codec.Registry, data []byte) (Codec, string) {
-	for _, ext := range reg.Extensions() {
-		if ext == ".json" || ext == ".toml" || ext == ".yaml" || ext == ".yml" {
-			continue
-		}
-
-		if c, ext, ok := tryDecodeCodec(reg, ext, data); ok {
-			return c, ext
-		}
-	}
-
-	return nil, ""
-}
-
-func detectCodec(data []byte, opts *loadOptions) (Codec, string) {
-	trimmed := bytes.TrimSpace(data)
-	if len(trimmed) == 0 {
-		return detectEmptyCodec(opts.codecReg)
-	}
-
-	if trimmed[0] == '{' || trimmed[0] == '[' {
-		if c, ext, ok := tryDecodeCodec(opts.codecReg, ".json", data); ok {
-			return c, ext
-		}
-	}
-
-	if c, ext, ok := tryDecodeCodec(opts.codecReg, ".toml", data); ok {
-		return c, ext
-	}
-
-	if c, ok := opts.codecReg.Get(".yaml"); ok {
-		return c, ".yaml"
-	}
-
-	if c, ok := opts.codecReg.Get(".yml"); ok {
-		return c, ".yml"
-	}
-
-	return detectOtherCodec(opts.codecReg, data)
-}
-
 func applyFormats(formats []string, reg *codec.Registry) ([]string, error) {
 	var resolved []string
 
 	seen := make(map[string]struct{}, len(formats))
 	add := func(ext, raw string) error {
 		if _, ok := reg.Get(ext); !ok {
-			return fmt.Errorf("%w: unknown format %q", ErrNoCodec, raw)
+			return fmt.Errorf("%w: unknown format %q", ErrUnsupportedFormat, raw)
 		}
 
 		if _, ok := seen[ext]; !ok {
@@ -389,7 +314,7 @@ func resolveFormatAliases(opts *loadOptions) error {
 
 		targetCodec, ok := opts.codecReg.Get(resolvedTarget)
 		if !ok {
-			return fmt.Errorf("%w for format alias target %q", ErrNoCodec, target)
+			return fmt.Errorf("%w for format alias target %q", ErrUnsupportedFormat, target)
 		}
 
 		opts.codecReg.Register(alias, targetCodec)
@@ -398,36 +323,33 @@ func resolveFormatAliases(opts *loadOptions) error {
 	return nil
 }
 
-func prepareRegistry(opts *loadOptions) error {
+func prepareLoadOptions(opts *loadOptions) error {
 	if len(opts.formatAliases) > 0 {
 		if err := resolveFormatAliases(opts); err != nil {
 			return err
 		}
 	}
 
-	if opts.formatsSet {
-		allExts := opts.codecReg.Extensions()
+	resolvedExts, err := applyFormats(opts.formats, opts.codecReg)
+	if err != nil {
+		return err
+	}
 
-		resolvedExts, err := applyFormats(opts.formats, opts.codecReg)
-		if err != nil {
-			return err
+	readsFiles := opts.explicitPath != "" || (opts.appName != "" && !opts.withoutFiles)
+	if readsFiles && len(resolvedExts) == 0 {
+		return ErrNoFormats
+	}
+
+	opts.codecReg.Restrict(resolvedExts...)
+
+	if opts.explicitPath != "" && opts.explicitPath != "-" {
+		if _, ok := opts.codecReg.Get(filepath.Ext(opts.explicitPath)); !ok {
+			return fmt.Errorf("%w for path %s", ErrUnsupportedFormat, opts.explicitPath)
 		}
+	}
 
-		opts.codecReg.Restrict(resolvedExts...)
-
-		opts.excludedExts = make(map[string]bool)
-
-		for _, std := range []string{".toml", ".yaml", ".yml", ".json"} {
-			if !slices.Contains(resolvedExts, std) {
-				opts.excludedExts[std] = true
-			}
-		}
-
-		for _, e := range allExts {
-			if !slices.Contains(resolvedExts, e) {
-				opts.excludedExts[e] = true
-			}
-		}
+	if opts.explicitPath == "-" {
+		opts.stdinExt = resolvedExts[0]
 	}
 
 	return nil

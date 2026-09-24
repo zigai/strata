@@ -12,10 +12,13 @@ import (
 )
 
 var (
-	// ErrNoCodec is returned when no codec can be selected for a configuration
-	// layer. The layer's extension is consulted first, and its contents after
-	// that.
-	ErrNoCodec = errors.New("no suitable codec found for configuration format")
+	// ErrNoFormats is returned when file input is configured without enabling
+	// any formats through [WithFormats].
+	ErrNoFormats = errors.New("no configuration formats selected; use WithFormats")
+
+	// ErrUnsupportedFormat is returned when a format or file extension is not
+	// available for the requested operation.
+	ErrUnsupportedFormat = errors.New("unsupported configuration format")
 
 	// ErrCodecTargetMismatch is returned when a typed decoder receives a target
 	// value whose type does not match the decoder's expected type parameter.
