@@ -220,3 +220,8 @@ linters:
     rules:
       - path: ".*_test\\.go"
         linters: [decorder, funcorder, exhaustruct_v5, gocognit, cyclop, gosec, mnd, tagliatelle, tagalign, err113]
+      # Test-support code the bridge test suites import follows the same rules as
+      # tests. Its scenarios are test bodies, not helpers, so a failure must point
+      # at the scenario's own line rather than at the caller (thelper).
+      - path: "internal/bridgetest/"
+        linters: [decorder, funcorder, exhaustruct_v5, gocognit, cyclop, gosec, mnd, tagliatelle, tagalign, err113, thelper]

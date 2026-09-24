@@ -1,0 +1,27 @@
+# The example is written to be read by people evaluating strata, so it uses
+# golangci-lint's standard set instead of the library's strict configuration.
+version: "2"
+
+formatters:
+  enable:
+    - goimports
+    - gofumpt
+  settings:
+    goimports:
+      local-prefixes:
+        - github.com/zigai/strata
+
+linters:
+  default: standard
+  enable:
+    - errorlint
+    - gocritic
+    - misspell
+    - unconvert
+    - usestdlibvars
+  settings:
+    errcheck:
+      # Table rows are buffered by tabwriter, whose Flush reports write errors.
+      exclude-functions:
+        - fmt.Fprintf
+        - fmt.Fprintln
