@@ -11,6 +11,9 @@
 // [WithOptionalPath] select a file, [WithEnvPrefix] binds environment variables,
 // and the CLI bridges apply flags.
 //
+// File loading requires [WithFormats]. Only listed formats are discovered or
+// decoded. The first listed format is used for stdin and new user files.
+//
 // # Provenance
 //
 // [LoadWithMetadata] returns the value and its [Metadata], including each key's

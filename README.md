@@ -49,7 +49,10 @@ func (c *Config) SetDefaults() {
 }
 
 func main() {
-	cfg, err := strata.Load[Config](strata.WithPath("config.toml"))
+	cfg, err := strata.Load[Config](
+		strata.WithPath("config.toml"),
+		strata.WithFormats("toml"),
+	)
 	if err != nil {
 		log.Fatal(err)
 	}
@@ -66,6 +69,8 @@ listening on 127.0.0.1:9000
 
 The file changed `port`, and `host` kept its default. No struct tags needed: `Port` reads the `port` key automatically.
 
+`WithFormats` names the file formats your program reads. There's no default, so any load that reads a file needs it, and a file in a format you didn't list is rejected.
+
 The file has to exist. If it's optional, use `WithOptionalPath` instead.
 
 ## How the layers stack
@@ -81,13 +86,14 @@ Each layer overrides the ones below it, one key at a time:
   Defaults         SetDefaults()        ← fallback
 ```
 
-Only defaults are on by default. You turn on each of the others with one option.
+Only defaults are on by default. You turn on each of the others with one option, plus `WithFormats` for files.
 
 ### Environment variables
 
 ```go
 cfg, err := strata.Load[Config](
 	strata.WithPath("config.toml"),
+	strata.WithFormats("toml"),
 	strata.WithEnvPrefix("MYAPP_"),
 )
 ```
@@ -99,10 +105,12 @@ To list every variable your program reads, for a `--help` page or your docs, cal
 ### System and user config files
 
 ```go
-cfg, err := strata.Load[Config](strata.WithAppName("myapp"))
+cfg, err := strata.Load[Config](strata.WithAppName("myapp"), strata.WithFormats("toml"))
 ```
 
-strata then checks `/etc/xdg/myapp/` and `~/.config/myapp/` for a `config.toml`, `.yaml`, `.yml`, or `.json`. On Windows it checks `%ProgramData%` and `%APPDATA%`.
+strata then checks `/etc/xdg/myapp/` and `~/.config/myapp/` for a `config.toml`. On Windows it checks `%ProgramData%` and `%APPDATA%`.
+
+List more formats to accept more file names. They're tried in the order you give, so `WithFormats("toml", "yaml")` picks `config.toml` over `config.yaml` or `config.yml` in the same directory.
 
 ### CLI flags
 
@@ -111,7 +119,7 @@ With [Cobra](https://github.com/spf13/cobra), keep the config struct free of CLI
 ```go
 var cfg Config
 root := &cobra.Command{Use: "myapp"}
-b := stratacobra.Bind(root, &cfg, strata.WithEnvPrefix("MYAPP_"))
+b := stratacobra.Bind(root, &cfg, strata.WithFormats("toml"), strata.WithEnvPrefix("MYAPP_"))
 
 serve := &cobra.Command{Use: "serve", Run: func(cmd *cobra.Command, args []string) {
 	fmt.Println(cfg.Host, cfg.Port)
@@ -121,13 +129,13 @@ b.Flag(serve.Flags(), "host", "host to listen on")
 root.AddCommand(serve, b.ConfigCommand())
 ```
 
-`Bind` adds `-c/--config`, loads the config before commands run, and uses `myapp` for user and system file discovery. Flag types and help defaults come from `Config`; only flags the user actually typed override other layers. If a child defines its own `PersistentPreRunE`, call `b.Load(cmd)` there because Cobra runs only the nearest hook. Assign root hooks before calling `Bind`.
+`Bind` adds `-c/--config`, loads the config before commands run, and uses `myapp` for user and system file discovery. Flag types and help defaults come from `Config`; only flags the user actually typed override other layers. If a child defines its own `PersistentPreRunE`, call `b.Load(cmd)` there because Cobra runs only the nearest hook. Assign root hooks before calling `Bind`. Without `WithFormats`, commands fail with `ErrNoFormats`.
 
 [`urfave/cli`](https://github.com/urfave/cli) has the same key-based binding:
 
 ```go
 var cfg Config
-b := strataurfave.Bind(&cfg, strata.WithEnvPrefix("MYAPP_"))
+b := strataurfave.Bind(&cfg, strata.WithFormats("toml"), strata.WithEnvPrefix("MYAPP_"))
 app := &cli.Command{
 	Name:   "myapp",
 	Before: b.Before,
@@ -150,7 +158,7 @@ For a complete CLI, see [`examples/cli`](examples/cli).
 Use `LoadWithMetadata` to get a `*Metadata` along with your config, then ask it about any key:
 
 ```go
-cfg, meta, err := strata.LoadWithMetadata[Config](strata.WithAppName("myapp"))
+cfg, meta, err := strata.LoadWithMetadata[Config](strata.WithAppName("myapp"), strata.WithFormats("toml"))
 
 origin, _ := meta.Where("port")
 fmt.Println(origin.Source, origin.Path)
@@ -294,7 +302,7 @@ type Config struct {
 | `WithStrict()` | Fail when a config file sets a key your struct doesn't have. |
 | `WithDefaults(value)` | Use this value as the defaults, in place of what `SetDefaults` set. |
 | `WithoutFiles()` | Skip system and user files. A `WithPath` file still loads. |
-| `WithFormats("toml", "yaml")` | Only look for these formats, in this order. |
+| `WithFormats("toml", "yaml")` | Read only these formats, trying them in this order. Required whenever a file is read. The first one is also used for standard input and for a new user config file. |
 | `WithMaxFileSize(bytes)` | Reject bigger files with `ErrFileTooLarge`. The default is 1 MiB. |
 
 </details>
@@ -355,6 +363,16 @@ strata.WithDecoderFunc(".env", func(data []byte, target *Config) error {
 })
 ```
 
+List the new extension in `WithFormats` as well. strata reads only the formats you list there:
+
+```go
+cfg, err := strata.Load[Config](
+	strata.WithPath("app.conf"),
+	strata.WithFormatAlias(".conf", "toml"),
+	strata.WithFormats(".conf"),
+)
+```
+
 To write the format as well, implement `Codec` and register it with `WithCodec`.
 
 </details>
@@ -364,7 +382,7 @@ To write the format as well, implement `Codec` and register it with `WithCodec`.
 
 <br>
 
-A missing system or user file is skipped, and so is a missing `WithOptionalPath` file. Everything else is an error: a missing `WithPath` file, a file that can't be read or parsed, and a failed validation. When `Load` fails, it returns the zero value.
+A missing system or user file is skipped, and so is a missing `WithOptionalPath` file. Everything else is an error: a missing `WithPath` file, a file in a format you didn't enable, a file that can't be read or parsed, and a failed validation. When `Load` fails, it returns the zero value.
 
 Every error can be matched with `errors.Is` against a sentinel in the `strata` package:
 
@@ -374,7 +392,7 @@ if errors.Is(err, strata.ErrMalformed) {
 }
 ```
 
-Validation failures are always a `*strata.ConfigError`.
+Reading files without `WithFormats` returns `ErrNoFormats`. A file in a format you didn't list, like `--config settings.yaml` in a TOML-only app, returns `ErrUnsupportedFormat`. Validation failures are always a `*strata.ConfigError`.
 
 </details>
 
