@@ -80,6 +80,7 @@ func TestWithFormatsRestrictsDiscovery(t *testing.T) {
 	}
 
 	t.Setenv("XDG_CONFIG_HOME", dir)
+	t.Setenv("XDG_CONFIG_DIRS", t.TempDir())
 
 	if _, err := strata.Load[formatsTestConfig](strata.WithAppName("myapp")); !errors.Is(err, strata.ErrNoFormats) {
 		t.Fatalf("Load without formats error = %v, want ErrNoFormats", err)
@@ -209,6 +210,7 @@ func TestWithFormatsReordersPriority(t *testing.T) {
 	}
 
 	t.Setenv("XDG_CONFIG_HOME", dir)
+	t.Setenv("XDG_CONFIG_DIRS", t.TempDir())
 
 	cfg, meta, err := strata.LoadWithMetadata[formatsTestConfig](
 		strata.WithAppName("myapp"),
@@ -241,6 +243,7 @@ func TestWithFormatsYAMLExpansion(t *testing.T) {
 	}
 
 	t.Setenv("XDG_CONFIG_HOME", dir)
+	t.Setenv("XDG_CONFIG_DIRS", t.TempDir())
 
 	cfg, err := strata.Load[formatsTestConfig](
 		strata.WithAppName("myapp"),
@@ -362,7 +365,7 @@ func TestWithFormatAliasTOML(t *testing.T) {
 		t.Fatalf("ActiveFiles = %v, want [%s]", meta.ActiveFiles(), confPath)
 	}
 
-	origin, ok := meta.Where("port")
+	origin, ok := meta.Where(portKey)
 	if !ok {
 		t.Fatal("Where(\"port\") returned false, want true")
 	}
@@ -453,7 +456,7 @@ func TestWithDecoderFunc(t *testing.T) {
 				}
 
 				switch parts[0] {
-				case "port":
+				case portKey:
 					p, pErr := strconv.Atoi(parts[1])
 					if pErr != nil {
 						return fmt.Errorf("parse port: %w", pErr)
@@ -550,7 +553,7 @@ func TestWithFormatAliasTransitive(t *testing.T) {
 		t.Fatalf("ActiveFiles = %v, want [%s]", meta.ActiveFiles(), cfgPath)
 	}
 
-	origin, ok := meta.Where("port")
+	origin, ok := meta.Where(portKey)
 	if !ok {
 		t.Fatal("Where(\"port\") returned false, want true")
 	}
@@ -652,6 +655,7 @@ func TestWithFormatAliasCombinedWithFormats(t *testing.T) {
 	}
 
 	t.Setenv("XDG_CONFIG_HOME", dir)
+	t.Setenv("XDG_CONFIG_DIRS", t.TempDir())
 
 	cfg, meta, err := strata.LoadWithMetadata[formatsTestConfig](
 		strata.WithAppName("myapp"),
@@ -697,6 +701,7 @@ func TestWithFormatAliasCascadingTiers(t *testing.T) {
 	}
 
 	t.Setenv("XDG_CONFIG_HOME", userDir)
+	t.Setenv("XDG_CONFIG_DIRS", t.TempDir())
 
 	cfg, meta, err := strata.LoadWithMetadata[formatsTestConfig](
 		strata.WithAppName("myapp"),
@@ -809,6 +814,7 @@ func TestWithFormatsEmptyArgRejectsDiscovery(t *testing.T) {
 	}
 
 	t.Setenv("XDG_CONFIG_HOME", dir)
+	t.Setenv("XDG_CONFIG_DIRS", t.TempDir())
 
 	_, err := strata.Load[defaultedFormatsConfig](
 		strata.WithAppName("myapp"),
@@ -913,5 +919,56 @@ func TestWithFormatsYMLPathExcludedWhenYAMLOnly(t *testing.T) {
 
 	if !errors.Is(err, strata.ErrUnsupportedFormat) {
 		t.Errorf("expected ErrUnsupportedFormat, got %v", err)
+	}
+}
+
+// replacingCodec answers every decode with port 777, so it is visible
+// whenever it, rather than the built-in, reads a file.
+type replacingCodec struct{}
+
+func (replacingCodec) Decode(_ []byte, target any) error {
+	cfg, ok := target.(*formatsTestConfig)
+	if !ok {
+		return fmt.Errorf("replacingCodec cannot decode into %T", target)
+	}
+
+	cfg.Port = 777
+
+	return nil
+}
+
+func (replacingCodec) Encode(any) ([]byte, error) { return []byte("replaced = true\n"), nil }
+
+// WithCodec replaces a built-in for one load only; the next load, Save and
+// Init still use the built-in.
+func TestWithCodecAppliesToOneLoadOnly(t *testing.T) {
+	t.Parallel()
+
+	path := writeFile(t, "config.toml", "port = 8080\nhost = 'h'\n")
+
+	replaced, err := strata.Load[formatsTestConfig](strata.WithPath(path), strata.WithFormats("toml"), strata.WithCodec(".toml", replacingCodec{}))
+	if err != nil || replaced.Port != 777 {
+		t.Fatalf("load with WithCodec = %+v, %v; want the replacing codec's port 777", replaced, err)
+	}
+
+	plain, err := strata.Load[formatsTestConfig](strata.WithPath(path), strata.WithFormats("toml"))
+	if err != nil || plain != (formatsTestConfig{Port: 8080, Host: "h"}) {
+		t.Fatalf("next load = %+v, %v; want the built-in TOML result", plain, err)
+	}
+
+	saved := filepath.Join(t.TempDir(), "saved.toml")
+	if err := strata.Save(saved, formatsTestConfig{Port: 1, Host: "s"}); err != nil {
+		t.Fatalf("Save: %v", err)
+	}
+
+	template := filepath.Join(t.TempDir(), "init.toml")
+	if err := strata.Init[formatsTestConfig](template); err != nil {
+		t.Fatalf("Init: %v", err)
+	}
+
+	for path, want := range map[string]string{saved: "port = 1\nhost = 's'\n", template: "port = 0\nhost = ''\n"} {
+		if data, err := os.ReadFile(path); err != nil || string(data) != want {
+			t.Errorf("%s = %q, %v; want %q from the built-in encoder", filepath.Base(path), data, err, want)
+		}
 	}
 }

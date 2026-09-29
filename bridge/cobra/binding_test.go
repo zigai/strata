@@ -22,7 +22,8 @@ import (
 type cobraApp struct {
 	*stratacobra.Binding[bridgetest.Config]
 
-	root *cobra.Command
+	root   *cobra.Command
+	stderr bytes.Buffer
 }
 
 func newCobraApp(_ *testing.T, cfg *bridgetest.Config, app bridgetest.App) bridgetest.Instance {
@@ -50,13 +51,16 @@ func newCobraApp(_ *testing.T, cfg *bridgetest.Config, app bridgetest.App) bridg
 func (a *cobraApp) Run(args ...string) (string, error) {
 	var out bytes.Buffer
 
+	a.stderr.Reset()
 	a.root.SetOut(&out)
-	a.root.SetErr(io.Discard)
+	a.root.SetErr(&a.stderr)
 	a.root.SetArgs(args)
 	err := a.root.Execute()
 
 	return out.String(), err
 }
+
+func (a *cobraApp) Stderr() string { return a.stderr.String() }
 
 func noop(*cobra.Command, []string) error { return nil }
 
@@ -272,4 +276,21 @@ func TestCobraSkipsOnlyRootLevelBuiltIns(t *testing.T) {
 	if cfg.Port != 9000 {
 		t.Errorf("docs help ran with port %d, want 9000 from the config file", cfg.Port)
 	}
+}
+
+// Binding two keys to the same flag name on one flag set panics at setup.
+func TestCobraDuplicateFlagNamePanics(t *testing.T) {
+	var cfg bridgetest.Config
+
+	root := &cobra.Command{Use: bridgetest.AppName}
+	b := stratacobra.Bind(root, &cfg, strata.WithFormats("toml"))
+	b.Flag(root.Flags(), "port", "port")
+
+	defer func() {
+		if recover() == nil {
+			t.Fatal("binding port twice on one flag set did not panic")
+		}
+	}()
+
+	b.Flag(root.Flags(), "port", "port again")
 }

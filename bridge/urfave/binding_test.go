@@ -22,7 +22,8 @@ import (
 type urfaveApp struct {
 	*strataurfave.Binding[bridgetest.Config]
 
-	root *cli.Command
+	root   *cli.Command
+	stderr bytes.Buffer
 }
 
 func newUrfaveApp(_ *testing.T, cfg *bridgetest.Config, app bridgetest.App) bridgetest.Instance {
@@ -59,11 +60,15 @@ func newUrfaveApp(_ *testing.T, cfg *bridgetest.Config, app bridgetest.App) brid
 func (a *urfaveApp) Run(args ...string) (string, error) {
 	var out bytes.Buffer
 
+	a.stderr.Reset()
 	a.root.Writer = &out
+	a.root.ErrWriter = &a.stderr
 	err := a.root.Run(context.Background(), append([]string{bridgetest.AppName}, args...))
 
 	return out.String(), err
 }
+
+func (a *urfaveApp) Stderr() string { return a.stderr.String() }
 
 func noop(context.Context, *cli.Command) error { return nil }
 

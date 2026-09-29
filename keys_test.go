@@ -38,7 +38,7 @@ func TestUnknownKeysAreReportedWithSuggestions(t *testing.T) {
 	}
 
 	want := map[string]string{
-		"prot":                 "port",
+		"prot":                 portKey,
 		"database.max_con":     "database.max_conns",
 		"api_kye":              "api_key",
 		"completely_unrelated": "",
@@ -125,5 +125,35 @@ func TestReusedYAMLAnchorsAreNotUnknownKeys(t *testing.T) {
 	_, err = strata.Load[typoConfig](strata.WithPath(unused), strata.WithStrict(), strata.WithFormats("yaml"))
 	if !errors.Is(err, strata.ErrUnknownKey) {
 		t.Fatalf("err = %v, want ErrUnknownKey for an anchor nothing reuses", err)
+	}
+}
+
+// UnknownKeys lists every undeclared key in read order with its file, line and
+// suggestion. Keys match exactly, so maxconns for max_conns is unknown.
+func TestUnknownKeysAreListedInReadOrder(t *testing.T) {
+	t.Parallel()
+
+	path := writeFile(t, "config.yaml", "prot: 9000\ndatabase:\n  maxconns: 5\n  port: 5432\nzzz_unrelated: 1\n")
+
+	cfg, meta, err := strata.LoadWithMetadata[typoConfig](strata.WithPath(path), strata.WithFormats("yaml"))
+	if err != nil {
+		t.Fatalf("Load: %v", err)
+	}
+
+	if cfg.Database.MaxConns != 0 {
+		t.Fatalf("maxconns set database.max_conns to %d", cfg.Database.MaxConns)
+	}
+
+	origin := func(key string, line int) strata.Origin {
+		return strata.Origin{Key: key, Source: strata.SourceFile, Path: path, Line: line}
+	}
+
+	want := []strata.UnknownKey{
+		{Origin: origin("prot", 1), Suggestion: portKey},
+		{Origin: origin("database.maxconns", 3), Suggestion: "database.max_conns"},
+		{Origin: origin("zzz_unrelated", 5), Suggestion: ""},
+	}
+	if got := meta.UnknownKeys(); !reflect.DeepEqual(got, want) {
+		t.Fatalf("UnknownKeys =\n%+v\nwant\n%+v", got, want)
 	}
 }

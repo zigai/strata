@@ -141,7 +141,7 @@ func TestMetadataZeroValueRecordsAndReports(t *testing.T) {
 
 	meta.Record(strata.Origin{Key: "Port", Source: strata.SourceEnv, RawValue: "9090"})
 
-	origin, ok := meta.Where("port")
+	origin, ok := meta.Where(portKey)
 	if !ok {
 		t.Fatal("Where(port) missed after recording on a zero-value Metadata")
 	}
@@ -336,13 +336,13 @@ func TestOriginsListsEveryResolvedKey(t *testing.T) {
 		sources[origin.Key] = origin.Source
 	}
 
-	if !slices.Equal(keys, []string{"host", "port", "api_key", "database.port", "database.max_conns", "labels"}) {
+	if !slices.Equal(keys, []string{"host", portKey, "api_key", "database.port", "database.max_conns", "labels"}) {
 		t.Errorf("keys %v are not in declaration order", keys)
 	}
 
 	want := map[string]strata.SourceKind{
 		"host":          strata.SourceEnv,
-		"port":          strata.SourceDefault,
+		portKey:         strata.SourceDefault,
 		"database.port": strata.SourceFile,
 	}
 
@@ -350,5 +350,59 @@ func TestOriginsListsEveryResolvedKey(t *testing.T) {
 		if sources[key] != source {
 			t.Errorf("source of %s = %q, want %q (all: %v)", key, sources[key], source, sources)
 		}
+	}
+}
+
+// After a load, Where reports the exact origin of each key, whichever layer
+// set it: the variable name for env, the line only from YAML.
+func TestWhereReportsTheExactOriginPerSource(t *testing.T) {
+	tomlPath := writeFile(t, "c.toml", "host = 'h'\nport = 9000\n")
+	yamlPath := writeFile(t, "c.yaml", "host: h\nlabels:\n  env: prod\n")
+
+	for _, tc := range []struct {
+		name string
+		opts []strata.Option
+		env  map[string]string
+		key  string
+		want strata.Origin
+	}{
+		{
+			"default", nil, nil, portKey,
+			strata.Origin{Key: portKey, Source: strata.SourceDefault, RawValue: "8080"},
+		},
+		{
+			"toml file",
+			[]strata.Option{strata.WithPath(tomlPath), strata.WithFormats("toml")},
+			nil, portKey,
+			strata.Origin{Key: portKey, Source: strata.SourceFile, Path: tomlPath, RawValue: "9000"},
+		},
+		{
+			"yaml map entry",
+			[]strata.Option{strata.WithPath(yamlPath), strata.WithFormats("yaml")},
+			nil, "labels.env",
+			strata.Origin{Key: "labels.env", Source: strata.SourceFile, Path: yamlPath, Line: 3, RawValue: "prod"},
+		},
+		{
+			"env",
+			[]strata.Option{strata.WithEnvPrefix("PROV_")},
+			map[string]string{"PROV_DATABASE_PORT": "6000"},
+			"database.port",
+			strata.Origin{Key: "database.port", Source: strata.SourceEnv, Path: "PROV_DATABASE_PORT", RawValue: "6000"},
+		},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			for name, value := range tc.env {
+				t.Setenv(name, value)
+			}
+
+			_, meta, err := strata.LoadWithMetadata[typoConfig](tc.opts...)
+			if err != nil {
+				t.Fatalf("Load: %v", err)
+			}
+
+			if got, ok := meta.Where(tc.key); !ok || got != tc.want {
+				t.Fatalf("Where(%s) = %+v, %t; want %+v", tc.key, got, ok, tc.want)
+			}
+		})
 	}
 }

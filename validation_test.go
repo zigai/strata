@@ -18,7 +18,7 @@ type attributedConfig struct {
 // ValidateWith reports the first bad key it finds.
 func (c *attributedConfig) ValidateWith(meta *strata.Metadata) error {
 	if c.Port > 9000 {
-		return meta.NewConfigError("port", errors.New("above the privileged ceiling"))
+		return meta.NewConfigError(portKey, errors.New("above the privileged ceiling"))
 	}
 
 	return nil
@@ -49,7 +49,7 @@ func (c *multiFailureConfig) ValidateWith(meta *strata.Metadata) error {
 	var errs []error
 
 	if c.Port > 9000 {
-		errs = append(errs, meta.NewConfigError("port", errors.New("above the privileged ceiling")))
+		errs = append(errs, meta.NewConfigError(portKey, errors.New("above the privileged ceiling")))
 	}
 
 	if c.Host == "" {
@@ -69,7 +69,7 @@ func (c *bothConfig) Validate() error {
 }
 
 func (c *bothConfig) ValidateWith(meta *strata.Metadata) error {
-	return meta.NewConfigError("port", errors.New("ValidateWith ran"))
+	return meta.NewConfigError(portKey, errors.New("ValidateWith ran"))
 }
 
 // plainConfig implements Validator only. That interface cannot name a key.
@@ -271,4 +271,62 @@ func TestValidatorPostLoadHook(t *testing.T) {
 			t.Errorf("Port = %d, want 8080", loaded.Port)
 		}
 	})
+}
+
+// A ConfigError renders the message, the key and its raw value, and names the
+// layer that set it in the form each source kind documents.
+func TestConfigErrorRendersEverySourceKind(t *testing.T) {
+	t.Parallel()
+
+	cause := errors.New("port out of range")
+
+	for _, tc := range []struct {
+		name   string
+		origin *strata.Origin
+		want   string
+	}{
+		{
+			"toml file without a line", &strata.Origin{Key: portKey, Source: strata.SourceFile, Path: "/etc/app/config.toml", RawValue: "70000"},
+			"config error: port out of range for port: \"70000\"\n  --> set by /etc/app/config.toml",
+		},
+		{
+			"yaml file with a line", &strata.Origin{Key: portKey, Source: strata.SourceUser, Path: "/home/u/.config/app/config.yaml", Line: 4, RawValue: "70000"},
+			"config error: port out of range for port: \"70000\"\n  --> set by /home/u/.config/app/config.yaml:4",
+		},
+		{
+			"env", &strata.Origin{Key: portKey, Source: strata.SourceEnv, Path: "APP_PORT", RawValue: "70000"},
+			"config error: port out of range for port: \"70000\"\n  --> set by environment variable: APP_PORT",
+		},
+		{
+			"flag", &strata.Origin{Key: portKey, Source: strata.SourceFlag, Path: "--port", RawValue: "70000"},
+			"config error: port out of range for port: \"70000\"\n  --> set by CLI flag: --port",
+		},
+		{
+			"default", &strata.Origin{Key: portKey, Source: strata.SourceDefault, RawValue: "70000"},
+			"config error: port out of range for port: \"70000\"\n  --> set by struct defaults",
+		},
+		{
+			"stdin", &strata.Origin{Key: portKey, Source: strata.SourceStdin, Path: "-", RawValue: "70000"},
+			"config error: port out of range for port: \"70000\"\n  --> set by standard input",
+		},
+		{"no origin", nil, "config error: port out of range for port"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+
+			meta := strata.NewMetadata()
+			if tc.origin != nil {
+				meta.Record(*tc.origin)
+			}
+
+			err := meta.NewConfigError(portKey, cause)
+			if got := err.Error(); got != tc.want {
+				t.Fatalf("Error() =\n%s\nwant\n%s", got, tc.want)
+			}
+
+			if !errors.Is(err, cause) {
+				t.Errorf("errors.Is(err, cause) = false")
+			}
+		})
+	}
 }

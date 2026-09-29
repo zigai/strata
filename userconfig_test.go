@@ -13,6 +13,7 @@ import (
 func TestConfigEditPathUsesLoadingOptions(t *testing.T) {
 	base := t.TempDir()
 	t.Setenv("XDG_CONFIG_HOME", base)
+	t.Setenv("XDG_CONFIG_DIRS", t.TempDir())
 
 	appDir := filepath.Join(base, "sample")
 	if err := os.MkdirAll(appDir, 0o750); err != nil {

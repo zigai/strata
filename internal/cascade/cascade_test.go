@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"os"
 	"path/filepath"
+	"reflect"
 	"testing"
 
 	"github.com/zigai/strata/internal/cascade"
@@ -96,6 +97,7 @@ func TestCascadeUserTierDiscovery(t *testing.T) {
 		}
 
 		t.Setenv("XDG_CONFIG_HOME", xdgDir)
+		t.Setenv("XDG_CONFIG_DIRS", t.TempDir())
 
 		layers, err := cascade.Discover(cascade.Params{
 			AppName:    "testapp",
@@ -128,6 +130,7 @@ func TestCascadeUserTierDiscovery(t *testing.T) {
 		}
 
 		t.Setenv("XDG_CONFIG_HOME", "")
+		t.Setenv("XDG_CONFIG_DIRS", t.TempDir())
 		t.Setenv("HOME", homeDir)
 
 		layers, err := cascade.Discover(cascade.Params{
@@ -146,4 +149,74 @@ func TestCascadeUserTierDiscovery(t *testing.T) {
 			t.Fatalf("Path = %q, want %q", layers[0].Path, configPath)
 		}
 	})
+}
+
+// isolateTiers points both tiers at fresh temp dirs so no config file on the
+// machine takes part, and returns the system and user bases.
+func isolateTiers(t *testing.T) (string, string) {
+	t.Helper()
+
+	systemBase, userBase := t.TempDir(), t.TempDir()
+	t.Setenv("XDG_CONFIG_DIRS", systemBase)
+	t.Setenv("XDG_CONFIG_HOME", userBase)
+	t.Setenv("HOME", t.TempDir())
+
+	return systemBase, userBase
+}
+
+func writeTierFile(t *testing.T, base, name string) string {
+	t.Helper()
+
+	dir := filepath.Join(base, "testapp")
+	if err := os.MkdirAll(dir, 0o700); err != nil {
+		t.Fatalf("MkdirAll: %v", err)
+	}
+
+	path := filepath.Join(dir, name)
+	if err := os.WriteFile(path, []byte("host = \"tier\"\n"), 0o600); err != nil {
+		t.Fatalf("WriteFile: %v", err)
+	}
+
+	return path
+}
+
+func TestDiscoverOrdersSystemBelowUser(t *testing.T) {
+	systemBase, userBase := isolateTiers(t)
+	systemPath := writeTierFile(t, systemBase, "config.toml")
+	userPath := writeTierFile(t, userBase, "config.toml")
+
+	layers, err := cascade.Discover(cascade.Params{AppName: "testapp", Extensions: []string{".toml"}})
+	if err != nil {
+		t.Fatalf("Discover: %v", err)
+	}
+
+	want := []cascade.Layer{
+		{Source: cascade.SourceSystem, Path: systemPath},
+		{Source: cascade.SourceUser, Path: userPath},
+	}
+	if !reflect.DeepEqual(layers, want) {
+		t.Fatalf("layers = %+v, want %+v", layers, want)
+	}
+}
+
+// The system tier is the first XDG_CONFIG_DIRS entry that holds the file;
+// blank entries are skipped and later entries are not layered on top.
+func TestDiscoverSystemTierSearchesConfigDirsInOrder(t *testing.T) {
+	_, _ = isolateTiers(t)
+
+	withoutFile, first, second := t.TempDir(), t.TempDir(), t.TempDir()
+	firstPath := writeTierFile(t, first, "config.toml")
+	writeTierFile(t, second, "config.toml")
+
+	t.Setenv("XDG_CONFIG_DIRS", withoutFile+": :"+first+":"+second)
+
+	layers, err := cascade.Discover(cascade.Params{AppName: "testapp", Extensions: []string{".toml"}})
+	if err != nil {
+		t.Fatalf("Discover: %v", err)
+	}
+
+	want := []cascade.Layer{{Source: cascade.SourceSystem, Path: firstPath}}
+	if !reflect.DeepEqual(layers, want) {
+		t.Fatalf("layers = %+v, want %+v", layers, want)
+	}
 }

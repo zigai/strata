@@ -6,9 +6,12 @@
 package bridgetest
 
 import (
+	"errors"
+	"io/fs"
 	"os"
 	"path/filepath"
 	"regexp"
+	"slices"
 	"strings"
 	"testing"
 	"time"
@@ -62,6 +65,9 @@ type Instance interface {
 	// Run executes the app with args, which exclude the program name, and
 	// returns what the app wrote to standard output.
 	Run(args ...string) (string, error)
+
+	// Stderr returns what the last Run wrote to standard error.
+	Stderr() string
 	Metadata() *strata.Metadata
 	Path() (string, error)
 	Init() (string, error)
@@ -88,6 +94,10 @@ func Run(t *testing.T, bridge Bridge) {
 		{"EditPathUsesExplicitLoadingPath", editPathUsesExplicitLoadingPath},
 		{"SecretKeyCannotBeAFlag", secretKeyCannotBeAFlag},
 		{"FlagValueMustFitTheField", flagValueMustFitTheField},
+		{"ShowListsKeysInOrderAndWarns", showListsKeysInOrderAndWarns},
+		{"SetReportsThePathAndNeedsAFile", setReportsThePathAndNeedsAFile},
+		{"HelpShowsTheDefault", helpShowsTheDefault},
+		{"FlagSetupPanicsOnBadKeys", flagSetupPanicsOnBadKeys},
 	} {
 		t.Run(scenario.name, func(t *testing.T) {
 			// Keep real system and user files for "app" out of every scenario.
@@ -307,6 +317,99 @@ func flagValueMustFitTheField(t *testing.T, bridge Bridge) {
 
 	if _, err := app.Run("serve", "--narrow", "200"); err == nil {
 		t.Fatalf("--narrow 200 was accepted: narrow = %d", cfg.Narrow)
+	}
+}
+
+// config show prints every key in declaration order with its value and
+// source, masks a secret that is set, and warns about unknown keys on stderr.
+func showListsKeysInOrderAndWarns(t *testing.T, bridge Bridge) {
+	path := writeConfig(t, "prot = 1\nport = 8100\ntoken = 'hunter2-secret'\n")
+
+	var cfg Config
+
+	app := bridge(t, &cfg, App{Options: []strata.Option{strata.WithPath(path)}, Commands: nil})
+
+	out := mustRun(t, app, "config", "show")
+
+	var rows [][]string
+	for line := range strings.Lines(out) {
+		rows = append(rows, strings.Fields(line))
+	}
+
+	want := [][]string{
+		{"KEY", "VALUE", "SOURCE"},
+		{"port", "8100", "file", path},
+		{"timeout", "30s", "default"},
+		{"verbose", "false", "default"},
+		{"narrow", "0", "default"},
+		{"db.port", "5432", "default"},
+		{"token", "[REDACTED]", "file", path},
+	}
+	if !slices.EqualFunc(rows, want, slices.Equal) {
+		t.Fatalf("config show printed:\n%s\nwant rows %q", out, want)
+	}
+
+	if strings.Contains(out, "hunter2") {
+		t.Fatalf("config show printed the secret:\n%s", out)
+	}
+
+	if got, want := app.Stderr(), "warning: "+path+": unknown key \"prot\" (did you mean \"port\"?)\n"; got != want {
+		t.Fatalf("stderr = %q, want %q", got, want)
+	}
+}
+
+// config set prints the file it edited and the key; with no file there, it
+// fails with a hint to run config init and wraps [fs.ErrNotExist].
+func setReportsThePathAndNeedsAFile(t *testing.T, bridge Bridge) {
+	path := writeConfig(t, "port = 8100\n")
+
+	var cfg Config
+
+	app := bridge(t, &cfg, App{Options: []strata.Option{strata.WithPath(path)}, Commands: nil})
+
+	if out := mustRun(t, app, "config", "set", "port", "9000"); out != path+": set port\n" {
+		t.Fatalf("config set printed %q, want %q", out, path+": set port\n")
+	}
+
+	missing := filepath.Join(t.TempDir(), "config.toml")
+	app = bridge(t, &cfg, App{Options: []strata.Option{strata.WithPath(missing)}, Commands: nil})
+
+	_, err := app.Run("config", "set", "port", "9000")
+	if !errors.Is(err, fs.ErrNotExist) || !strings.Contains(err.Error(), "config init") {
+		t.Fatalf("err = %v, want fs.ErrNotExist and a hint to run config init", err)
+	}
+
+	if _, statErr := os.Stat(missing); !errors.Is(statErr, fs.ErrNotExist) {
+		t.Fatalf("config set created %s", missing)
+	}
+}
+
+// A bound flag's help shows the SetDefaults value, not the zero value.
+func helpShowsTheDefault(t *testing.T, bridge Bridge) {
+	var cfg Config
+
+	app := bridge(t, &cfg, App{Options: nil, Commands: map[string][]Flag{"serve": {{Key: "db.port"}}}})
+
+	out := mustRun(t, app, "serve", "--help")
+	if !regexp.MustCompile(`--db-port[^\n]*5432`).MatchString(out) {
+		t.Fatalf("serve --help does not show the default 5432 for --db-port:\n%s", out)
+	}
+}
+
+// Binding an unknown key, or one that holds a whole section, panics at setup.
+func flagSetupPanicsOnBadKeys(t *testing.T, bridge Bridge) {
+	for _, key := range []string{"prot", "db"} {
+		t.Run(key, func(t *testing.T) {
+			defer func() {
+				if recover() == nil {
+					t.Fatalf("binding %q as a flag did not panic", key)
+				}
+			}()
+
+			var cfg Config
+
+			bridge(t, &cfg, App{Options: nil, Commands: map[string][]Flag{"serve": {{Key: key}}}})
+		})
 	}
 }
 

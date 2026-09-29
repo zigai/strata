@@ -41,9 +41,9 @@ func TestWithContributionOverridesLowerTiers(t *testing.T) {
 			cfg.Port = 9090
 
 			meta.Record(strata.Origin{
-				Key:      "port",
+				Key:      portKey,
 				Source:   strata.SourceFlag,
-				Path:     "port",
+				Path:     portKey,
 				Line:     0,
 				RawValue: "9090",
 			})
@@ -60,7 +60,7 @@ func TestWithContributionOverridesLowerTiers(t *testing.T) {
 		t.Errorf("Port = %d, want 9090", target.Port)
 	}
 
-	origin, ok := meta.Where("port")
+	origin, ok := meta.Where(portKey)
 	if !ok {
 		t.Fatal("Where(port) not found")
 	}
@@ -193,5 +193,45 @@ func TestWithContributionMultipleInOrder(t *testing.T) {
 
 	if !reflect.DeepEqual(target.Order, []int{1, 2}) {
 		t.Errorf("Order = %v, want [1, 2]", target.Order)
+	}
+}
+
+// A contribution runs after environment binding, so it sees and can override
+// the env value, and its origin replaces the env origin.
+func TestWithContributionSeesEnvironmentValues(t *testing.T) {
+	type envConfig struct {
+		Port int `strata:"port"`
+	}
+
+	t.Setenv("CONTRIB_PORT", "7000")
+
+	var seen int
+
+	got, meta, err := strata.LoadWithMetadata[envConfig](
+		strata.WithEnvPrefix("CONTRIB_"),
+		strata.WithContribution(func(target any, meta *strata.Metadata) error {
+			cfg, ok := target.(*envConfig)
+			if !ok {
+				return errors.New("target is not *envConfig")
+			}
+
+			seen = cfg.Port
+			cfg.Port++
+
+			meta.Record(strata.Origin{Key: portKey, Source: strata.SourceFlag, Path: portKey, Line: 0, RawValue: "7001"})
+
+			return nil
+		}),
+	)
+	if err != nil {
+		t.Fatalf("Load: %v", err)
+	}
+
+	if seen != 7000 || got.Port != 7001 {
+		t.Fatalf("contribution saw %d and left %d, want 7000 and 7001", seen, got.Port)
+	}
+
+	if origin, ok := meta.Where(portKey); !ok || origin.Source != strata.SourceFlag {
+		t.Fatalf("port origin = %+v, want SourceFlag", origin)
 	}
 }

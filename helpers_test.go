@@ -12,6 +12,9 @@ import (
 // Fixtures shared by the tests in this package. A fixture that more than one
 // file uses MUST be declared once, here, so every file sees the same type.
 
+// portKey is the configuration key most tests set.
+const portKey = "port"
+
 type primitiveConfig struct {
 	Port    int
 	Timeout time.Duration
@@ -92,4 +95,35 @@ func (d *demoConfig) SetDefaults() {
 	d.ServerHost = "127.0.0.1"
 	d.ServerPort = 8080
 	d.Debug = true
+}
+
+// isolateTiers points the system tier, the user tier and HOME at fresh temp
+// dirs, so no config file on the machine takes part, and returns the system
+// and user bases. Tests that call it cannot run in parallel.
+func isolateTiers(t *testing.T) (string, string) {
+	t.Helper()
+
+	systemBase, userBase := t.TempDir(), t.TempDir()
+	t.Setenv("XDG_CONFIG_DIRS", systemBase)
+	t.Setenv("XDG_CONFIG_HOME", userBase)
+	t.Setenv("HOME", t.TempDir())
+
+	return systemBase, userBase
+}
+
+// writeTierFile writes <base>/myapp/config.toml and returns its path.
+func writeTierFile(t *testing.T, base, content string) string {
+	t.Helper()
+
+	dir := filepath.Join(base, "myapp")
+	if err := os.MkdirAll(dir, 0o700); err != nil {
+		t.Fatalf("MkdirAll: %v", err)
+	}
+
+	path := filepath.Join(dir, "config.toml")
+	if err := os.WriteFile(path, []byte(content), 0o600); err != nil {
+		t.Fatalf("write %s: %v", path, err)
+	}
+
+	return path
 }

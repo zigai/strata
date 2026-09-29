@@ -130,3 +130,105 @@ func TestFileSecretRedaction(t *testing.T) {
 		t.Errorf("validation error leaked file secret:\n%s", msg)
 	}
 }
+
+type redactDatabase struct {
+	Password string `strata:"password,secret"`
+}
+
+type redactCredentials struct {
+	User string `strata:"user"`
+	Pass string `strata:"pass"`
+}
+
+// redactConfig declares a secret in every supported form.
+type redactConfig struct {
+	Typed     strata.Secret     `strata:"typed"`
+	Pointer   *strata.Secret    `strata:"pointer"`
+	Tagged    string            `strata:"tagged,secret"`
+	EnvTagged string            `env:"REDACT_ENV_TAGGED,secret" strata:"env_tagged"`
+	Database  redactDatabase    `strata:"database"`
+	Creds     redactCredentials `strata:"creds,secret"`
+}
+
+var redactKeys = []string{"typed", "pointer", "tagged", "env_tagged", "database.password", "creds.user", "creds.pass"}
+
+// Whatever layer sets a secret key, its origin, from Where and from Origins,
+// holds [REDACTED] and never the value. Each layer uses its own literal, so a
+// leak cannot hide behind another layer's value.
+func TestSecretOriginsAreRedactedInEveryLayer(t *testing.T) {
+	const leak = "leak-7f3a"
+
+	toml := "typed = 'toml-" + leak + "'\npointer = 'toml-" + leak + "'\ntagged = 'toml-" + leak + "'\nenv_tagged = 'toml-" + leak +
+		"'\n[database]\npassword = 'toml-" + leak + "'\n[creds]\nuser = 'toml-" + leak + "'\npass = 'toml-" + leak + "'\n"
+	yaml := "typed: yaml-" + leak + "\npointer: yaml-" + leak + "\ntagged: yaml-" + leak + "\nenv_tagged: yaml-" + leak +
+		"\ndatabase:\n  password: yaml-" + leak + "\ncreds:\n  user: yaml-" + leak + "\n  pass: yaml-" + leak + "\n"
+	json := `{"typed": "json-` + leak + `", "pointer": "json-` + leak + `", "tagged": "json-` + leak + `", "env_tagged": "json-` + leak +
+		`", "database": {"password": "json-` + leak + `"}, "creds": {"user": "json-` + leak + `", "pass": "json-` + leak + `"}}`
+	pointerDefault := strata.Secret("default-" + leak)
+
+	for _, tc := range []struct {
+		name   string
+		source strata.SourceKind
+		opts   func(t *testing.T) []strata.Option
+	}{
+		{"default", strata.SourceDefault, func(*testing.T) []strata.Option {
+			v := "default-" + leak
+
+			return []strata.Option{strata.WithDefaults(redactConfig{
+				Typed: strata.Secret(v), Pointer: &pointerDefault, Tagged: v, EnvTagged: v,
+				Database: redactDatabase{Password: v}, Creds: redactCredentials{User: v, Pass: v},
+			})}
+		}},
+		{"toml", strata.SourceFile, func(t *testing.T) []strata.Option {
+			t.Helper()
+
+			return []strata.Option{strata.WithPath(writeFile(t, "c.toml", toml)), strata.WithFormats("toml")}
+		}},
+		{"yaml", strata.SourceFile, func(t *testing.T) []strata.Option {
+			t.Helper()
+
+			return []strata.Option{strata.WithPath(writeFile(t, "c.yaml", yaml)), strata.WithFormats("yaml")}
+		}},
+		{"json", strata.SourceFile, func(t *testing.T) []strata.Option {
+			t.Helper()
+
+			return []strata.Option{strata.WithPath(writeFile(t, "c.json", json)), strata.WithFormats("json")}
+		}},
+		{"stdin", strata.SourceStdin, func(*testing.T) []strata.Option {
+			return []strata.Option{strata.WithPath("-"), strata.WithStdin(strings.NewReader(toml)), strata.WithFormats("toml")}
+		}},
+		{"env", strata.SourceEnv, func(t *testing.T) []strata.Option {
+			t.Helper()
+
+			for _, name := range []string{"REDACT_TYPED", "REDACT_POINTER", "REDACT_TAGGED", "REDACT_ENV_TAGGED", "REDACT_DATABASE_PASSWORD", "REDACT_CREDS_USER", "REDACT_CREDS_PASS"} {
+				t.Setenv(name, "env-"+leak)
+			}
+
+			return []strata.Option{strata.WithEnvPrefix("REDACT_")}
+		}},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			cfg, meta, err := strata.LoadWithMetadata[redactConfig](tc.opts(t)...)
+			if err != nil {
+				t.Fatalf("Load: %v", err)
+			}
+
+			if !strings.Contains(cfg.Creds.Pass, leak) {
+				t.Fatalf("creds.pass = %q: the layer did not set the value", cfg.Creds.Pass)
+			}
+
+			for _, key := range redactKeys {
+				origin, ok := meta.Where(key)
+				if !ok || origin.Source != tc.source || origin.RawValue != "[REDACTED]" {
+					t.Errorf("Where(%s) = %+v, %t; want %s with [REDACTED]", key, origin, ok, tc.source)
+				}
+			}
+
+			for _, origin := range meta.Origins() {
+				if strings.Contains(origin.RawValue, leak) {
+					t.Errorf("Origins() leaks %s: %+v", origin.Key, origin)
+				}
+			}
+		})
+	}
+}

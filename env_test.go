@@ -2,8 +2,11 @@ package strata_test
 
 import (
 	"errors"
+	"reflect"
 	"slices"
+	"strings"
 	"testing"
+	"time"
 
 	"github.com/zigai/strata"
 )
@@ -180,5 +183,138 @@ func TestEnvVars(t *testing.T) {
 
 	if unprefixed := strata.EnvVars[typoConfig](""); len(unprefixed) != 0 {
 		t.Errorf("EnvVars without a prefix = %+v, want none for untagged fields", unprefixed)
+	}
+}
+
+type envDecodeConfig struct {
+	Flag  bool            `strata:"flag"`
+	Wait  time.Duration   `strata:"wait"`
+	Span  strata.Duration `strata:"span"`
+	Tags  []string        `strata:"tags"`
+	Level editLevel       `strata:"level"`
+}
+
+func TestEnvDecodesBoolSpellings(t *testing.T) {
+	for _, tc := range []struct {
+		value string
+		want  bool
+	}{
+		{"1", true},
+		{"t", true},
+		{"true", true},
+		{"yes", true},
+		{"y", true},
+		{"on", true},
+		{"TRUE", true},
+		{"Yes", true},
+		{" on ", true},
+		{"0", false},
+		{"f", false},
+		{"false", false},
+		{"no", false},
+		{"n", false},
+		{"off", false},
+		{"FALSE", false},
+		{"Off", false},
+	} {
+		t.Run(tc.value, func(t *testing.T) {
+			t.Setenv("DEC_FLAG", tc.value)
+
+			got, err := strata.Load[envDecodeConfig](strata.WithDefaults(envDecodeConfig{Flag: !tc.want}), strata.WithEnvPrefix("DEC_"))
+			if err != nil {
+				t.Fatalf("Load: %v", err)
+			}
+
+			if got.Flag != tc.want {
+				t.Fatalf("DEC_FLAG=%q loaded as %t, want %t", tc.value, got.Flag, tc.want)
+			}
+		})
+	}
+}
+
+// Durations accept days and weeks from the environment, lists split on
+// commas, and a type with UnmarshalText decodes through it.
+func TestEnvDecodesByFieldType(t *testing.T) {
+	t.Setenv("DEC_WAIT", "7d")
+	t.Setenv("DEC_SPAN", "2w")
+	t.Setenv("DEC_TAGS", "a,b")
+	t.Setenv("DEC_LEVEL", "debug")
+
+	got, err := strata.Load[envDecodeConfig](strata.WithEnvPrefix("DEC_"))
+	if err != nil {
+		t.Fatalf("Load: %v", err)
+	}
+
+	want := envDecodeConfig{Wait: 168 * time.Hour, Span: strata.Duration(336 * time.Hour), Tags: []string{"a", "b"}, Level: "debug"}
+	if !reflect.DeepEqual(got, want) {
+		t.Fatalf("got %+v, want %+v", got, want)
+	}
+}
+
+// An env value that does not decode fails with ErrInvalidEnvValue, and the
+// message names both the key and the variable so the user can find it.
+func TestEnvErrorsNameTheKeyAndVariable(t *testing.T) {
+	for _, tc := range []struct {
+		name, variable, value, key string
+	}{
+		{"bool", "DEC_FLAG", "maybe", "flag"},
+		{"duration", "DEC_WAIT", "5x", "wait"},
+		{"text decoder", "DEC_LEVEL", "bogus", "level"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Setenv(tc.variable, tc.value)
+
+			_, err := strata.Load[envDecodeConfig](strata.WithEnvPrefix("DEC_"))
+			if !errors.Is(err, strata.ErrInvalidEnvValue) {
+				t.Fatalf("err = %v, want ErrInvalidEnvValue", err)
+			}
+
+			if msg := err.Error(); !strings.Contains(msg, tc.variable) || !strings.Contains(msg, `"`+tc.key+`"`) && !strings.Contains(msg, " "+tc.key) {
+				t.Errorf("err = %q, want it to name %s and key %s", msg, tc.variable, tc.key)
+			}
+		})
+	}
+}
+
+// EnvVars lists every variable in declaration order, and each listed name
+// really sets its key when fed back into a load.
+func TestEnvVarsMatchesWhatLoadReads(t *testing.T) {
+	want := []strata.EnvVar{
+		{Key: "host", Name: "MYAPP_HOST", Names: []string{"MYAPP_HOST"}},
+		{Key: portKey, Name: "MYAPP_PORT", Names: []string{"MYAPP_PORT"}},
+		{Key: "api_key", Name: "MYAPP_API_KEY", Names: []string{"MYAPP_API_KEY"}, Secret: true},
+		{Key: "database.port", Name: "MYAPP_DATABASE_PORT", Names: []string{"MYAPP_DATABASE__PORT", "MYAPP_DATABASE_PORT"}},
+		{Key: "database.max_conns", Name: "MYAPP_DATABASE_MAX_CONNS", Names: []string{"MYAPP_DATABASE__MAX_CONNS", "MYAPP_DATABASE_MAX_CONNS"}},
+	}
+
+	vars := strata.EnvVars[typoConfig]("myapp")
+	if !reflect.DeepEqual(vars, want) {
+		t.Fatalf("EnvVars =\n%+v\nwant\n%+v", vars, want)
+	}
+
+	values := map[string]string{"host": "h", portKey: "1", "api_key": "k", "database.port": "2", "database.max_conns": "3"}
+	wantCfg := typoConfig{Host: "h", Port: 1, APIKey: "k", Database: typoDatabase{Port: 2, MaxConns: 3}}
+
+	for _, tc := range []struct {
+		name string
+		pick func(strata.EnvVar) string
+	}{
+		{"documented Name", func(v strata.EnvVar) string { return v.Name }},
+		{"first of Names", func(v strata.EnvVar) string { return v.Names[0] }},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			for _, v := range vars {
+				t.Setenv(tc.pick(v), values[v.Key])
+			}
+
+			got, err := strata.Load[typoConfig](strata.WithEnvPrefix("myapp"))
+			if err != nil {
+				t.Fatalf("Load: %v", err)
+			}
+
+			if !reflect.DeepEqual(got, wantCfg) {
+				t.Fatalf("got %+v, want %+v", got, wantCfg)
+			}
+		})
 	}
 }
