@@ -44,6 +44,7 @@ func WithSchemaTitle(title string) SchemaOption {
 // Schema returns the JSON Schema for T as indented JSON.
 //
 // Field names use snake_case Go names; field doc comments become descriptions.
+// No property is required, since a config file may set any subset of keys.
 //
 // [WithSchemaID] and [WithSchemaTitle] set root metadata. By default, $id comes
 // from the type's package path.
@@ -95,6 +96,9 @@ func reflectSchema(typ reflect.Type) (*jsonschema.Schema, error) {
 	reflector := &jsonschema.Reflector{
 		ExpandedStruct: true,
 		KeyNamer:       defaulter.ToSnakeCase,
+		// Every key is optional in a config file, so none is required unless its
+		// field says so with a jsonschema:"required" tag.
+		RequiredFromJSONSchemaTags: true,
 	}
 
 	var (

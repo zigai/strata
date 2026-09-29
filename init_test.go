@@ -242,3 +242,31 @@ func TestTOMLInitWritesPlainDurationsAsStrings(t *testing.T) {
 		t.Fatalf("config = %+v", cfg)
 	}
 }
+
+// A template holds T's defaults: loading it over zero defaults yields them,
+// in every format, with and without a schema header, also under WithStrict.
+func TestInitTemplatesLoadBackToTheDefaults(t *testing.T) {
+	t.Parallel()
+
+	for _, ext := range []string{".toml", ".yaml", ".json"} {
+		for _, schemaURL := range []string{"", "https://example.com/schema.json"} {
+			t.Run(ext+" schema="+schemaURL, func(t *testing.T) {
+				t.Parallel()
+
+				path := filepath.Join(t.TempDir(), "config"+ext)
+				if err := strata.Init[demoConfig](path, strata.WithSchemaURL(schemaURL)); err != nil {
+					t.Fatalf("Init: %v", err)
+				}
+
+				got, err := strata.Load[demoConfig](strata.WithDefaults(demoConfig{}), strata.WithPath(path), strata.WithFormats(ext), strata.WithStrict())
+				if err != nil {
+					t.Fatalf("Load: %v", err)
+				}
+
+				if want := (demoConfig{ServerHost: "127.0.0.1", ServerPort: 8080, Debug: true}); got != want {
+					t.Fatalf("got %+v, want %+v", got, want)
+				}
+			})
+		}
+	}
+}

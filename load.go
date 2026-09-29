@@ -56,7 +56,7 @@ func LoadWithMetadata[T any](opts ...Option) (T, *Metadata, error) {
 // target MUST be a non-nil pointer to a struct; anything else returns
 // [ErrTargetNotPointer]. Validation runs at the end of the merge.
 func LoadInto[T any](target *T, opts ...Option) (*Metadata, error) {
-	if target == nil {
+	if !structTarget(target) {
 		return nil, ErrTargetNotPointer
 	}
 
@@ -399,6 +399,12 @@ func recordLayerOrigins(data []byte, layer cascade.Layer, ext string, keys *keyT
 			return
 		}
 
+		// A JSON file names its schema, as [Init] writes it, in a top-level
+		// $schema property. Editors read it; it configures nothing.
+		if ext == ".json" && record.Key == jsonSchemaProperty {
+			return
+		}
+
 		origin.RawValue = ""
 		meta.recordUnknown(UnknownKey{Origin: origin, Suggestion: keys.suggest(record.Key)})
 	})
@@ -498,4 +504,10 @@ func walkRegisterSecrets(typ reflect.Type, prefix string, inheritedSecret bool, 
 	for f := range typ.Fields() {
 		registerFieldSecret(f, prefix, inheritedSecret, meta, visited)
 	}
+}
+
+// structTarget reports whether target is a non-nil pointer to a struct, the
+// only target [LoadInto] accepts.
+func structTarget[T any](target *T) bool {
+	return target != nil && reflect.TypeFor[T]().Kind() == reflect.Struct
 }

@@ -1,8 +1,12 @@
 package strata_test
 
 import (
+	"bytes"
 	"encoding/json/v2"
 	"errors"
+	"maps"
+	"slices"
+	"strings"
 	"testing"
 
 	"github.com/zigai/strata"
@@ -75,5 +79,108 @@ func TestSchemaGeneration(t *testing.T) {
 
 	if _, ok := props["server_port"]; !ok {
 		t.Errorf("server_port property missing from schema")
+	}
+}
+
+type schemaKeysConfig struct {
+	ListenAddr string `strata:"listen"`
+	TOMLName   int    `toml:"tname"`
+	YAMLName   int    `yaml:"yname"`
+	Hidden     int    `strata:"-"`
+	Plain      int
+	Nested     struct {
+		MaxConns int
+	}
+}
+
+func schemaProperties(t *testing.T, data []byte) map[string]any {
+	t.Helper()
+
+	var parsed map[string]any
+	if err := json.Unmarshal(data, &parsed); err != nil {
+		t.Fatalf("Unmarshal schema: %v", err)
+	}
+
+	props, ok := parsed["properties"].(map[string]any)
+	if !ok {
+		t.Fatalf("schema has no properties:\n%s", data)
+	}
+
+	return props
+}
+
+// The schema names each property by its Go field name in snake_case, as the
+// Schema doc says: strata, toml and yaml tags do not rename a property, and a
+// field tagged "-" is still listed. Whether the schema should follow the keys
+// strata reads instead is open (index To review, "Schema C1 strata keys").
+func TestSchemaPropertiesAreSnakeCaseGoNames(t *testing.T) {
+	t.Parallel()
+
+	data, err := strata.Schema[schemaKeysConfig]()
+	if err != nil {
+		t.Fatalf("Schema: %v", err)
+	}
+
+	props := schemaProperties(t, data)
+
+	got := slices.Sorted(maps.Keys(props))
+	if want := []string{"hidden", "listen_addr", "nested", "plain", "toml_name", "yaml_name"}; !slices.Equal(got, want) {
+		t.Fatalf("properties = %v, want %v", got, want)
+	}
+
+	nested, _ := props["nested"].(map[string]any)
+	nestedProps, _ := nested["properties"].(map[string]any)
+
+	if _, ok := nestedProps["max_conns"]; !ok || len(nestedProps) != 1 {
+		t.Fatalf("nested properties = %v, want only max_conns", nestedProps)
+	}
+}
+
+// Every key is optional in a config file, so the schema requires none: an
+// editor checking a sparse file against it finds no missing properties.
+func TestSchemaRequiresNoProperty(t *testing.T) {
+	t.Parallel()
+
+	data, err := strata.Schema[demoConfig]()
+	if err != nil {
+		t.Fatalf("Schema: %v", err)
+	}
+
+	var parsed map[string]any
+	if err := json.Unmarshal(data, &parsed); err != nil {
+		t.Fatal(err)
+	}
+
+	if required, ok := parsed["required"]; ok {
+		t.Fatalf("schema requires %v, want no required properties", required)
+	}
+}
+
+// Without WithSchemaID, $id comes from the type's package path, and two calls
+// produce identical bytes.
+func TestSchemaDefaultIDAndDeterminism(t *testing.T) {
+	t.Parallel()
+
+	first, err := strata.Schema[demoConfig]()
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	second, err := strata.Schema[demoConfig]()
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	if !bytes.Equal(first, second) {
+		t.Fatalf("two calls differ:\n%s\n%s", first, second)
+	}
+
+	var parsed map[string]any
+	if err := json.Unmarshal(first, &parsed); err != nil {
+		t.Fatal(err)
+	}
+
+	if id, _ := parsed["$id"].(string); !strings.HasPrefix(id, "https://github.com/zigai/strata_test/") {
+		t.Fatalf("$id = %q, want it under the package path github.com/zigai/strata_test", id)
 	}
 }

@@ -14,6 +14,9 @@ import (
 	"github.com/zigai/strata/internal/defaulter"
 )
 
+// jsonSchemaProperty is the top-level JSON property naming a document's schema.
+const jsonSchemaProperty = "$schema"
+
 // ErrFileExists is returned when [Init] targets an existing file and
 // overwriting was not requested.
 var ErrFileExists = errors.New("configuration file already exists")
@@ -146,7 +149,7 @@ func injectJSONSchema(data []byte, schemaURL string) ([]byte, error) {
 		return data, nil
 	}
 
-	// NB: writing the entry first keeps "$schema" the object's first key, and the
+	// NB: writing the entry first keeps $schema the object's first key, and the
 	// existing content follows it.
 	schemaEntry, err := json.Marshal(schemaURL)
 	if err != nil {
@@ -154,7 +157,7 @@ func injectJSONSchema(data []byte, schemaURL string) ([]byte, error) {
 	}
 
 	var b bytes.Buffer
-	b.WriteString("{\n  \"$schema\": ")
+	b.WriteString("{\n  \"" + jsonSchemaProperty + "\": ")
 	b.Write(schemaEntry)
 
 	// NB: an object with no content beyond its braces takes no trailing comma.
