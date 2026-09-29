@@ -94,7 +94,7 @@ func TestYAMLCaseSensitiveKeyMatching(t *testing.T) {
 port: 9090
 `
 
-	updated, err := edit.UpdateYAML([]byte(input), "port", 9999)
+	updated, err := edit.UpdateYAML([]byte(input), portKey, 9999)
 	if err != nil {
 		t.Fatalf("UpdateYAML error: %v", err)
 	}

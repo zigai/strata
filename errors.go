@@ -61,7 +61,8 @@ var (
 	ErrMultipleDocuments = codec.ErrMultipleDocuments
 
 	// ErrNonObjectNavigation is returned when [SetBytes] must traverse a value
-	// that is not an object to reach the requested key.
+	// that is not an object to reach the requested key in a TOML or JSON
+	// document. A YAML edit replaces such a value with a mapping instead.
 	ErrNonObjectNavigation = edit.ErrNonObjectNavigation
 
 	// ErrRootNotMapping is returned when [SetBytes] is given a document whose

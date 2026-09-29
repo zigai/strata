@@ -1,6 +1,8 @@
 package strata_test
 
 import (
+	"encoding/json/jsontext"
+	"encoding/json/v2"
 	"errors"
 	"os"
 	"path/filepath"
@@ -9,6 +11,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/pelletier/go-toml/v2"
 	"gopkg.in/yaml.v3"
 
 	"github.com/zigai/strata"
@@ -126,7 +129,7 @@ port = 8080 # listen port
 			t.Fatalf("WriteFile: %v", err)
 		}
 
-		if err := strata.Set[portConfig](p, "port", 9090); err != nil {
+		if err := strata.Set[portConfig](p, portKey, 9090); err != nil {
 			t.Fatalf("strata.Set error: %v", err)
 		}
 
@@ -140,21 +143,6 @@ port = 8080 # listen port
 			t.Errorf("expected \"port\": 9090, got:\n%s", res)
 		}
 	})
-}
-
-func TestSetBytes(t *testing.T) {
-	t.Parallel()
-
-	rawTOML := []byte("port = 8080\n")
-
-	updated, err := strata.SetBytes(".toml", rawTOML, "port", 9090)
-	if err != nil {
-		t.Fatalf("SetBytes error: %v", err)
-	}
-
-	if !strings.Contains(string(updated), "port = 9090") {
-		t.Errorf("expected port = 9090, got:\n%s", string(updated))
-	}
 }
 
 func TestSetScientificNotationAndSingleLetter(t *testing.T) {
@@ -247,6 +235,16 @@ func TestSetBytesFailuresAreClassifiable(t *testing.T) {
 			func() ([]byte, error) { return strata.SetBytes(".toml", []byte("a = 1\n"), "a..b", 2) },
 			strata.ErrInvalidEmptyPathSegment,
 		},
+		{
+			"a duplicate JSON key",
+			func() ([]byte, error) { return strata.SetBytes(".json", []byte(`{"a": 1, "a": 2}`), "b", 3) },
+			jsontext.ErrDuplicateName,
+		},
+		{
+			"an unsupported format",
+			func() ([]byte, error) { return strata.SetBytes(".ini", []byte("a = 1\n"), "a", 2) },
+			strata.ErrUnsupportedFormat,
+		},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			t.Parallel()
@@ -304,13 +302,13 @@ func TestSetMatchesKeysExactly(t *testing.T) {
 		t.Run(tc.format, func(t *testing.T) {
 			t.Parallel()
 
-			out, err := strata.SetBytes(tc.format, []byte(tc.input), "port", 2)
+			out, err := strata.SetBytes(tc.format, []byte(tc.input), portKey, 2)
 			if err != nil {
 				t.Fatalf("SetBytes: %v", err)
 			}
 
 			text := string(out)
-			if !strings.Contains(text, "Port") || !strings.Contains(text, "1") || !strings.Contains(text, "port") || !strings.Contains(text, "2") {
+			if !strings.Contains(text, "Port") || !strings.Contains(text, "1") || !strings.Contains(text, portKey) || !strings.Contains(text, "2") {
 				t.Fatalf("SetBytes changed the wrong key or dropped one:\n%s", text)
 			}
 		})
@@ -342,7 +340,7 @@ func TestSetChecksKeysAndValues(t *testing.T) {
 		t.Fatalf("unknown key error = %v", err)
 	}
 
-	if err := strata.Set[primitiveConfig](path, "port", "abc"); err == nil || !strings.Contains(err.Error(), path) {
+	if err := strata.Set[primitiveConfig](path, portKey, "abc"); err == nil || !strings.Contains(err.Error(), path) {
 		t.Fatalf("bad value error = %v", err)
 	}
 
@@ -514,6 +512,214 @@ func TestSaveThenSetUsesOneKeySpelling(t *testing.T) {
 
 			if cfg.Database.MaxConns != 9 || cfg.Host != "h" {
 				t.Fatalf("cfg = %+v, want max_conns 9 and host h", cfg)
+			}
+		})
+	}
+}
+
+// After Set, the file loads back to exactly the original values with only the
+// named key changed, in every format.
+func TestSetChangesOnlyTheNamedKey(t *testing.T) {
+	t.Parallel()
+
+	for ext, initial := range map[string]string{
+		".toml": "# settings\nhost = \"db.example\"\nport = 9000\napi_key = \"k\"\n\n[database]\nport = 5432 # primary\nmax_conns = 20\n\n[labels]\nenv = \"prod\"\n",
+		".yaml": "# settings\nhost: db.example\nport: 9000\napi_key: k\ndatabase:\n  port: 5432 # primary\n  max_conns: 20\nlabels:\n  env: prod\n",
+		".json": `{"host": "db.example", "port": 9000, "api_key": "k", "database": {"port": 5432, "max_conns": 20}, "labels": {"env": "prod"}}`,
+	} {
+		t.Run(ext, func(t *testing.T) {
+			t.Parallel()
+
+			path := writeFile(t, "config"+ext, initial)
+
+			if err := strata.Set[typoConfig](path, "database.port", "6543"); err != nil {
+				t.Fatalf("Set: %v", err)
+			}
+
+			got, err := strata.Load[typoConfig](strata.WithPath(path), strata.WithFormats(ext), strata.WithStrict())
+			if err != nil {
+				t.Fatalf("Load: %v", err)
+			}
+
+			want := typoConfig{
+				Host:     "db.example",
+				Port:     9000,
+				APIKey:   "k",
+				Database: typoDatabase{Port: 6543, MaxConns: 20},
+				Labels:   map[string]string{"env": "prod"},
+			}
+			if !reflect.DeepEqual(got, want) {
+				t.Fatalf("got %+v, want %+v", got, want)
+			}
+		})
+	}
+}
+
+type rejectEditConfig struct {
+	Port    int
+	Narrow  int8
+	Count   uint
+	Debug   bool
+	Timeout time.Duration
+	Level   editLevel
+}
+
+// A rejected Set returns an error and leaves the file byte-identical.
+func TestSetRejectionLeavesTheFileUnchanged(t *testing.T) {
+	t.Parallel()
+
+	const initial = "port = 8080\nnarrow = 1\ncount = 1\ndebug = false\ntimeout = '1s'\nlevel = 'info'\n"
+
+	for _, tc := range []struct {
+		name, key, value string
+	}{
+		{"out of range for int8", "narrow", "300"},
+		{"not an integer", portKey, "abc"},
+		{"negative unsigned", "count", "-1"},
+		{"not a boolean", "debug", "yes"},
+		{"not a duration", "timeout", "5x"},
+		{"text decoder rejects", "level", "bogus"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+
+			path := writeFile(t, "config.toml", initial)
+
+			err := strata.Set[rejectEditConfig](path, tc.key, tc.value)
+			if err == nil {
+				t.Fatalf("Set(%s=%q) accepted", tc.key, tc.value)
+			}
+
+			if !strings.Contains(err.Error(), tc.key) {
+				t.Errorf("err = %v, want it to name the key %s", err, tc.key)
+			}
+
+			requireFileContent(t, path, initial)
+		})
+	}
+
+	t.Run("unknown key", func(t *testing.T) {
+		t.Parallel()
+
+		path := writeFile(t, "config.toml", initial)
+
+		err := strata.Set[rejectEditConfig](path, "prot", "9000")
+		if !errors.Is(err, strata.ErrUnknownKey) {
+			t.Fatalf("err = %v, want ErrUnknownKey", err)
+		}
+
+		if !strings.Contains(err.Error(), `did you mean "port"`) {
+			t.Errorf("err = %v, want a suggestion of port", err)
+		}
+
+		requireFileContent(t, path, initial)
+	})
+}
+
+func requireFileContent(t *testing.T, path, want string) {
+	t.Helper()
+
+	data, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatalf("read %s: %v", path, err)
+	}
+
+	if string(data) != want {
+		t.Fatalf("file changed:\n%s\nwant:\n%s", data, want)
+	}
+}
+
+// Set converts by the field's type, not by what the text looks like: numeric
+// or boolean text for a string field is written as a string.
+func TestSetKeepsStringFieldsAsStrings(t *testing.T) {
+	t.Parallel()
+
+	type stringConfig struct {
+		Name string
+	}
+
+	for _, ext := range []string{".toml", ".yaml", ".json"} {
+		for _, value := range []string{"9090", "true", "1e5"} {
+			t.Run(ext+" "+value, func(t *testing.T) {
+				t.Parallel()
+
+				path := writeFile(t, "config"+ext, map[string]string{".toml": "name = 'x'\n", ".yaml": "name: x\n", ".json": `{"name": "x"}`}[ext])
+
+				if err := strata.Set[stringConfig](path, "name", value); err != nil {
+					t.Fatalf("Set: %v", err)
+				}
+
+				if got := decodeGeneric(t, path)["name"]; got != value {
+					t.Fatalf("name decodes as %#v (%T), want the string %q", got, got, value)
+				}
+			})
+		}
+	}
+}
+
+// decodeGeneric decodes a file into a map with its format's own parser, so a
+// value's written type is visible.
+func decodeGeneric(t *testing.T, path string) map[string]any {
+	t.Helper()
+
+	data, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	var doc map[string]any
+
+	switch filepath.Ext(path) {
+	case ".toml":
+		err = toml.Unmarshal(data, &doc)
+	case ".yaml":
+		err = yaml.Unmarshal(data, &doc)
+	case ".json":
+		err = json.Unmarshal(data, &doc)
+	}
+
+	if err != nil {
+		t.Fatalf("decode %s: %v\n%s", path, err, data)
+	}
+
+	return doc
+}
+
+// SetBytes has no struct to consult, so it infers the type from the text:
+// integers, numbers with a dot or exponent, and the full words true and false.
+func TestSetBytesInfersValueTypes(t *testing.T) {
+	t.Parallel()
+
+	for _, tc := range []struct {
+		value string
+		want  any
+	}{
+		{"9090", int64(9090)},
+		{"-3", int64(-3)},
+		{"1e5", float64(100000)},
+		{"1.5", 1.5},
+		{"true", true},
+		{"false", false},
+		{"t", "t"},
+		{"yes", "yes"},
+		{"abc", "abc"},
+		{"", ""},
+	} {
+		t.Run(tc.value, func(t *testing.T) {
+			t.Parallel()
+
+			out, err := strata.SetBytes(".toml", []byte("other = 1\n"), "v", tc.value)
+			if err != nil {
+				t.Fatalf("SetBytes: %v", err)
+			}
+
+			var doc map[string]any
+			if err := toml.Unmarshal(out, &doc); err != nil {
+				t.Fatalf("decode: %v\n%s", err, out)
+			}
+
+			if !reflect.DeepEqual(doc["v"], tc.want) {
+				t.Fatalf("v = %#v (%T), want %#v (%T)", doc["v"], doc["v"], tc.want, tc.want)
 			}
 		})
 	}

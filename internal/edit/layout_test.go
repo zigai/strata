@@ -9,6 +9,9 @@ import (
 	"github.com/zigai/strata/internal/edit"
 )
 
+// portKey is the key most edit tests write.
+const portKey = "port"
+
 // The editors rewrite presentation, not content. What each one changes is the
 // contract SetBytes documents, and it differs enough by format to be worth
 // pinning: swapping a parser has already changed observable behavior once, when

@@ -14,6 +14,14 @@ import (
 	"github.com/zigai/strata/codec"
 )
 
+const (
+	// tripleQuoteLen is the length of a multi-line string delimiter.
+	tripleQuoteLen = 3
+	// maxClosingContentQuotes is how many quote characters a multi-line string
+	// may end with directly before its closing delimiter.
+	maxClosingContentQuotes = 2
+)
+
 var (
 	// ErrInvalidEmptyKeyPath is returned when a dotted key path is empty.
 	ErrInvalidEmptyKeyPath = errors.New("invalid empty key path")
@@ -25,8 +33,29 @@ var (
 type candAssignment struct {
 	lineIdx      int
 	eqIdx        int
+	endIdx       int
 	currentTable []string
 	fullKey      []string
+}
+
+// tomlLine is what [scanTOMLLines] learned about one line.
+type tomlLine struct {
+	// header holds the parts of a table header on this line, or nil.
+	header []string
+	// eqIdx is the index of an assignment's "=", or -1.
+	eqIdx int
+	// end is the last line of an assignment's value, which is this line unless
+	// the value is a multi-line string or array.
+	end int
+}
+
+// tomlLexer follows the strings, arrays, and inline tables of TOML text across
+// lines, so a quote, bracket, "=" or "#" inside a string is not read as syntax.
+type tomlLexer struct {
+	// quote is the delimiter of the string the text is inside, or "".
+	quote string
+	// depth counts the arrays and inline tables open outside strings.
+	depth int
 }
 
 // UpdateTOML writes value at dottedKey. Existing assignments retain surrounding
@@ -60,7 +89,8 @@ func UpdateFormatted(data []byte, dottedKey string, value any, formattedVal stri
 		return nil, fmt.Errorf("%w in %q", ErrInvalidEmptyPathSegment, dottedKey)
 	}
 
-	candidates := collectAssignments(lines)
+	scanned := scanTOMLLines(lines)
+	candidates := collectAssignments(lines, scanned)
 
 	matchIdx := findMatchingCandidate(candidates, targetParts)
 
@@ -71,7 +101,7 @@ func UpdateFormatted(data []byte, dottedKey string, value any, formattedVal stri
 
 	if matchIdx != -1 {
 		cand := candidates[matchIdx]
-		lines = updateMatchingLine(lines, cand.lineIdx, cand.eqIdx, formattedVal)
+		lines = updateMatchingLine(lines, cand, formattedVal)
 		keyUpdated = true
 	} else {
 		lines, keyUpdated, err = handleInlineTableUpdate(lines, candidates, targetParts, value)
@@ -84,7 +114,8 @@ func UpdateFormatted(data []byte, dottedKey string, value any, formattedVal stri
 	if keyUpdated {
 		result = joinLines(lines, crlf)
 	} else {
-		appended := appendTOMLKey(lines, targetParts, formattedVal)
+		// Nothing was edited, so the scan still describes lines.
+		appended := appendTOMLKey(lines, scanned, candidates, targetParts, formattedVal)
 		if len(appended) > 0 && appended[len(appended)-1] != '\n' {
 			appended = append(appended, '\n')
 		}
@@ -104,35 +135,31 @@ func UpdateFormatted(data []byte, dottedKey string, value any, formattedVal stri
 	return result, nil
 }
 
-func collectAssignments(lines []string) []candAssignment {
+// scanTOMLLines classifies every line of a document. A line inside a multi-line
+// string or a multi-line array is part of a value, so it is never read as a
+// table header or an assignment even when it looks like one.
+func scanTOMLLines(lines []string) []tomlLine {
+	scanned := make([]tomlLine, len(lines))
+
 	var (
-		currentTable      []string
-		inMultilineString bool
-		multilineQuote    string
-		candidates        []candAssignment
+		value tomlLexer
+		owner = -1
 	)
 
-	for i := range lines {
-		line := lines[i]
-		trimmed := strings.TrimSpace(line)
+	for i, line := range lines {
+		scanned[i] = tomlLine{header: nil, eqIdx: -1, end: i}
 
-		if inMultilineString {
-			if strings.Contains(line, multilineQuote) {
-				inMultilineString = false
-				multilineQuote = ""
-			}
+		if value.open() {
+			value.scan(line, 0)
+
+			scanned[owner].end = i
 
 			continue
 		}
 
-		clean := stripInlineComment(line)
-		if opensMulti, quote := checkOpeningMultilineString(clean); opensMulti {
-			inMultilineString = true
-			multilineQuote = quote
-		}
-
+		trimmed := strings.TrimSpace(line)
 		if tbl, ok := parseTableHeader(trimmed); ok {
-			currentTable = tbl
+			scanned[i].header = tbl
 			continue
 		}
 
@@ -145,7 +172,113 @@ func collectAssignments(lines []string) []candAssignment {
 			continue
 		}
 
-		rawKey := strings.TrimSpace(line[:eqIdx])
+		scanned[i].eqIdx = eqIdx
+		owner = i
+
+		value = tomlLexer{quote: "", depth: 0}
+		value.scan(line[eqIdx+1:], 0)
+	}
+
+	return scanned
+}
+
+// open reports whether the text scanned so far leaves a string, array, or
+// inline table open, so the value continues on the next line.
+func (lx *tomlLexer) open() bool {
+	return lx.quote != "" || lx.depth > 0
+}
+
+// scan lexes line and returns the index of the first byte stop outside a
+// string, or -1. A comment ends the line, so it ends the scan unless stop is '#'.
+func (lx *tomlLexer) scan(line string, stop byte) int {
+	for i := 0; i < len(line); {
+		if lx.quote != "" {
+			i = lx.skipString(line, i)
+			continue
+		}
+
+		switch c := line[i]; c {
+		case stop:
+			return i
+		case '#':
+			lx.endLine()
+			return -1
+		case '"', '\'':
+			lx.quote = line[i : i+1]
+			if tripled := strings.Repeat(lx.quote, tripleQuoteLen); strings.HasPrefix(line[i:], tripled) {
+				lx.quote = tripled
+			}
+
+			i += len(lx.quote)
+
+			continue
+		case '[', '{':
+			lx.depth++
+		case ']', '}':
+			lx.depth--
+		}
+
+		i++
+	}
+
+	lx.endLine()
+
+	return -1
+}
+
+// endLine closes a one-line string left open, which cannot continue below.
+func (lx *tomlLexer) endLine() {
+	if len(lx.quote) == 1 {
+		lx.quote = ""
+	}
+}
+
+// skipString advances through the content of the open string from i, closing
+// the string at its delimiter, and returns the index lexing resumes at.
+func (lx *tomlLexer) skipString(line string, i int) int {
+	for i < len(line) {
+		switch {
+		case line[i] == '\\' && lx.quote[0] == '"':
+			i += 2
+		case strings.HasPrefix(line[i:], lx.quote):
+			end := i + len(lx.quote)
+
+			// A multi-line string may end with up to two quotes of its content
+			// directly before the delimiter.
+			if len(lx.quote) == tripleQuoteLen {
+				for end < len(line) && end < i+tripleQuoteLen+maxClosingContentQuotes && line[end] == lx.quote[0] {
+					end++
+				}
+			}
+
+			lx.quote = ""
+
+			return end
+		default:
+			i++
+		}
+	}
+
+	return i
+}
+
+func collectAssignments(lines []string, scanned []tomlLine) []candAssignment {
+	var (
+		currentTable []string
+		candidates   []candAssignment
+	)
+
+	for i, info := range scanned {
+		if info.header != nil {
+			currentTable = info.header
+			continue
+		}
+
+		if info.eqIdx == -1 {
+			continue
+		}
+
+		rawKey := strings.TrimSpace(lines[i][:info.eqIdx])
 		keyParts := splitDottedKey(rawKey)
 		lineFullKey := make([]string, 0, len(currentTable)+len(keyParts))
 		lineFullKey = append(lineFullKey, currentTable...)
@@ -153,7 +286,8 @@ func collectAssignments(lines []string) []candAssignment {
 
 		candidates = append(candidates, candAssignment{
 			lineIdx:      i,
-			eqIdx:        eqIdx,
+			eqIdx:        info.eqIdx,
+			endIdx:       info.end,
 			currentTable: currentTable,
 			fullKey:      lineFullKey,
 		})
@@ -212,29 +346,77 @@ func joinLines(lines []string, crlf bool) []byte {
 
 func parseTableHeader(trimmed string) ([]string, bool) {
 	clean := stripInlineComment(trimmed)
-	if strings.Contains(clean, ",") {
+
+	var inner string
+
+	switch {
+	case strings.HasPrefix(clean, "[[") && strings.HasSuffix(clean, "]]"):
+		inner = clean[2 : len(clean)-2]
+	case strings.HasPrefix(clean, "[") && strings.HasSuffix(clean, "]"):
+		inner = clean[1 : len(clean)-1]
+	default:
 		return nil, false
 	}
 
-	if strings.HasPrefix(clean, "[[") && strings.HasSuffix(clean, "]]") {
-		inner := strings.TrimSpace(clean[2 : len(clean)-2])
-		if inner == "" || strings.Contains(inner, ",") {
-			return nil, false
-		}
-
-		return canonicalHeaderParts(inner), true
+	if !isTOMLKeySyntax(inner) {
+		return nil, false
 	}
 
-	if strings.HasPrefix(clean, "[") && strings.HasSuffix(clean, "]") {
-		inner := strings.TrimSpace(clean[1 : len(clean)-1])
-		if inner == "" || strings.Contains(inner, ",") {
-			return nil, false
-		}
+	return canonicalHeaderParts(inner), true
+}
 
-		return canonicalHeaderParts(inner), true
+// isTOMLKeySyntax reports whether s is a dotted key as TOML writes one: bare
+// or quoted segments joined by dots, with optional whitespace around each. An
+// array such as [1, 2] or a nested array line such as ["a"]] is not.
+func isTOMLKeySyntax(s string) bool {
+	s = strings.TrimSpace(s)
+	if s == "" {
+		return false
 	}
 
-	return nil, false
+	for {
+		rest, ok := consumeTOMLKeySegment(s)
+		if !ok {
+			return false
+		}
+
+		rest = strings.TrimSpace(rest)
+		if rest == "" {
+			return true
+		}
+
+		if rest[0] != '.' {
+			return false
+		}
+
+		s = strings.TrimSpace(rest[1:])
+	}
+}
+
+// consumeTOMLKeySegment strips one bare or quoted key segment from the start
+// of s and returns the rest.
+func consumeTOMLKeySegment(s string) (string, bool) {
+	if s == "" {
+		return "", false
+	}
+
+	if s[0] == '"' || s[0] == '\'' {
+		key := tomlLexer{quote: s[:1], depth: 0}
+
+		end := key.skipString(s, 1)
+		if key.quote != "" {
+			return "", false
+		}
+
+		return s[end:], true
+	}
+
+	n := 0
+	for n < len(s) && isBareTOMLKeyByte(s[n]) {
+		n++
+	}
+
+	return s[n:], n > 0
 }
 
 // canonicalHeaderParts returns the header segments a caller's dotted key is
@@ -248,20 +430,29 @@ func parseTableHeader(trimmed string) ([]string, bool) {
 // be addressed as one segment. That ambiguity is longstanding and is preserved
 // deliberately.
 func canonicalHeaderParts(raw string) []string {
-	parts := splitDottedKey(strings.TrimSpace(raw))
+	segments := splitDottedKey(strings.TrimSpace(raw))
+	canonical := make([]string, 0, len(segments))
 
-	return splitDottedKey(strings.Join(parts, "."))
+	// NB: splitting each segment on its own dots, rather than re-splitting the
+	// joined header, keeps an empty quoted segment such as [a.""].
+	for _, part := range segments {
+		canonical = append(canonical, strings.Split(part, ".")...)
+	}
+
+	return canonical
 }
 
 func splitDottedKey(s string) []string {
 	var (
-		parts []string
-		curr  []rune
+		parts     []string
+		curr      []rune
+		quoted    bool
+		inQuote   bool
+		quoteChar rune
+		// pending holds unquoted whitespace that belongs to the segment only if
+		// more of the segment follows it.
+		pending []rune
 	)
-
-	inQuote := false
-
-	var quoteChar rune
 
 	for _, r := range s {
 		if inQuote {
@@ -274,28 +465,47 @@ func splitDottedKey(s string) []string {
 			continue
 		}
 
-		if r == '"' || r == '\'' {
-			inQuote = true
-			quoteChar = r
-
-			continue
+		switch r {
+		case '.':
+			parts = append(parts, string(curr))
+			curr, pending, quoted = nil, nil, false
+		case ' ', '\t':
+			// Whitespace around a segment surrounds a dot; whitespace between its
+			// characters is part of the key, as in "my key".
+			if len(curr) > 0 || quoted {
+				pending = append(pending, r)
+			}
+		case '"', '\'':
+			curr, pending = append(curr, pending...), nil
+			inQuote, quoted, quoteChar = true, true, r
+		default:
+			curr, pending = append(curr, pending...), nil
+			curr = append(curr, r)
 		}
-
-		if r == '.' {
-			parts = append(parts, strings.TrimSpace(string(curr)))
-			curr = nil
-
-			continue
-		}
-
-		curr = append(curr, r)
 	}
 
-	if len(curr) > 0 {
-		parts = append(parts, strings.TrimSpace(string(curr)))
+	// NB: a quoted segment may be empty, as in "" = 1; it is still a key.
+	if len(curr) > 0 || quoted {
+		parts = append(parts, string(curr))
 	}
 
 	return parts
+}
+
+// findAssignmentEquals returns the index of the "=" of an assignment on line,
+// or -1 when line assigns nothing.
+func findAssignmentEquals(line string) int {
+	var key tomlLexer
+
+	return key.scan(line, '=')
+}
+
+// findInlineComment returns the index of the "#" starting a comment in s, a
+// value that starts outside any string, or -1.
+func findInlineComment(s string) int {
+	var value tomlLexer
+
+	return value.scan(s, '#')
 }
 
 func stripInlineComment(s string) string {
@@ -321,160 +531,12 @@ func partsEqual(a, b []string) bool {
 	return true
 }
 
-func countTripleQuotes(s, quote string) int {
-	count := 0
+// updateMatchingLine replaces the value of the assignment cand, removing the
+// continuation lines of a multi-line value it replaces.
+func updateMatchingLine(lines []string, cand candAssignment, formattedVal string) []string {
+	lines[cand.lineIdx] = replaceLineValue(lines[cand.lineIdx], cand.eqIdx, formattedVal)
 
-	idx := 0
-	for {
-		p := strings.Index(s[idx:], quote)
-		if p == -1 {
-			break
-		}
-
-		count++
-		idx += p + len(quote)
-	}
-
-	return count
-}
-
-func checkOpeningMultilineString(s string) (bool, string) {
-	if strings.Contains(s, `"""`) {
-		if countTripleQuotes(s, `"""`)%2 != 0 {
-			return true, `"""`
-		}
-	}
-
-	if strings.Contains(s, `'''`) {
-		if countTripleQuotes(s, `'''`)%2 != 0 {
-			return true, `'''`
-		}
-	}
-
-	return false, ""
-}
-
-func isOpeningMultilineString(val string) bool {
-	clean := stripInlineComment(val)
-	if strings.HasPrefix(clean, `"""`) {
-		return countTripleQuotes(clean, `"""`)%2 != 0
-	}
-
-	if strings.HasPrefix(clean, `'''`) {
-		return countTripleQuotes(clean, `'''`)%2 != 0
-	}
-
-	return false
-}
-
-func isOpeningMultilineArray(val string) bool {
-	clean := stripInlineComment(val)
-	return bracketDelta(clean) > 0
-}
-
-func handleQuoteChar(r rune, inQuote *bool, quoteChar *rune, escaped *bool) bool {
-	if *escaped {
-		*escaped = false
-		return true
-	}
-
-	if r == '\\' && *inQuote && *quoteChar == '"' {
-		*escaped = true
-		return true
-	}
-
-	if *inQuote {
-		if r == *quoteChar {
-			*inQuote = false
-		}
-
-		return true
-	}
-
-	if r == '"' || r == '\'' {
-		*inQuote = true
-		*quoteChar = r
-
-		return true
-	}
-
-	return false
-}
-
-func bracketDelta(s string) int {
-	var (
-		delta     int
-		inQuote   bool
-		quoteChar rune
-		escaped   bool
-	)
-
-	for _, r := range s {
-		if handleQuoteChar(r, &inQuote, &quoteChar, &escaped) {
-			continue
-		}
-
-		if r == '#' {
-			break
-		}
-
-		switch r {
-		case '[':
-			delta++
-		case ']':
-			delta--
-		}
-	}
-
-	return delta
-}
-
-func removeMultilineArrayTail(lines []string, startIdx int, cleanVal string) []string {
-	depth := bracketDelta(cleanVal)
-
-	endIdx := startIdx
-	for endIdx < len(lines) {
-		line := lines[endIdx]
-		depth += bracketDelta(line)
-		endIdx++
-
-		if depth <= 0 {
-			break
-		}
-	}
-
-	return append(lines[:startIdx], lines[endIdx:]...)
-}
-
-func updateMatchingLine(lines []string, i, eqIdx int, formattedVal string) []string {
-	line := lines[i]
-	newLine := replaceLineValue(line, eqIdx, formattedVal)
-
-	afterEq := strings.TrimSpace(line[eqIdx+1:])
-	if isOpeningMultilineString(afterEq) {
-		lines = removeMultilineTail(lines, i+1)
-	} else if isOpeningMultilineArray(afterEq) {
-		lines = removeMultilineArrayTail(lines, i+1, afterEq)
-	}
-
-	lines[i] = newLine
-
-	return lines
-}
-
-func removeMultilineTail(lines []string, startIdx int) []string {
-	endIdx := startIdx
-	for endIdx < len(lines) {
-		line := lines[endIdx]
-		if strings.Contains(line, `"""`) || strings.Contains(line, `'''`) {
-			endIdx++
-			break
-		}
-
-		endIdx++
-	}
-
-	return append(lines[:startIdx], lines[endIdx:]...)
+	return slices.Delete(lines, cand.lineIdx+1, cand.endIdx+1)
 }
 
 func formatTOMLValue(value any) (string, error) {
@@ -529,51 +591,6 @@ func formatCompositeTOML(rv reflect.Value) (string, error) {
 	return "[ " + strings.Join(elems, ", ") + " ]", nil
 }
 
-func findAssignmentEquals(line string) int {
-	inQuote := false
-
-	var quoteChar rune
-
-	escaped := false
-
-	for i, r := range line {
-		if escaped {
-			escaped = false
-			continue
-		}
-
-		if inQuote {
-			if quoteChar == '"' && r == '\\' {
-				escaped = true
-				continue
-			}
-
-			if r == quoteChar {
-				inQuote = false
-			}
-
-			continue
-		}
-
-		if r == '"' || r == '\'' {
-			inQuote = true
-			quoteChar = r
-
-			continue
-		}
-
-		if r == '#' {
-			return -1
-		}
-
-		if r == '=' {
-			return i
-		}
-	}
-
-	return -1
-}
-
 func replaceLineValue(line string, eqIdx int, newVal string) string {
 	afterEq := line[eqIdx+1:]
 	beforeVal := line[:eqIdx+1]
@@ -609,63 +626,22 @@ func replaceLineValue(line string, eqIdx int, newVal string) string {
 	return beforeVal + spaces + newVal
 }
 
-func findInlineComment(s string) int {
-	inQuote := false
-
-	var quoteChar rune
-
-	escaped := false
-
-	for i, r := range s {
-		if escaped {
-			escaped = false
-			continue
-		}
-
-		if inQuote {
-			if quoteChar == '"' && r == '\\' {
-				escaped = true
-				continue
-			}
-
-			if r == quoteChar {
-				inQuote = false
-			}
-
-			continue
-		}
-
-		if r == '"' || r == '\'' {
-			inQuote = true
-			quoteChar = r
-
-			continue
-		}
-
-		if r == '#' {
-			return i
-		}
-	}
-
-	return -1
-}
-
-func appendTOMLKey(lines []string, targetParts []string, formattedVal string) []byte {
+func appendTOMLKey(lines []string, scanned []tomlLine, candidates []candAssignment, targetParts []string, formattedVal string) []byte {
 	if len(targetParts) == 1 {
-		return appendRootKey(lines, targetParts[0], formattedVal)
+		return appendRootKey(lines, scanned, targetParts[0], formattedVal)
 	}
 
 	tableParts := targetParts[:len(targetParts)-1]
 	leaf := targetParts[len(targetParts)-1]
 
-	return appendTableKey(lines, tableParts, leaf, formattedVal)
+	return appendTableKey(lines, scanned, candidates, tableParts, leaf, formattedVal)
 }
 
-func appendRootKey(lines []string, key, formattedVal string) []byte {
+func appendRootKey(lines []string, scanned []tomlLine, key, formattedVal string) []byte {
 	insertIdx := len(lines)
-	for i, line := range lines {
-		trimmed := strings.TrimSpace(line)
-		if _, ok := parseTableHeader(trimmed); ok {
+
+	for i, info := range scanned {
+		if info.header != nil {
 			insertIdx = i
 			break
 		}
@@ -677,24 +653,21 @@ func appendRootKey(lines []string, key, formattedVal string) []byte {
 	return []byte(strings.Join(lines, "\n"))
 }
 
-func appendTableKey(lines []string, tableParts []string, leaf, formattedVal string) []byte {
+func appendTableKey(lines []string, scanned []tomlLine, candidates []candAssignment, tableParts []string, leaf, formattedVal string) []byte {
 	tableIdx := -1
 
-	for i, line := range lines {
-		trimmed := strings.TrimSpace(line)
-		if tbl, ok := parseTableHeader(trimmed); ok {
-			if partsEqual(tbl, tableParts) {
-				tableIdx = i
-				break
-			}
+	for i, info := range scanned {
+		if info.header != nil && partsEqual(info.header, tableParts) {
+			tableIdx = i
+			break
 		}
 	}
 
 	if tableIdx != -1 {
 		insertIdx := len(lines)
+
 		for i := tableIdx + 1; i < len(lines); i++ {
-			trimmed := strings.TrimSpace(lines[i])
-			if _, ok := parseTableHeader(trimmed); ok {
+			if scanned[i].header != nil {
 				insertIdx = i
 				break
 			}
@@ -702,6 +675,16 @@ func appendTableKey(lines []string, tableParts []string, leaf, formattedVal stri
 
 		newLine := fmt.Sprintf("%s = %s", formatTOMLKey(leaf), formattedVal)
 		lines = slices.Insert(lines, insertIdx, newLine)
+
+		return []byte(strings.Join(lines, "\n"))
+	}
+
+	// A table defined by dotted keys, such as server.port = 80, cannot also get
+	// a [server] header; the new key joins it as another dotted key.
+	if last, ok := lastDottedDefinition(candidates, tableParts); ok {
+		relative := append(slices.Clone(tableParts[len(last.currentTable):]), leaf)
+		newLine := fmt.Sprintf("%s = %s", formatTableHeader(relative), formattedVal)
+		lines = slices.Insert(lines, last.endIdx+1, newLine)
 
 		return []byte(strings.Join(lines, "\n"))
 	}
@@ -717,6 +700,24 @@ func appendTableKey(lines []string, tableParts []string, leaf, formattedVal stri
 	fmt.Fprintf(&buf, "\n[%s]\n%s = %s\n", formattedHeader, formatTOMLKey(leaf), formattedVal)
 
 	return buf.Bytes()
+}
+
+// lastDottedDefinition returns the last assignment that defines a key inside
+// tableParts through a dotted key, as in server.port = 80 for the table server.
+func lastDottedDefinition(candidates []candAssignment, tableParts []string) (candAssignment, bool) {
+	var (
+		last  candAssignment
+		found bool
+	)
+
+	for _, cand := range candidates {
+		if len(cand.currentTable) < len(tableParts) && len(cand.fullKey) > len(tableParts) &&
+			partsEqual(cand.fullKey[:len(tableParts)], tableParts) {
+			last, found = cand, true
+		}
+	}
+
+	return last, found
 }
 
 func formatTableHeader(parts []string) string {
@@ -743,15 +744,16 @@ func isBareTOMLKey(s string) bool {
 	}
 
 	for i := range len(s) {
-		c := s[i]
-		if (c >= 'a' && c <= 'z') || (c >= 'A' && c <= 'Z') || (c >= '0' && c <= '9') || c == '_' || c == '-' {
-			continue
+		if !isBareTOMLKeyByte(s[i]) {
+			return false
 		}
-
-		return false
 	}
 
 	return true
+}
+
+func isBareTOMLKeyByte(c byte) bool {
+	return (c >= 'a' && c <= 'z') || (c >= 'A' && c <= 'Z') || (c >= '0' && c <= '9') || c == '_' || c == '-'
 }
 
 func updateInlineTable(inlineText string, parts []string, value any) (string, error) {

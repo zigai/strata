@@ -7,28 +7,6 @@ import (
 	"github.com/zigai/strata/internal/edit"
 )
 
-func TestUpdateJSON(t *testing.T) {
-	t.Parallel()
-
-	input := `{
-  "server": {
-    "host": "127.0.0.1",
-    "port": 8080
-  }
-}
-`
-
-	updated, err := edit.UpdateJSON([]byte(input), "server.port", 9000)
-	if err != nil {
-		t.Fatalf("UpdateJSON error: %v", err)
-	}
-
-	result := string(updated)
-	if !strings.Contains(result, "\"port\": 9000") {
-		t.Errorf("expected \"port\": 9000 in result, got:\n%s", result)
-	}
-}
-
 func TestUpdateJSONNullInput(t *testing.T) {
 	t.Parallel()
 

@@ -41,7 +41,12 @@ type unknownSetKeyError struct {
 //     before a trailing comment becomes one space; an appended key follows a
 //     blank line.
 //   - YAML keeps comments, key order, anchors, aliases, block scalars, merge
-//     keys, flow style, quoting, and indentation. It drops blank lines.
+//     keys, flow style, quoting, and indentation. It drops blank lines. A block
+//     scalar the YAML encoder cannot reproduce exactly, such as one starting
+//     with a blank line, is rewritten as a literal block or a quoted string
+//     with the same value, and an empty null in a flow collection is written
+//     as null. A value on the key's path that is not a mapping is replaced by
+//     one.
 //   - JSON keeps indentation and untouched number text, sorts object keys, and
 //     adds a trailing newline.
 //

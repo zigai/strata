@@ -285,7 +285,7 @@ func TestUpdateTOMLSingleQuotedStringBackslash(t *testing.T) {
 
 	input := "path = 'C:\\dir\\' # comment\n"
 
-	updated, err := edit.UpdateTOML([]byte(input), "port", 8080)
+	updated, err := edit.UpdateTOML([]byte(input), portKey, 8080)
 	if err != nil {
 		t.Fatalf("UpdateTOML error: %v", err)
 	}
@@ -317,9 +317,14 @@ func TestUpdateTOMLMultilineEdits(t *testing.T) {
 	t.Parallel()
 
 	cases := []struct{ name, input, key, literal, want string }{
-		{"unrelated_string", "banner = \"\"\"\nport = 123\n\"\"\"\nport = 8080\n", "port", "9000", "banner = \"\"\"\nport = 123\n\"\"\"\nport = 9000\n"},
+		{"unrelated_string", "banner = \"\"\"\nport = 123\n\"\"\"\nport = 8080\n", portKey, "9000", "banner = \"\"\"\nport = 123\n\"\"\"\nport = 9000\n"},
 		{"multiline_array", "ports = [\n  80,\n  443,\n]\nkeep = true\n", "ports", "[ 8080 ]", "ports = [ 8080 ]\nkeep = true\n"},
 		{"single_line_triple_with_comment", "banner = \"\"\"hello\"\"\" # keep comment\nport = 8080\n", "banner", "\"new\"", "banner = \"new\" # keep comment\nport = 8080\n"},
+		{"single_line_triple_with_quote_and_bracket", "a = '''don't ['''\n\n[db]\nport = 1\n", "a", "'x'", "a = 'x'\n\n[db]\nport = 1\n"},
+		{"table_after_single_line_triple", "a = '''don't ['''\n\n[db]\nport = 1\n", "db.port", "2", "a = '''don't ['''\n\n[db]\nport = 2\n"},
+		{"bracket_inside_string_in_array", "a = [\n  \"\"\"\n]\nb = 1\n  \"\"\",\n]\nb = 1\n", "b", "2", "a = [\n  \"\"\"\n]\nb = 1\n  \"\"\",\n]\nb = 2\n"},
+		{"space_in_quoted_key", "\"my key\" = 1\n", "my key", "2", "\"my key\" = 2\n"},
+		{"spaces_around_dots", "a . b = 1\n", "a.b", "2", "a . b = 2\n"},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
@@ -361,7 +366,7 @@ func TestUpdateTOMLCaseSensitiveExactMatchPreference(t *testing.T) {
 
 	in := "Port = 1\nport = 2\n"
 
-	got, err := edit.UpdateTOML([]byte(in), "port", 3)
+	got, err := edit.UpdateTOML([]byte(in), portKey, 3)
 	if err != nil {
 		t.Fatal(err)
 	}
