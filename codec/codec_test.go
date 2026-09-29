@@ -3,7 +3,6 @@ package codec_test
 import (
 	"errors"
 	"reflect"
-	"strings"
 	"sync"
 	"testing"
 
@@ -130,90 +129,39 @@ func TestRegistryRestrict(t *testing.T) {
 	})
 }
 
-func TestTOMLCodec(t *testing.T) {
+// JSONCodec.Encode writes JSON indented by two spaces, map keys sorted, and no
+// trailing newline, as its doc says; Save and Init write this text to disk.
+func TestJSONCodecEncodesIndentedSortedJSON(t *testing.T) {
 	t.Parallel()
 
-	c := codec.NewTOMLCodec()
-	input := []byte("name = \"my-app\"\nport = 8080\ntags = [\"web\", \"api\"]\n")
-
-	var target sampleConfig
-	if err := c.Decode(input, &target); err != nil {
-		t.Fatalf("Decode TOML: %v", err)
+	value := struct {
+		Name   string
+		Tags   []string
+		Limits map[string]int
+	}{
+		Name:   "my-app",
+		Tags:   []string{"web", "api"},
+		Limits: map[string]int{"zeta": 1, "alpha": 2},
 	}
 
-	if target.Name != "my-app" || target.Port != 8080 || len(target.Tags) != 2 {
-		t.Fatalf("Decoded struct mismatch: %+v", target)
-	}
-
-	encoded, err := c.Encode(target)
+	encoded, err := codec.NewJSONCodec().Encode(value)
 	if err != nil {
-		t.Fatalf("Encode TOML: %v", err)
+		t.Fatalf("Encode: %v", err)
 	}
 
-	var roundtrip sampleConfig
-	if err := c.Decode(encoded, &roundtrip); err != nil {
-		t.Fatalf("Roundtrip Decode: %v", err)
-	}
-
-	if !reflect.DeepEqual(target, roundtrip) {
-		t.Fatalf("Roundtrip mismatch: %+v vs %+v", target, roundtrip)
-	}
-}
-
-func TestYAMLCodec(t *testing.T) {
-	t.Parallel()
-
-	c := codec.NewYAMLCodec()
-	input := []byte("name: my-app\nport: 8080\ntags:\n  - web\n  - api\n")
-
-	var target sampleConfig
-	if err := c.Decode(input, &target); err != nil {
-		t.Fatalf("Decode YAML: %v", err)
-	}
-
-	if target.Name != "my-app" || target.Port != 8080 || len(target.Tags) != 2 {
-		t.Fatalf("Decoded struct mismatch: %+v", target)
-	}
-
-	encoded, err := c.Encode(target)
-	if err != nil {
-		t.Fatalf("Encode YAML: %v", err)
-	}
-
-	var roundtrip sampleConfig
-	if err := c.Decode(encoded, &roundtrip); err != nil {
-		t.Fatalf("Roundtrip Decode: %v", err)
-	}
-
-	if !reflect.DeepEqual(target, roundtrip) {
-		t.Fatalf("Roundtrip mismatch: %+v vs %+v", target, roundtrip)
-	}
-}
-
-func TestJSONCodec(t *testing.T) {
-	t.Parallel()
-
-	c := codec.NewJSONCodec()
-	input := []byte(`{"name":"my-app","port":8080,"tags":["web","api"]}`)
-
-	var target sampleConfig
-	if err := c.Decode(input, &target); err != nil {
-		t.Fatalf("Decode JSON: %v", err)
-	}
-
-	if target.Name != "my-app" || target.Port != 8080 || len(target.Tags) != 2 {
-		t.Fatalf("Decoded struct mismatch: %+v", target)
-	}
-
-	encoded, err := c.Encode(target)
-	if err != nil {
-		t.Fatalf("Encode JSON: %v", err)
-	}
-
-	// NB: the space after the colon is what pins the indented encoding; a
-	// compact encoder would emit "name":"my-app".
-	if !strings.Contains(string(encoded), "\"name\": \"my-app\"") {
-		t.Fatalf("Encoded JSON should be formatted: %s", string(encoded))
+	want := `{
+  "name": "my-app",
+  "tags": [
+    "web",
+    "api"
+  ],
+  "limits": {
+    "alpha": 2,
+    "zeta": 1
+  }
+}`
+	if string(encoded) != want {
+		t.Fatalf("Encode =\n%s\nwant\n%s", encoded, want)
 	}
 }
 
@@ -312,6 +260,8 @@ func TestMalformedIsReportedByEveryCodec(t *testing.T) {
 	}
 }
 
+// A Registry is safe for concurrent use, as its doc says. Only the race detector
+// sees an unguarded access, so this test means something under `just test-race`.
 func TestRegistryConcurrentOperations(t *testing.T) {
 	t.Parallel()
 

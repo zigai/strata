@@ -38,40 +38,27 @@ func (c *YAMLCodec) Decode(data []byte, target any) error {
 		return ErrNilTarget
 	}
 
-	decoder := yaml.NewDecoder(bytes.NewReader(data))
-
-	var doc yaml.Node
-	if err := decoder.Decode(&doc); err != nil {
-		// An empty document has nothing to overlay and is not an error.
-		if errors.Is(err, io.EOF) {
-			return nil
-		}
-
-		return fmt.Errorf("%w: yaml unmarshal: %w", ErrMalformed, err)
-	}
-
-	var extra yaml.Node
-
-	switch err := decoder.Decode(&extra); {
-	case errors.Is(err, io.EOF):
-		// Exactly one document, which is what a configuration tier must be.
-	case err != nil:
-		// The stream is malformed after the first document. That is a parse
-		// failure, not a second document.
-		return fmt.Errorf("%w: yaml unmarshal: %w", ErrMalformed, err)
-	default:
-		return fmt.Errorf("yaml unmarshal: %w", ErrMultipleDocuments)
+	doc, ok, err := readOneYAMLDocument(data)
+	if !ok || err != nil {
+		return err
 	}
 
 	val := reflect.ValueOf(target)
 	if val.Kind() == reflect.Pointer && val.Elem().Kind() == reflect.Struct {
-		if hasYAMLAliasCycle(&doc, make(map[*yaml.Node]bool), make(map[*yaml.Node]bool)) {
+		if hasYAMLAliasCycle(doc, make(map[*yaml.Node]bool), make(map[*yaml.Node]bool)) {
 			return fmt.Errorf("%w: %w", ErrMalformed, errCyclicYAMLAlias)
 		}
 
-		snapshotYAMLAliases(&doc)
+		// NB: yaml.v3 fills an embedded struct only when it is tagged inline, and
+		// panics on an unexported one. The mirror flattens promoted fields and
+		// names every field by its key, so the document decodes into it as is.
+		if mirror := mirrorOfMode(val.Elem().Type(), false, false); mirror.typ != nil {
+			return decodeYAMLMirror(doc, val.Elem(), mirror)
+		}
 
-		if err := rewriteYAMLNode(&doc, val.Elem().Type()); err != nil {
+		snapshotYAMLAliases(doc)
+
+		if err := rewriteYAMLNode(doc, val.Elem().Type()); err != nil {
 			return fmt.Errorf("%w: yaml unmarshal: %w", ErrMalformed, err)
 		}
 	}
@@ -81,6 +68,35 @@ func (c *YAMLCodec) Decode(data []byte, target any) error {
 	}
 
 	return nil
+}
+
+// readOneYAMLDocument parses data as a single YAML document. It reports false
+// for an empty document, which has nothing to overlay and is not an error.
+func readOneYAMLDocument(data []byte) (*yaml.Node, bool, error) {
+	decoder := yaml.NewDecoder(bytes.NewReader(data))
+
+	var doc yaml.Node
+	if err := decoder.Decode(&doc); err != nil {
+		if errors.Is(err, io.EOF) {
+			return nil, false, nil
+		}
+
+		return nil, false, fmt.Errorf("%w: yaml unmarshal: %w", ErrMalformed, err)
+	}
+
+	var extra yaml.Node
+
+	switch err := decoder.Decode(&extra); {
+	case errors.Is(err, io.EOF):
+		// Exactly one document, which is what a configuration tier must be.
+		return &doc, true, nil
+	case err != nil:
+		// The stream is malformed after the first document. That is a parse
+		// failure, not a second document.
+		return nil, false, fmt.Errorf("%w: yaml unmarshal: %w", ErrMalformed, err)
+	default:
+		return nil, false, fmt.Errorf("yaml unmarshal: %w", ErrMultipleDocuments)
+	}
 }
 
 // yamlBindings binds each configuration key of typ to the name yaml.v3 matches:

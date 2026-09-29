@@ -213,14 +213,19 @@ func appendIndex(prefix, index []int) []int {
 
 // keyedTag builds the tag of a mirror field: every format tag names the
 // configuration key, keeping the options the source tag declared for that
-// format, and the passthrough tags are copied.
+// format, and the passthrough tags are copied. A field whose tag for a format
+// is "-" stays excluded from that format, as its own decoder excludes it.
 func keyedTag(field reflect.StructField, key string) reflect.StructTag {
 	var b strings.Builder
 
 	for _, format := range keyedFormatTags {
 		value := key
 
-		if _, options, ok := strings.Cut(field.Tag.Get(format), ","); ok {
+		switch tag := field.Tag.Get(format); {
+		case tag == "-":
+			value = "-"
+		case strings.Contains(tag, ","):
+			_, options, _ := strings.Cut(tag, ",")
 			value += "," + options
 		}
 
