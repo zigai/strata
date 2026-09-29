@@ -28,3 +28,5 @@ jobs:
       # Every module is checked, not just the root: the workspace here has four.
       - run: just mod-check
       - run: just test
+      # The registry and loader are shared across goroutines; only -race checks that.
+      - run: just test-race

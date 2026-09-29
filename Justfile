@@ -5,12 +5,23 @@ _:
 help:
     @just --list
 
-# Run all tests
-test:
-    go test ./...
-    go test -C bridge/cobra ./...
-    go test -C bridge/urfave ./...
-    go test -C examples/cli ./...
+# Run all tests; every module runs even when an earlier one fails
+test *flags:
+    #!/usr/bin/env sh
+    status=0
+    go test {{flags}} ./... || status=1
+    go test -C bridge/cobra {{flags}} ./... || status=1
+    go test -C bridge/urfave {{flags}} ./... || status=1
+    go test -C examples/cli {{flags}} ./... || status=1
+    exit $status
+
+# Run all tests under the race detector
+test-race: (test "-race")
+
+# Explore the config editors with the fuzzer, each target for the given time
+fuzz time="60s":
+    go test -run '^$' -fuzz '^FuzzUpdateTOML$' -fuzztime {{time}} ./internal/edit/
+    go test -run '^$' -fuzz '^FuzzUpdateYAML$' -fuzztime {{time}} ./internal/edit/
 
 # Run tests and display coverage
 coverage:
