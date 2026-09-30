@@ -185,7 +185,6 @@ linters:
         - name: package-directory-mismatch
         - name: filename-format
           arguments: ["^[a-z0-9][a-z0-9_]*\\.go$"]
-        # Only the stutter check: every other check of this rule is disabled.
         - name: exported
           arguments:
             - disable-checks-on-constants
