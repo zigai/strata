@@ -16,10 +16,10 @@ func TestCascadeDiscovery(t *testing.T) {
 	t.Run("no config bypasses all", func(t *testing.T) {
 		t.Parallel()
 
-		layers, err := cascade.Discover(cascade.Params{
-			AppName:      "testapp",
-			WithoutFiles: true,
-			Extensions:   []string{".toml", ".yaml"},
+		layers, err := cascade.Discover(cascade.DiscoverOptions{
+			AppName:       "testapp",
+			SkipDiscovery: true,
+			Extensions:    []string{".toml", ".yaml"},
 		})
 		if err != nil {
 			t.Fatalf("Discover error: %v", err)
@@ -40,7 +40,7 @@ func TestCascadeDiscovery(t *testing.T) {
 			t.Fatalf("WriteFile: %v", err)
 		}
 
-		layers, err := cascade.Discover(cascade.Params{
+		layers, err := cascade.Discover(cascade.DiscoverOptions{
 			ExplicitPath: filePath,
 			Extensions:   []string{".toml"},
 		})
@@ -58,7 +58,7 @@ func TestCascadeDiscovery(t *testing.T) {
 
 		buf := bytes.NewBufferString("host = \"stdin-host\"\nport = 9000\n")
 
-		layers, err := cascade.Discover(cascade.Params{
+		layers, err := cascade.Discover(cascade.DiscoverOptions{
 			ExplicitPath: "-",
 			StdinReader:  buf,
 			MaxFileSize:  1024,
@@ -78,9 +78,9 @@ func TestCascadeDiscovery(t *testing.T) {
 	})
 }
 
-func TestCascadeUserTierDiscovery(t *testing.T) {
+func TestCascadeUserLayerDiscovery(t *testing.T) {
 	if filepath.Separator == '\\' {
-		t.Skip("skipping Unix/macOS user tier test on Windows")
+		t.Skip("skipping Unix/macOS user layer test on Windows")
 	}
 
 	t.Run("discovers config in XDG_CONFIG_HOME", func(t *testing.T) {
@@ -99,7 +99,7 @@ func TestCascadeUserTierDiscovery(t *testing.T) {
 		t.Setenv("XDG_CONFIG_HOME", xdgDir)
 		t.Setenv("XDG_CONFIG_DIRS", t.TempDir())
 
-		layers, err := cascade.Discover(cascade.Params{
+		layers, err := cascade.Discover(cascade.DiscoverOptions{
 			AppName:    "testapp",
 			Extensions: []string{".toml"},
 		})
@@ -133,7 +133,7 @@ func TestCascadeUserTierDiscovery(t *testing.T) {
 		t.Setenv("XDG_CONFIG_DIRS", t.TempDir())
 		t.Setenv("HOME", homeDir)
 
-		layers, err := cascade.Discover(cascade.Params{
+		layers, err := cascade.Discover(cascade.DiscoverOptions{
 			AppName:    "testapp",
 			Extensions: []string{".toml"},
 		})
@@ -151,9 +151,7 @@ func TestCascadeUserTierDiscovery(t *testing.T) {
 	})
 }
 
-// isolateTiers points both tiers at fresh temp dirs so no config file on the
-// machine takes part, and returns the system and user bases.
-func isolateTiers(t *testing.T) (string, string) {
+func isolateLayers(t *testing.T) (string, string) {
 	t.Helper()
 
 	systemBase, userBase := t.TempDir(), t.TempDir()
@@ -164,7 +162,7 @@ func isolateTiers(t *testing.T) (string, string) {
 	return systemBase, userBase
 }
 
-func writeTierFile(t *testing.T, base, name string) string {
+func writeLayerFile(t *testing.T, base, name string) string {
 	t.Helper()
 
 	dir := filepath.Join(base, "testapp")
@@ -181,11 +179,11 @@ func writeTierFile(t *testing.T, base, name string) string {
 }
 
 func TestDiscoverOrdersSystemBelowUser(t *testing.T) {
-	systemBase, userBase := isolateTiers(t)
-	systemPath := writeTierFile(t, systemBase, "config.toml")
-	userPath := writeTierFile(t, userBase, "config.toml")
+	systemBase, userBase := isolateLayers(t)
+	systemPath := writeLayerFile(t, systemBase, "config.toml")
+	userPath := writeLayerFile(t, userBase, "config.toml")
 
-	layers, err := cascade.Discover(cascade.Params{AppName: "testapp", Extensions: []string{".toml"}})
+	layers, err := cascade.Discover(cascade.DiscoverOptions{AppName: "testapp", Extensions: []string{".toml"}})
 	if err != nil {
 		t.Fatalf("Discover: %v", err)
 	}
@@ -199,18 +197,16 @@ func TestDiscoverOrdersSystemBelowUser(t *testing.T) {
 	}
 }
 
-// The system tier is the first XDG_CONFIG_DIRS entry that holds the file;
-// blank entries are skipped and later entries are not layered on top.
-func TestDiscoverSystemTierSearchesConfigDirsInOrder(t *testing.T) {
-	_, _ = isolateTiers(t)
+func TestDiscoverSystemLayerSearchesConfigDirsInOrder(t *testing.T) {
+	_, _ = isolateLayers(t)
 
 	withoutFile, first, second := t.TempDir(), t.TempDir(), t.TempDir()
-	firstPath := writeTierFile(t, first, "config.toml")
-	writeTierFile(t, second, "config.toml")
+	firstPath := writeLayerFile(t, first, "config.toml")
+	writeLayerFile(t, second, "config.toml")
 
 	t.Setenv("XDG_CONFIG_DIRS", withoutFile+": :"+first+":"+second)
 
-	layers, err := cascade.Discover(cascade.Params{AppName: "testapp", Extensions: []string{".toml"}})
+	layers, err := cascade.Discover(cascade.DiscoverOptions{AppName: "testapp", Extensions: []string{".toml"}})
 	if err != nil {
 		t.Fatalf("Discover: %v", err)
 	}

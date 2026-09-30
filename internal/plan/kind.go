@@ -8,48 +8,32 @@ import (
 )
 
 const (
-	// KindUnsupported reports a type that has no CLI flag mapping.
 	KindUnsupported Kind = iota
 
-	// KindString is a string leaf.
 	KindString
 
-	// KindBool is a boolean leaf.
 	KindBool
 
-	// KindInt is an int leaf.
 	KindInt
 
-	// KindInt64 is a signed integer leaf that is not an int.
 	KindInt64
 
-	// KindUint is a uint leaf.
 	KindUint
 
-	// KindUint64 is an unsigned integer leaf that is not a uint.
 	KindUint64
 
-	// KindFloat32 is a float32 leaf.
 	KindFloat32
 
-	// KindFloat64 is a float64 leaf.
 	KindFloat64
 
-	// KindDuration is a [time.Duration] leaf, which carries a duration parser in
-	// place of the integer parser.
 	KindDuration
 
-	// KindText is a leaf that satisfies the text codec contract, and is carried
-	// as text.
 	KindText
 
-	// KindStringSlice is a []string leaf.
 	KindStringSlice
 
-	// KindIntSlice is a []int leaf.
 	KindIntSlice
 
-	// KindInt64Slice is a []int64 leaf.
 	KindInt64Slice
 )
 
@@ -79,9 +63,6 @@ var (
 		reflect.Int64:  KindInt64Slice,
 	}
 
-	// storageTypes maps a flag kind to the canonical type its detached storage
-	// holds. A narrow integer widens to the framework's own width and a text
-	// codec widens to string; the write-back path converts with a range check.
 	//nolint:exhaustive // KindUnsupported never reaches storage; StorageTypeFor falls back to the leaf type
 	storageTypes = map[Kind]reflect.Type{
 		KindText:        reflect.TypeFor[string](),
@@ -100,14 +81,8 @@ var (
 	}
 )
 
-// Kind classifies a leaf type into the flag family that represents it.
 type Kind int
 
-// Classify maps a Go type to a flag kind and reports the type's leaf form. A
-// pointer is unwrapped, so the returned leaf type is never itself a pointer.
-//
-// A type with no flag mapping produces an error wrapping
-// [ErrUnsupportedFieldType].
 func Classify(typ reflect.Type) (Kind, reflect.Type, error) {
 	leaf := typ
 	if leaf.Kind() == reflect.Pointer {
@@ -141,8 +116,6 @@ func Classify(typ reflect.Type) (Kind, reflect.Type, error) {
 	return KindUnsupported, nil, fmt.Errorf("%w: type %s has no flag mapping", ErrUnsupportedFieldType, typ)
 }
 
-// StorageTypeFor reports the canonical type that detached storage holds for a
-// flag kind. A kind with no entry in storageTypes falls back to the leaf type.
 func StorageTypeFor(kind Kind, leaf reflect.Type) reflect.Type {
 	if storage, ok := storageTypes[kind]; ok {
 		return storage
@@ -159,19 +132,16 @@ func classifySlice(leaf reflect.Type) (Kind, reflect.Type, error) {
 	return KindUnsupported, nil, fmt.Errorf("%w: slice element type %s has no flag mapping", ErrUnsupportedFieldType, leaf.Elem())
 }
 
-// implementsTextCodec reports whether typ satisfies the text codec contract: the
-// value must be marshalable and its address unmarshalable.
-//
-// The marshaller lets the flag carry a default; the unmarshaller decodes a parsed
-// string into the field.
+// The marshaler lets a flag carry a default; the unmarshaler decodes parsed
+// text into the field.
 func implementsTextCodec(typ reflect.Type) bool {
-	marshaller := reflect.TypeFor[encoding.TextMarshaler]()
-	unmarshaller := reflect.TypeFor[encoding.TextUnmarshaler]()
+	marshaler := reflect.TypeFor[encoding.TextMarshaler]()
+	unmarshaler := reflect.TypeFor[encoding.TextUnmarshaler]()
 
 	if typ.Kind() == reflect.Pointer {
-		return typ.Implements(marshaller) && typ.Implements(unmarshaller)
+		return typ.Implements(marshaler) && typ.Implements(unmarshaler)
 	}
 
-	return (typ.Implements(marshaller) || reflect.PointerTo(typ).Implements(marshaller)) &&
-		reflect.PointerTo(typ).Implements(unmarshaller)
+	return (typ.Implements(marshaler) || reflect.PointerTo(typ).Implements(marshaler)) &&
+		reflect.PointerTo(typ).Implements(unmarshaler)
 }

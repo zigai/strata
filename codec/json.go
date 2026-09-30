@@ -7,14 +7,14 @@ import (
 	"time"
 )
 
-// JSONCodec implements [Codec] for JSON documents using encoding/json/v2.
+// JSON implements [Codec] for JSON documents using encoding/json/v2.
 //
-// A JSONCodec is stateless and safe for concurrent use.
-type JSONCodec struct{}
+// JSON is stateless and safe for concurrent use.
+type JSON struct{}
 
-// NewJSONCodec returns a codec that decodes and encodes JSON documents.
-func NewJSONCodec() *JSONCodec {
-	return &JSONCodec{}
+// NewJSON returns a codec that decodes and encodes JSON documents.
+func NewJSON() *JSON {
+	return &JSON{}
 }
 
 // Decode overlays a JSON document onto target.
@@ -24,7 +24,7 @@ func NewJSONCodec() *JSONCodec {
 //
 // Nil targets return [ErrNilTarget]. Malformed JSON, duplicate members, and
 // invalid UTF-8 wrap [ErrMalformed].
-func (c *JSONCodec) Decode(data []byte, target any) error {
+func (c *JSON) Decode(data []byte, target any) error {
 	if isNilTarget(target) {
 		return ErrNilTarget
 	}
@@ -67,7 +67,7 @@ func (c *JSONCodec) Decode(data []byte, target any) error {
 
 // Encode writes value as indented JSON without a trailing newline. Map keys are
 // sorted for deterministic output, and struct fields use configuration keys.
-func (c *JSONCodec) Encode(value any) ([]byte, error) {
+func (c *JSON) Encode(value any) ([]byte, error) {
 	data, err := json.Marshal(keyedValue(value), jsontext.WithIndent("  "), json.Deterministic(true), json.WithMarshalers(json.MarshalFunc(func(value time.Duration) ([]byte, error) {
 		return json.Marshal(value.String())
 	})))

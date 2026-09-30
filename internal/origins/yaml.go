@@ -6,7 +6,6 @@ import (
 	"gopkg.in/yaml.v3"
 )
 
-// yamlWalker carries the state of one walk over a YAML document.
 type yamlWalker struct {
 	emit func(Record)
 
@@ -14,16 +13,9 @@ type yamlWalker struct {
 	// path.
 	active map[*yaml.Node]bool
 
-	// referenced holds every anchored node that some alias in the document
-	// points at.
 	referenced map[*yaml.Node]bool
 }
 
-// readYAML reports whether data parsed as a YAML mapping and, if so, emits one
-// Record per leaf key.
-//
-// YAML is the only format whose reader can report a line, because a decoded
-// node carries the position it was read from.
 func readYAML(data []byte, emit func(Record)) bool {
 	var document yaml.Node
 
@@ -46,9 +38,7 @@ func readYAML(data []byte, emit func(Record)) bool {
 	return true
 }
 
-// collectAliasTargets records the node behind every alias under node. It does
-// not follow aliases, so the walk terminates on a document that aliases one of
-// its own ancestors.
+// Aliases are not followed, so ancestor aliases cannot make this walk recurse forever.
 func collectAliasTargets(node *yaml.Node, targets map[*yaml.Node]bool) {
 	if node.Kind == yaml.AliasNode {
 		targets[node.Alias] = true
@@ -61,12 +51,9 @@ func collectAliasTargets(node *yaml.Node, targets map[*yaml.Node]bool) {
 	}
 }
 
-// walk emits one Record per leaf of a YAML mapping, expanding merge sources
-// before explicit keys so the latter win in provenance.
-//
-// template marks the records as sitting under a reused anchor. It is inherited
-// by nested keys, and it is not passed into merge sources: a key that a merge
-// brings in is a real setting at its new location.
+// Merge sources are expanded before explicit keys so the latter win.
+// Template status is inherited by nested keys but not passed into merge sources:
+// a merged key is a real setting at its new location.
 func (w *yamlWalker) walk(node *yaml.Node, prefix string, template bool) {
 	if node == nil || node.Kind != yaml.MappingNode || w.active[node] {
 		return
@@ -98,7 +85,7 @@ func (w *yamlWalker) walk(node *yaml.Node, prefix string, template bool) {
 			continue
 		}
 
-		w.emit(Record{Key: fullKey, Line: keyNode.Line, RawValue: valueNode.Value, Template: valueTemplate})
+		w.emit(Record{Key: fullKey, Line: keyNode.Line, RawValue: valueNode.Value, IsTemplate: valueTemplate})
 	}
 }
 

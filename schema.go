@@ -28,16 +28,16 @@ type SchemaOption func(*schemaOptions)
 // The value is normally the URL the schema is served from, which editors use to
 // resolve references.
 func WithSchemaID(id string) SchemaOption {
-	return func(o *schemaOptions) {
-		o.id = id
+	return func(opts *schemaOptions) {
+		opts.id = id
 	}
 }
 
 // WithSchemaTitle sets the title of the generated schema, which schema-aware
 // editors display.
 func WithSchemaTitle(title string) SchemaOption {
-	return func(o *schemaOptions) {
-		o.title = title
+	return func(opts *schemaOptions) {
+		opts.title = title
 	}
 }
 
@@ -87,11 +87,6 @@ func Schema[T any](opts ...SchemaOption) ([]byte, error) {
 	return data, nil
 }
 
-// reflectSchema returns the [jsonschema.Schema] for typ.
-//
-// The reflector panics on types it has no schema for. The panic is recovered and
-// returned as an error wrapping [ErrReflectSchema]. A panic escaping the library
-// call would terminate the process unless the caller recovered it.
 func reflectSchema(typ reflect.Type) (*jsonschema.Schema, error) {
 	reflector := &jsonschema.Reflector{
 		ExpandedStruct: true,

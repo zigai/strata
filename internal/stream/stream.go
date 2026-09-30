@@ -10,31 +10,20 @@ import (
 )
 
 const (
-	// DefaultMaxFileSize is the size limit applied when a caller passes a
-	// non-positive maxBytes: 1 MiB.
 	DefaultMaxFileSize int64 = 1024 * 1024
 )
 
 var (
-	// ErrFileTooLarge is returned when configuration input exceeds the maximum
-	// permitted size. The message states the limit that was exceeded.
 	ErrFileTooLarge = errors.New("configuration input exceeds maximum allowed size")
 
-	stdinMu     sync.Mutex
-	stdinBuffer []byte
-	stdinCached bool
-	errStdin    error
+	stdinMu    sync.Mutex
+	stdinCache struct {
+		data  []byte
+		ready bool
+		err   error
+	}
 )
 
-// ReadBounded reads from r up to maxBytes and returns the data read.
-//
-// A maxBytes of zero or less selects [DefaultMaxFileSize]. Note: one byte past
-// the limit is read, and an input larger than the limit is reported, not
-// returned truncated. A maxBytes of [math.MaxInt64] is used unchanged; that
-// limit cannot be exceeded.
-//
-// It returns [ErrFileTooLarge] if the input exceeds the limit. The returned
-// slice is owned by the caller.
 func ReadBounded(r io.Reader, maxBytes int64) ([]byte, error) {
 	if maxBytes <= 0 {
 		maxBytes = DefaultMaxFileSize
@@ -42,6 +31,8 @@ func ReadBounded(r io.Reader, maxBytes int64) ([]byte, error) {
 
 	limit := maxBytes
 	if maxBytes < math.MaxInt64 {
+		// Read one byte past the bound to distinguish oversized input from a complete
+		// document at the limit.
 		limit++
 	}
 
@@ -57,14 +48,9 @@ func ReadBounded(r io.Reader, maxBytes int64) ([]byte, error) {
 	return data, nil
 }
 
-// ReadStdin reads from r, or process stdin when r is nil.
-//
-// Process stdin is read once and cached; supplied readers are read on every
-// call. Access to process stdin is serialized.
-//
-// A nonpositive maxBytes uses [DefaultMaxFileSize]. Oversized input returns
-// [ErrFileTooLarge]. The returned slice is owned by the caller.
 func ReadStdin(r io.Reader, maxBytes int64) ([]byte, error) {
+	// Process stdin is read once and cached; supplied readers are read on every
+	// call. Access to process stdin is serialized. Returned slices are caller-owned.
 	if maxBytes <= 0 {
 		maxBytes = DefaultMaxFileSize
 	}
@@ -81,17 +67,17 @@ func ReadStdin(r io.Reader, maxBytes int64) ([]byte, error) {
 	stdinMu.Lock()
 	defer stdinMu.Unlock()
 
-	if stdinCached {
-		if errStdin != nil {
-			return nil, fmt.Errorf("read stdin configuration: %w", errStdin)
+	if stdinCache.ready {
+		if stdinCache.err != nil {
+			return nil, fmt.Errorf("read stdin configuration: %w", stdinCache.err)
 		}
 
-		if int64(len(stdinBuffer)) > maxBytes {
-			return nil, fmt.Errorf("%w (%d bytes limit, cached is %d bytes)", ErrFileTooLarge, maxBytes, len(stdinBuffer))
+		if int64(len(stdinCache.data)) > maxBytes {
+			return nil, fmt.Errorf("%w (%d bytes limit, cached is %d bytes)", ErrFileTooLarge, maxBytes, len(stdinCache.data))
 		}
 
-		cp := make([]byte, len(stdinBuffer))
-		copy(cp, stdinBuffer)
+		cp := make([]byte, len(stdinCache.data))
+		copy(cp, stdinCache.data)
 
 		return cp, nil
 	}
@@ -99,39 +85,33 @@ func ReadStdin(r io.Reader, maxBytes int64) ([]byte, error) {
 	data, err := ReadBounded(reader, maxBytes)
 	if err != nil {
 		if seeker, ok := reader.(io.Seeker); ok {
-			if _, sErr := seeker.Seek(0, io.SeekStart); sErr == nil {
+			if _, seekErr := seeker.Seek(0, io.SeekStart); seekErr == nil {
 				return nil, fmt.Errorf("read stdin configuration: %w", err)
 			}
 		}
 
-		stdinBuffer = data
-		stdinCached = true
-		errStdin = err
+		stdinCache.data = data
+		stdinCache.ready = true
+		stdinCache.err = err
 
 		return nil, fmt.Errorf("read stdin configuration: %w", err)
 	}
 
-	stdinBuffer = data
-	stdinCached = true
-	errStdin = nil
+	stdinCache.data = data
+	stdinCache.ready = true
+	stdinCache.err = nil
 
-	cp := make([]byte, len(stdinBuffer))
-	copy(cp, stdinBuffer)
+	cp := make([]byte, len(stdinCache.data))
+	copy(cp, stdinCache.data)
 
 	return cp, nil
 }
 
-// resetForTesting clears the stdin data cached by [ReadStdin]. It exists for the
-// package's own tests, which share one process-wide cache.
-//
-// The next call that reads the process stdin reads it again. The cache is
-// guarded by the same mutex; a reset is safe while other reads are in flight.
-// It exists for tests.
 func resetForTesting() {
 	stdinMu.Lock()
 	defer stdinMu.Unlock()
 
-	stdinBuffer = nil
-	stdinCached = false
-	errStdin = nil
+	stdinCache.data = nil
+	stdinCache.ready = false
+	stdinCache.err = nil
 }

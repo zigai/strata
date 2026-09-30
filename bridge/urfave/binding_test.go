@@ -94,8 +94,6 @@ type urfaveKinds struct {
 	Timeout strata.Duration
 }
 
-// Each supported field kind maps to a urfave/cli flag and accepts its syntax,
-// including repeated flags for a list.
 func TestUrfaveFlagKinds(t *testing.T) {
 	var cfg urfaveKinds
 
@@ -113,8 +111,6 @@ func TestUrfaveFlagKinds(t *testing.T) {
 	}
 }
 
-// A shell completion request runs Before, and must not fail on a broken file.
-// urfave/cli only exposes the request through the process arguments.
 func TestUrfaveShellCompletionSkipsLoad(t *testing.T) {
 	path := filepath.Join(t.TempDir(), "config.toml")
 	if err := os.WriteFile(path, []byte("port = abc\n"), 0o600); err != nil {

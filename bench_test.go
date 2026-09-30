@@ -31,12 +31,12 @@ func (b *BenchConfig) SetDefaults() {
 	b.Features = []string{"metrics", "tracing"}
 }
 
-func BenchmarkLoadWithoutFiles(b *testing.B) {
+func BenchmarkLoadWithoutFileDiscovery(b *testing.B) {
 	b.ReportAllocs()
 	b.ResetTimer()
 
 	for b.Loop() {
-		_, err := strata.Load[BenchConfig](strata.WithoutFiles())
+		_, err := strata.Load[BenchConfig](strata.WithoutFileDiscovery())
 		if err != nil {
 			b.Fatal(err)
 		}
@@ -54,7 +54,7 @@ func BenchmarkLoadWithEnv(b *testing.B) {
 	for b.Loop() {
 		_, err := strata.Load[BenchConfig](
 			strata.WithEnvPrefix("BENCH_"),
-			strata.WithoutFiles(),
+			strata.WithoutFileDiscovery(),
 		)
 		if err != nil {
 			b.Fatal(err)

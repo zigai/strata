@@ -9,23 +9,10 @@ import (
 	"strings"
 )
 
-// defaultJSONIndent is used when a document is written on one line, so it
-// declares no indentation of its own.
 const defaultJSONIndent = "  "
 
-// ErrNonObjectNavigation is returned when a dotted path traverses a value that
-// is not an object.
-//
-// The error names the key that blocked navigation.
-var ErrNonObjectNavigation = errors.New("cannot navigate through non-object key")
+var ErrPathNotMapping = errors.New("cannot navigate through non-object key")
 
-// UpdateJSON writes value at dottedKey, creating intermediate objects as needed.
-//
-// Untouched values retain their original text, including large integers. The
-// result keeps indentation, sorts object keys, and ends with a newline.
-//
-// A null document becomes an empty object. Non-object path segments return
-// [ErrNonObjectNavigation].
 func UpdateJSON(data []byte, dottedKey string, value any) ([]byte, error) {
 	var root map[string]jsontext.Value
 
@@ -56,12 +43,6 @@ func UpdateJSON(data []byte, dottedKey string, value any) ([]byte, error) {
 	return append(updated, '\n'), nil
 }
 
-// setNested writes value at parts within obj, creating intermediate objects as
-// needed.
-//
-// An intermediate key that already holds a value other than an object blocks
-// navigation; that value is not overwritten. It returns
-// [ErrNonObjectNavigation] in that case.
 func setNested(obj map[string]jsontext.Value, parts []string, value jsontext.Value, indent string) error {
 	key := parts[0]
 
@@ -75,7 +56,7 @@ func setNested(obj map[string]jsontext.Value, parts []string, value jsontext.Val
 
 	if raw, exists := obj[key]; exists {
 		if !isJSONObject(raw) {
-			return fmt.Errorf("%w: %q", ErrNonObjectNavigation, key)
+			return fmt.Errorf("%w: %q", ErrPathNotMapping, key)
 		}
 
 		if err := json.Unmarshal(raw, &child); err != nil {
@@ -101,12 +82,8 @@ func setNested(obj map[string]jsontext.Value, parts []string, value jsontext.Val
 	return nil
 }
 
-// jsonSourceIndent reports the indentation step the document was written with, so
-// an edit reproduces it rather than imposing one.
-//
-// A JSON string cannot contain a raw newline, so the leading whitespace of a line
-// is always structure rather than content, and the first indented line gives the
-// step. A document written on one line reports the default.
+// A JSON string cannot contain a raw newline, so leading whitespace on a line
+// is structure rather than content.
 func jsonSourceIndent(data []byte) string {
 	for line := range bytes.Lines(data) {
 		trimmed := bytes.TrimLeft(line, " \t")
@@ -120,9 +97,6 @@ func jsonSourceIndent(data []byte) string {
 	return defaultJSONIndent
 }
 
-// isJSONObject reports whether raw holds a JSON object.
-//
-// Scalars, arrays, and null report false.
 func isJSONObject(raw jsontext.Value) bool {
 	trimmed := bytes.TrimSpace(raw)
 

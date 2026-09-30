@@ -13,14 +13,14 @@ import (
 
 var errCyclicYAMLAlias = errors.New("cyclic YAML alias")
 
-// YAMLCodec implements [Codec] for YAML documents using yaml.v3.
+// YAML implements [Codec] for YAML documents using yaml.v3.
 //
-// A YAMLCodec is stateless and safe for concurrent use.
-type YAMLCodec struct{}
+// YAML is stateless and safe for concurrent use.
+type YAML struct{}
 
-// NewYAMLCodec returns a codec that decodes and encodes YAML documents.
-func NewYAMLCodec() *YAMLCodec {
-	return &YAMLCodec{}
+// NewYAML returns a codec that decodes and encodes YAML documents.
+func NewYAML() *YAML {
+	return &YAML{}
 }
 
 // Decode overlays a YAML document onto target.
@@ -33,7 +33,7 @@ func NewYAMLCodec() *YAMLCodec {
 // It returns [ErrNilTarget] if target is nil. A malformed document returns an
 // error wrapping the yaml.v3 failure, and a stream carrying more than one
 // document returns [ErrMultipleDocuments]. An empty document is not an error.
-func (c *YAMLCodec) Decode(data []byte, target any) error {
+func (c *YAML) Decode(data []byte, target any) error {
 	if isNilTarget(target) {
 		return ErrNilTarget
 	}
@@ -52,7 +52,7 @@ func (c *YAMLCodec) Decode(data []byte, target any) error {
 		// NB: yaml.v3 fills an embedded struct only when it is tagged inline, and
 		// panics on an unexported one. The mirror flattens promoted fields and
 		// names every field by its key, so the document decodes into it as is.
-		if mirror := mirrorOfMode(val.Elem().Type(), false, false); mirror.typ != nil {
+		if mirror := mirrorOfMode(val.Elem().Type(), mirrorMode{OmitSecrets: false, StringifyDurations: false}); mirror.typ != nil {
 			return decodeYAMLMirror(doc, val.Elem(), mirror)
 		}
 
@@ -70,8 +70,6 @@ func (c *YAMLCodec) Decode(data []byte, target any) error {
 	return nil
 }
 
-// readOneYAMLDocument parses data as a single YAML document. It reports false
-// for an empty document, which has nothing to overlay and is not an error.
 func readOneYAMLDocument(data []byte) (*yaml.Node, bool, error) {
 	decoder := yaml.NewDecoder(bytes.NewReader(data))
 
@@ -88,7 +86,6 @@ func readOneYAMLDocument(data []byte) (*yaml.Node, bool, error) {
 
 	switch err := decoder.Decode(&extra); {
 	case errors.Is(err, io.EOF):
-		// Exactly one document, which is what a configuration tier must be.
 		return &doc, true, nil
 	case err != nil:
 		// The stream is malformed after the first document. That is a parse
@@ -99,8 +96,6 @@ func readOneYAMLDocument(data []byte) (*yaml.Node, bool, error) {
 	}
 }
 
-// yamlBindings binds each configuration key of typ to the name yaml.v3 matches:
-// the field's yaml tag, or its lowercased Go name.
 func yamlBindings(typ reflect.Type) map[string]fieldBinding {
 	return keyBindings(typ, func(field reflect.StructField) (string, bool) {
 		name, named := tagName(field, "yaml")
@@ -270,7 +265,6 @@ func rewriteYAMLNode(node *yaml.Node, targetType reflect.Type) error {
 	case yaml.SequenceNode:
 		return rewriteYAMLSequence(node, targetType)
 	case yaml.ScalarNode, yaml.AliasNode:
-		// Scalar and alias nodes contain no child nodes to rewrite.
 	}
 
 	return nil
@@ -292,7 +286,7 @@ func derefType(typ reflect.Type) reflect.Type {
 //
 // It returns an error wrapping the yaml.v3 failure if value cannot be
 // represented in YAML.
-func (c *YAMLCodec) Encode(value any) ([]byte, error) {
+func (c *YAML) Encode(value any) ([]byte, error) {
 	data, err := yaml.Marshal(keyedValue(value))
 	if err != nil {
 		return nil, fmt.Errorf("yaml marshal: %w", err)

@@ -19,21 +19,21 @@ type Codec = codec.Codec
 type Option func(*loadOptions)
 
 type loadOptions struct {
-	appName       string
-	envPrefix     string
-	explicitPath  string
-	optionalPath  bool
-	stdinReader   io.Reader
-	codecReg      *codec.Registry
-	defaultsFunc  func(any) error
-	maxFileSize   int64
-	withoutFiles  bool
-	formats       []string
-	formatAliases map[string]string
-	stdinExt      string
-	contributions []Contribution
-	strict        bool
-	keys          *keyTree
+	appName              string
+	envPrefix            string
+	explicitPath         string
+	optionalPath         bool
+	stdinReader          io.Reader
+	codecs               *codec.Registry
+	defaultsFunc         func(any) error
+	maxFileSize          int64
+	withoutFileDiscovery bool
+	formats              []string
+	formatAliases        map[string]string
+	stdinExt             string
+	contributions        []Contribution
+	strict               bool
+	keys                 *keyTree
 }
 
 type Contribution func(target any, meta *Metadata) error
@@ -51,11 +51,11 @@ type typedDecoderCodec[T any] struct {
 // WithAppName sets the directory name searched under each configuration root,
 // such as <XDG_CONFIG_HOME>/myapp/config.toml.
 //
-// Tier discovery is skipped entirely when this is unset. An application that
+// Layer discovery is skipped entirely when this is unset. An application that
 // relies only on an explicit path or the environment does not need it.
 func WithAppName(name string) Option {
-	return func(o *loadOptions) {
-		o.appName = name
+	return func(opts *loadOptions) {
+		opts.appName = name
 	}
 }
 
@@ -65,8 +65,8 @@ func WithAppName(name string) Option {
 // names such as PORT are never read without a prefix, so an unrelated variable
 // in the process environment cannot change the configuration.
 func WithEnvPrefix(prefix string) Option {
-	return func(o *loadOptions) {
-		o.envPrefix = prefix
+	return func(opts *loadOptions) {
+		opts.envPrefix = prefix
 	}
 }
 
@@ -80,9 +80,9 @@ func WithEnvPrefix(prefix string) Option {
 //
 // A reader from [WithStdin] is consumed directly and is not cached.
 func WithPath(path string) Option {
-	return func(o *loadOptions) {
-		o.explicitPath = path
-		o.optionalPath = false
+	return func(opts *loadOptions) {
+		opts.explicitPath = path
+		opts.optionalPath = false
 	}
 }
 
@@ -91,20 +91,20 @@ func WithPath(path string) Option {
 // an error. Its extension must be enabled with [WithFormats]; "-" uses the
 // first enabled format for stdin.
 func WithOptionalPath(path string) Option {
-	return func(o *loadOptions) {
-		o.explicitPath = path
-		o.optionalPath = true
+	return func(opts *loadOptions) {
+		opts.explicitPath = path
+		opts.optionalPath = true
 	}
 }
 
-// WithoutFiles disables tier discovery, leaving only the environment and
+// WithoutFileDiscovery disables layer discovery, leaving only the environment and
 // defaults.
 //
 // A path set through [WithPath] still applies. Naming one file is a more
 // specific instruction than turning discovery off.
-func WithoutFiles() Option {
-	return func(o *loadOptions) {
-		o.withoutFiles = true
+func WithoutFileDiscovery() Option {
+	return func(opts *loadOptions) {
+		opts.withoutFileDiscovery = true
 	}
 }
 
@@ -116,8 +116,8 @@ func WithoutFiles() Option {
 // meant. Without WithStrict the same keys are listed by
 // [Metadata.UnknownKeys] and otherwise ignored.
 func WithStrict() Option {
-	return func(o *loadOptions) {
-		o.strict = true
+	return func(opts *loadOptions) {
+		opts.strict = true
 	}
 }
 
@@ -127,9 +127,9 @@ func WithStrict() Option {
 //
 // Multiple contributions execute in registration order.
 func WithContribution(c Contribution) Option {
-	return func(o *loadOptions) {
+	return func(opts *loadOptions) {
 		if c != nil {
-			o.contributions = append(o.contributions, c)
+			opts.contributions = append(opts.contributions, c)
 		}
 	}
 }
@@ -138,8 +138,8 @@ func WithContribution(c Contribution) Option {
 //
 // The process standard input is used when this is unset.
 func WithStdin(r io.Reader) Option {
-	return func(o *loadOptions) {
-		o.stdinReader = r
+	return func(opts *loadOptions) {
+		opts.stdinReader = r
 	}
 }
 
@@ -149,8 +149,8 @@ func WithStdin(r io.Reader) Option {
 // Input beyond the limit fails with [ErrFileTooLarge]. It is never truncated. A
 // value of zero or less selects the default of 1 MiB.
 func WithMaxFileSize(maxBytes int64) Option {
-	return func(o *loadOptions) {
-		o.maxFileSize = maxBytes
+	return func(opts *loadOptions) {
+		opts.maxFileSize = maxBytes
 	}
 }
 
@@ -165,8 +165,8 @@ func WithMaxFileSize(maxBytes int64) Option {
 // The type argument MUST match the type passed to [Load] or [LoadInto]. A
 // mismatch fails the load with [ErrDefaultsTypeMismatch].
 func WithDefaults[T any](defaults T) Option {
-	return func(o *loadOptions) {
-		o.defaultsFunc = func(target any) error {
+	return func(opts *loadOptions) {
+		opts.defaultsFunc = func(target any) error {
 			ptr, ok := target.(*T)
 			if !ok {
 				return fmt.Errorf("%w: WithDefaults[%T] used to load %T", ErrDefaultsTypeMismatch, defaults, target)
@@ -186,12 +186,12 @@ func WithDefaults[T any](defaults T) Option {
 //
 // c MUST NOT be nil; [codec.Registry.Register] panics if it is.
 func WithCodec(ext string, c Codec) Option {
-	return func(o *loadOptions) {
-		if o.codecReg == nil {
-			o.codecReg = codec.NewRegistry()
+	return func(opts *loadOptions) {
+		if opts.codecs == nil {
+			opts.codecs = codec.NewRegistry()
 		}
 
-		o.codecReg.Register(ext, c)
+		opts.codecs.Register(ext, c)
 	}
 }
 
@@ -204,7 +204,7 @@ func WithCodec(ext string, c Codec) Option {
 // ".yml" enables only that specific extension.
 //
 // The order of arguments determines auto-discovery priority across all file
-// tiers and selects the first format for stdin and new user files. Formats not
+// layers and selects the first format for stdin and new user files. Formats not
 // specified are neither discovered nor decoded. At least one format is required
 // whenever files are read.
 //
@@ -212,8 +212,8 @@ func WithCodec(ext string, c Codec) Option {
 // [ErrUnsupportedFormat]. An empty selection when files are read returns
 // [ErrNoFormats].
 func WithFormats(formats ...string) Option {
-	return func(o *loadOptions) {
-		o.formats = append([]string(nil), formats...)
+	return func(opts *loadOptions) {
+		opts.formats = append([]string(nil), formats...)
 	}
 }
 
@@ -224,7 +224,7 @@ func WithFormats(formats ...string) Option {
 // using the target format's syntax. The alias is read only when aliasExt is
 // listed in [WithFormats].
 func WithFormatAlias(aliasExt, targetFormat string) Option {
-	return func(o *loadOptions) {
+	return func(opts *loadOptions) {
 		normAlias := normalizeExt(aliasExt)
 		normTarget := normalizeExt(targetFormat)
 
@@ -232,11 +232,11 @@ func WithFormatAlias(aliasExt, targetFormat string) Option {
 			return
 		}
 
-		if o.formatAliases == nil {
-			o.formatAliases = make(map[string]string)
+		if opts.formatAliases == nil {
+			opts.formatAliases = make(map[string]string)
 		}
 
-		o.formatAliases[normAlias] = normTarget
+		opts.formatAliases[normAlias] = normTarget
 	}
 }
 
@@ -249,31 +249,31 @@ func WithDecoder(ext string, fn DecoderFunc) Option {
 		panic("strata: WithDecoder: nil DecoderFunc")
 	}
 
-	return func(o *loadOptions) {
-		if o.codecReg == nil {
-			o.codecReg = codec.NewRegistry()
+	return func(opts *loadOptions) {
+		if opts.codecs == nil {
+			opts.codecs = codec.NewRegistry()
 		}
 
-		o.codecReg.Register(ext, decoderCodec{decode: fn})
+		opts.codecs.Register(ext, decoderCodec{decode: fn})
 	}
 }
 
-// WithDecoderFunc registers a type-safe decoder function for a file extension on
+// WithTypedDecoder registers a type-safe decoder function for a file extension on
 // this load.
 //
 // It is used for reading only when the extension is listed in [WithFormats].
-// fn MUST NOT be nil; WithDecoderFunc panics if it is.
-func WithDecoderFunc[T any](ext string, fn func(data []byte, target *T) error) Option {
+// fn MUST NOT be nil; WithTypedDecoder panics if it is.
+func WithTypedDecoder[T any](ext string, fn func(data []byte, target *T) error) Option {
 	if fn == nil {
-		panic("strata: WithDecoderFunc: nil decoder function")
+		panic("strata: WithTypedDecoder: nil decoder function")
 	}
 
-	return func(o *loadOptions) {
-		if o.codecReg == nil {
-			o.codecReg = codec.NewRegistry()
+	return func(opts *loadOptions) {
+		if opts.codecs == nil {
+			opts.codecs = codec.NewRegistry()
 		}
 
-		o.codecReg.Register(ext, typedDecoderCodec[T]{fn: fn})
+		opts.codecs.Register(ext, typedDecoderCodec[T]{fn: fn})
 	}
 }
 
@@ -359,20 +359,20 @@ func formatName(ext string) string {
 
 func defaultLoadOptions() *loadOptions {
 	return &loadOptions{
-		appName:       "",
-		envPrefix:     "",
-		explicitPath:  "",
-		optionalPath:  false,
-		stdinReader:   os.Stdin,
-		codecReg:      codec.NewRegistry(),
-		defaultsFunc:  nil,
-		maxFileSize:   stream.DefaultMaxFileSize,
-		withoutFiles:  false,
-		formats:       nil,
-		formatAliases: nil,
-		stdinExt:      "",
-		contributions: nil,
-		strict:        false,
-		keys:          nil,
+		appName:              "",
+		envPrefix:            "",
+		explicitPath:         "",
+		optionalPath:         false,
+		stdinReader:          os.Stdin,
+		codecs:               codec.NewRegistry(),
+		defaultsFunc:         nil,
+		maxFileSize:          stream.DefaultMaxFileSize,
+		withoutFileDiscovery: false,
+		formats:              nil,
+		formatAliases:        nil,
+		stdinExt:             "",
+		contributions:        nil,
+		strict:               false,
+		keys:                 nil,
 	}
 }

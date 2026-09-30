@@ -30,12 +30,10 @@ port = 5432 # pg port
 
 	result := string(updated)
 
-	// The value is replaced in place, and the inline comment is kept.
 	if !strings.Contains(result, "port = 5433 # pg port") {
 		t.Errorf("expected port = 5433 # pg port in result, got:\n%s", result)
 	}
 
-	// Comments elsewhere in the document are preserved.
 	if !strings.Contains(result, "# Top level comment") {
 		t.Errorf("expected # Top level comment preserved, got:\n%s", result)
 	}
@@ -48,7 +46,6 @@ port = 5432 # pg port
 		t.Errorf("expected server port untouched, got:\n%s", result)
 	}
 
-	// A key that is absent is appended.
 	appended, err := edit.UpdateTOML([]byte(input), "metrics.enabled", true)
 	if err != nil {
 		t.Fatalf("UpdateTOML append error: %v", err)
@@ -138,8 +135,6 @@ func TestAppendTOMLKey(t *testing.T) {
 port = 8080
 `
 
-	// NB: the fixture already declares a [server] table, and server.host is
-	// appended inside it.
 	updated, err := edit.UpdateTOML([]byte(initial), "server.host", "0.0.0.0")
 	if err != nil {
 		t.Fatalf("UpdateTOML error: %v", err)
@@ -149,8 +144,6 @@ port = 8080
 		t.Errorf("expected appended host, got:\n%s", string(updated))
 	}
 
-	// NB: the fixture has no version key and no table to hold one; the update
-	// appends it at the top level.
 	updatedTop, err := edit.UpdateTOML([]byte(initial), "version", 2)
 	if err != nil {
 		t.Fatalf("UpdateTOML error: %v", err)
@@ -218,8 +211,8 @@ func TestUpdateTOMLIntermediateScalarReturnsError(t *testing.T) {
 		t.Fatalf("expected error when setting dotted key on scalar, got nil")
 	}
 
-	if !errors.Is(err, edit.ErrNonObjectNavigation) {
-		t.Errorf("expected ErrNonObjectNavigation, got %v", err)
+	if !errors.Is(err, edit.ErrPathNotMapping) {
+		t.Errorf("expected ErrPathNotMapping, got %v", err)
 	}
 }
 
@@ -328,7 +321,7 @@ func TestUpdateTOMLMultilineEdits(t *testing.T) {
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
-			got, err := edit.UpdateFormatted([]byte(tc.input), tc.key, nil, tc.literal)
+			got, err := edit.UpdateTOMLFormatted([]byte(tc.input), tc.key, nil, tc.literal)
 			if err != nil {
 				t.Fatal(err)
 			}

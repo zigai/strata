@@ -15,7 +15,6 @@ type attributedConfig struct {
 	Host string `strata:"host" yaml:"host"`
 }
 
-// ValidateWith reports the first bad key it finds.
 func (c *attributedConfig) ValidateWith(meta *strata.Metadata) error {
 	if c.Port > 9000 {
 		return meta.NewConfigError(portKey, errors.New("above the privileged ceiling"))
@@ -29,8 +28,6 @@ type crossFieldConfig struct {
 	Max int `strata:"max" yaml:"max"`
 }
 
-// ValidateWith reports a failure spanning two keys, which has no single key to
-// attribute it to.
 func (c *crossFieldConfig) ValidateWith(*strata.Metadata) error {
 	if c.Min > c.Max {
 		return errors.New("min must not exceed max")
@@ -44,7 +41,6 @@ type multiFailureConfig struct {
 	Host string `strata:"host" yaml:"host"`
 }
 
-// ValidateWith reports every problem in one pass.
 func (c *multiFailureConfig) ValidateWith(meta *strata.Metadata) error {
 	var errs []error
 
@@ -59,7 +55,6 @@ func (c *multiFailureConfig) ValidateWith(meta *strata.Metadata) error {
 	return errors.Join(errs...)
 }
 
-// bothConfig implements both validation interfaces, to pin which one runs.
 type bothConfig struct {
 	Port int `strata:"port" yaml:"port"`
 }
@@ -72,7 +67,6 @@ func (c *bothConfig) ValidateWith(meta *strata.Metadata) error {
 	return meta.NewConfigError(portKey, errors.New("ValidateWith ran"))
 }
 
-// plainConfig implements Validator only. That interface cannot name a key.
 type plainConfig struct {
 	Port int `strata:"port" yaml:"port"`
 }
@@ -94,8 +88,6 @@ func loadFromYAML[T any](t *testing.T, body string) error {
 	return err
 }
 
-// A MetadataValidator receives the key, the raw input, and the position the value
-// came from, which is what makes the ConfigError documentation true.
 func TestMetadataValidatorAttributesTheFailure(t *testing.T) {
 	t.Parallel()
 
@@ -119,8 +111,6 @@ func TestMetadataValidatorAttributesTheFailure(t *testing.T) {
 	}
 }
 
-// A failure that spans fields has no key to name, so it MUST render the message
-// alone rather than a wrong key.
 func TestMetadataValidatorCrossFieldFailureHasNoKey(t *testing.T) {
 	t.Parallel()
 
@@ -145,8 +135,6 @@ func TestMetadataValidatorCrossFieldFailureHasNoKey(t *testing.T) {
 	}
 }
 
-// Every reported key MUST stay reachable. A single-keyed error type could not
-// express this.
 func TestMetadataValidatorReportsEveryFailure(t *testing.T) {
 	t.Parallel()
 
@@ -174,8 +162,6 @@ func TestMetadataValidatorReportsEveryFailure(t *testing.T) {
 	}
 }
 
-// Validator remains the smaller interface. Its failures are reported as a
-// ConfigError with no key to name.
 func TestPlainValidatorIsUnattributed(t *testing.T) {
 	t.Parallel()
 
@@ -200,7 +186,6 @@ func TestPlainValidatorIsUnattributed(t *testing.T) {
 	}
 }
 
-// A type implementing both MUST be validated by the one that can attribute.
 func TestMetadataValidatorTakesPrecedence(t *testing.T) {
 	t.Parallel()
 
@@ -242,7 +227,7 @@ func TestValidatorPostLoadHook(t *testing.T) {
 		cfg := validatedConfig{Port: 80}
 
 		_, err := strata.Load[validatedConfig](
-			strata.WithoutFiles(),
+			strata.WithoutFileDiscovery(),
 			strata.WithDefaults(cfg),
 		)
 		if err == nil {
@@ -260,7 +245,7 @@ func TestValidatorPostLoadHook(t *testing.T) {
 		cfg := validatedConfig{Port: 8080}
 
 		loaded, err := strata.Load[validatedConfig](
-			strata.WithoutFiles(),
+			strata.WithoutFileDiscovery(),
 			strata.WithDefaults(cfg),
 		)
 		if err != nil {
@@ -273,8 +258,6 @@ func TestValidatorPostLoadHook(t *testing.T) {
 	})
 }
 
-// A ConfigError renders the message, the key and its raw value, and names the
-// layer that set it in the form each source kind documents.
 func TestConfigErrorRendersEverySourceKind(t *testing.T) {
 	t.Parallel()
 

@@ -22,8 +22,6 @@ const (
 	showColumnPadding = 2
 	configSetArgCount = 2
 
-	// shellCompletionFlag is the argument urfave/cli appends when a shell asks
-	// a program for completions.
 	shellCompletionFlag = "--generate-shell-completion"
 )
 
@@ -32,7 +30,7 @@ var errSetArgs = errors.New("set requires a key and value")
 type missingConfigError struct{ path string }
 
 type boundFlag struct {
-	target plan.Target
+	target plan.Leaf
 	flag   cli.Flag
 }
 
@@ -42,7 +40,7 @@ type Binding[T any] struct {
 	cfg        *T
 	opts       []strata.Option
 	meta       *strata.Metadata
-	targets    []boundFlag
+	flags      []boundFlag
 	defaults   reflect.Value
 	configPath string
 	appName    string
@@ -57,7 +55,7 @@ func (e *missingConfigError) Unwrap() error { return fs.ErrNotExist }
 
 // Bind prepares key-based flags for cfg. Set the root command's Before to
 // [Binding.Before] and include [Binding.ConfigFlag] to enable --config.
-// The root command name selects the default system and user config tiers. Pass
+// The root command name selects the default system and user config layers. Pass
 // [strata.WithFormats] to enable file loading; without it, command execution
 // returns [strata.ErrNoFormats].
 func Bind[T any](cfg *T, opts ...strata.Option) *Binding[T] {
@@ -70,18 +68,18 @@ func Bind[T any](cfg *T, opts ...strata.Option) *Binding[T] {
 		panic(err)
 	}
 
-	return &Binding[T]{cfg: cfg, opts: opts, meta: nil, targets: nil, defaults: reflect.ValueOf(defaults), configPath: "", appName: "", skipped: make(map[*cli.Command]bool)}
+	return &Binding[T]{cfg: cfg, opts: opts, meta: nil, flags: nil, defaults: reflect.ValueOf(defaults), configPath: "", appName: "", skipped: make(map[*cli.Command]bool)}
 }
 
 // Flag returns a typed cli.Flag for key, with its SetDefaults value. Invalid,
 // unsupported, or secret keys panic. The first alias is its shorthand name.
 func (b *Binding[T]) Flag(key, usage string, aliases ...string) cli.Flag {
-	target, err := plan.Lookup(reflect.TypeFor[T](), key)
+	target, err := plan.LeafFor(reflect.TypeFor[T](), key)
 	if err != nil {
 		panic(err)
 	}
 
-	if target.Secret {
+	if target.IsSecret {
 		panic(fmt.Sprintf("secret key %q cannot be a flag", key))
 	}
 
@@ -91,7 +89,7 @@ func (b *Binding[T]) Flag(key, usage string, aliases ...string) cli.Flag {
 
 	target.Usage = usage
 
-	storage := reflect.New(plan.StorageTypeFor(target.Kind, target.LeafType))
+	storage := reflect.New(plan.StorageTypeFor(target.Kind, target.Type))
 	if err := plan.SeedStorage(storage, b.defaults, &target); err != nil {
 		panic(err)
 	}
@@ -101,7 +99,7 @@ func (b *Binding[T]) Flag(key, usage string, aliases ...string) cli.Flag {
 		panic(err)
 	}
 
-	b.targets = append(b.targets, boundFlag{target: target, flag: flag})
+	b.flags = append(b.flags, boundFlag{target: target, flag: flag})
 
 	return flag
 }
@@ -134,11 +132,6 @@ func (b *Binding[T]) Before(ctx context.Context, cmd *cli.Command) (context.Cont
 	return ctx, b.Load(selected)
 }
 
-// isBuiltIn reports whether cmd is, or runs under, a command urfave/cli adds
-// itself: help, which it adds to every command with subcommands, and
-// completion, which it adds to the root. A command the program defines under
-// either name at those levels replaces the built-in and serves the same
-// purpose.
 func isBuiltIn(cmd *cli.Command) bool {
 	for _, current := range cmd.Lineage() {
 		lineage := current.Lineage()
@@ -154,12 +147,8 @@ func isBuiltIn(cmd *cli.Command) bool {
 	return false
 }
 
-// completionRequested reports whether the process is answering a shell
-// completion request, which needs no configuration and must not fail on a
-// broken file. urfave/cli removes its completion flag from the arguments before
-// Before runs and keeps that state private, so the process arguments are the
-// only public signal. The check matches urfave's own: completion is enabled on
-// the root and the flag is the last argument.
+// urfave/cli removes its completion flag before Before runs and keeps
+// that state private, so process arguments are the only public signal.
 func completionRequested(root *cli.Command) bool {
 	return root.EnableShellCompletion && len(os.Args) > 1 && os.Args[len(os.Args)-1] == shellCompletionFlag
 }
@@ -177,8 +166,8 @@ func (b *Binding[T]) Load(cmd *cli.Command) error {
 			return err
 		}
 
-		for _, bound := range b.targets {
-			if !sameFlag(activeFlag(cmd, bound.target.Name), bound.flag) {
+		for _, bound := range b.flags {
+			if !sameFlag(activeFlag(cmd, bound.target.FlagName), bound.flag) {
 				continue
 			}
 
@@ -238,15 +227,15 @@ func sameFlag(left, right cli.Flag) bool {
 // the first load.
 func (b *Binding[T]) Metadata() *strata.Metadata { return b.meta }
 
-// Path returns the file used for edits: --config or WithPath when set,
-// otherwise the user-tier file selected by the loading options.
-func (b *Binding[T]) Path() (string, error) {
+// EditPath returns the file used for edits: --config or WithPath when set,
+// otherwise the user-layer file selected by the loading options.
+func (b *Binding[T]) EditPath() (string, error) {
 	opts := append([]strata.Option{strata.WithAppName(b.appName)}, b.opts...)
 	if b.configPath != "" {
 		opts = append(opts, strata.WithPath(b.configPath))
 	}
 
-	path, err := strata.ConfigEditPath(opts...)
+	path, err := strata.EditPath(opts...)
 	if err != nil {
 		return "", fmt.Errorf("find user configuration file: %w", err)
 	}
@@ -254,10 +243,10 @@ func (b *Binding[T]) Path() (string, error) {
 	return path, nil
 }
 
-// Set checks key and value against T, then edits Path's file. A missing file
+// Set checks key and value against T, then edits EditPath's file. A missing file
 // reports that config init should be run first. It does not run ValidateWith.
 func (b *Binding[T]) Set(key, value string) (string, error) {
-	path, err := b.Path()
+	path, err := b.EditPath()
 	if err != nil {
 		return "", err
 	}
@@ -275,10 +264,10 @@ func (b *Binding[T]) Set(key, value string) (string, error) {
 	return path, nil
 }
 
-// Init writes a new user config file at Path, creating its parent directory.
+// Init writes a new user config file at EditPath, creating its parent directory.
 // Secrets are omitted from the template.
 func (b *Binding[T]) Init() (string, error) {
-	path, err := b.Path()
+	path, err := b.EditPath()
 	if err != nil {
 		return "", err
 	}
@@ -374,7 +363,7 @@ func (b *Binding[T]) configInitCommand() *cli.Command {
 
 func (b *Binding[T]) configPathCommand() *cli.Command {
 	return &cli.Command{Name: "path", Usage: "Show the config file path", Action: func(_ context.Context, cmd *cli.Command) error {
-		resolved, err := b.Path()
+		resolved, err := b.EditPath()
 		if err != nil {
 			return err
 		}

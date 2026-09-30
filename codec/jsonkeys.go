@@ -13,43 +13,23 @@ import (
 	"github.com/zigai/strata/internal/defaulter"
 )
 
-// JSON members use configuration keys: the first named strata, toml, yaml, or
-// json tag, then the snake_case Go name. Before decoding, matching members are
-// renamed for encoding/json and unknown members are dropped. encoding/json
-// still handles conversion, custom decoders, and errors.
-
-// jsonDecoderInterfaces are the interfaces whose implementations decode a JSON
-// value themselves. A type listed here names its own members, so the rewrite
-// stops at it.
 var jsonDecoderInterfaces = [...]reflect.Type{
 	reflect.TypeFor[json.Unmarshaler](),
 	reflect.TypeFor[json.UnmarshalerFrom](),
 	reflect.TypeFor[encoding.TextUnmarshaler](),
 }
 
-// jsonBindingsCache holds the binding sets already derived, keyed by the struct
-// type they describe. A Codec is safe for concurrent use, hence the lock; a set
-// itself is immutable once stored.
 var (
 	jsonBindingsCache   map[reflect.Type]map[string]jsonFieldBinding
 	jsonBindingsCacheMu sync.RWMutex
 )
 
-// jsonFieldBinding is the name one member uses for a struct field, together with the
-// type the member's value decodes into.
 type jsonFieldBinding struct {
-	// Name is the name encoding/json matches for the field: its json tag, or its
-	// Go name when the tag does not name it.
 	Name string
 
-	// Type is the field's type, which a nested value is rewritten against.
 	Type reflect.Type
 }
 
-// rewriteJSONDocument renames parsed members for target and reports changes.
-//
-// Non-pointer targets are left to encoding/json to reject. Rewrite failures
-// wrap [ErrMalformed].
 func rewriteJSONDocument(document jsontext.Value, target any) (jsontext.Value, bool, error) {
 	typ := reflect.TypeOf(target)
 	if typ == nil || typ.Kind() != reflect.Pointer {
@@ -64,12 +44,8 @@ func rewriteJSONDocument(document jsontext.Value, target any) (jsontext.Value, b
 	return rewritten, changed, nil
 }
 
-// rewriteJSONValue renames the members of a JSON value that name a field of
-// targetType, and reports whether the value changed.
-//
-// A value that needs no renaming is returned as it was read, so an unchanged
-// subtree keeps the exact bytes of its numbers and strings on the way to
-// encoding/json.
+// An unchanged subtree keeps the exact bytes of its numbers and strings
+// on the way to encoding/json.
 func rewriteJSONValue(value jsontext.Value, targetType reflect.Type) (jsontext.Value, bool, error) {
 	targetType = jsonValueType(targetType)
 	if targetType == nil {
@@ -89,8 +65,6 @@ func rewriteJSONValue(value jsontext.Value, targetType reflect.Type) (jsontext.V
 	}
 }
 
-// rewriteJSONStruct renames the members of a JSON object to the names
-// encoding/json matches for the fields of typ.
 func rewriteJSONStruct(value jsontext.Value, typ reflect.Type) (jsontext.Value, bool, error) {
 	bindings := jsonBindings(typ)
 
@@ -101,7 +75,6 @@ func rewriteJSONStruct(value jsontext.Value, typ reflect.Type) (jsontext.Value, 
 	})
 }
 
-// rewriteJSONElements renames the members of every element of a JSON array.
 func rewriteJSONElements(value jsontext.Value, elemType reflect.Type) (jsontext.Value, bool, error) {
 	if value.Kind() != jsontext.KindBeginArray {
 		return value, false, nil
@@ -136,21 +109,12 @@ func rewriteJSONElements(value jsontext.Value, elemType reflect.Type) (jsontext.
 	return jsontext.Value(encoded), true, nil
 }
 
-// rewriteJSONMapValues renames the members of the values of a JSON object that
-// decodes into a map.
-//
-// The keys of the map name the caller's own domains rather than fields of a
-// struct, so they are carried through as written.
 func rewriteJSONMapValues(value jsontext.Value, elemType reflect.Type) (jsontext.Value, bool, error) {
 	return rewriteJSONObject(value, func(member string) (jsonFieldBinding, bool) {
 		return jsonFieldBinding{Name: member, Type: elemType}, true
 	})
 }
 
-// rewriteJSONObject rewrites the members of a JSON object, renaming each member
-// the bind function resolves.
-//
-// A member bind does not resolve is dropped.
 func rewriteJSONObject(value jsontext.Value, bind func(member string) (jsonFieldBinding, bool)) (jsontext.Value, bool, error) {
 	if value.Kind() != jsontext.KindBeginObject {
 		return value, false, nil
@@ -201,13 +165,6 @@ func rewriteJSONObject(value jsontext.Value, bind func(member string) (jsonField
 	return jsontext.Value(encoded), true, nil
 }
 
-// appendJSONObject appends a JSON object to dst, quoting each member name and
-// carrying each member value through as the text it was read from.
-//
-// A value reaches the decoder as the document wrote it, so an untouched number
-// keeps its digits, an untouched string keeps its escapes, and a value handed to
-// a type that decodes itself arrives as it was written. Members are written in
-// name order, which keeps the text stable for the same document.
 func appendJSONObject(dst []byte, members map[string]jsontext.Value) ([]byte, error) {
 	names := make([]string, 0, len(members))
 	for name := range members {
@@ -237,8 +194,6 @@ func appendJSONObject(dst []byte, members map[string]jsontext.Value) ([]byte, er
 	return append(dst, '}'), nil
 }
 
-// appendJSONArray appends a JSON array to dst, carrying each element through as
-// the text it was read from.
 func appendJSONArray(dst []byte, elements []jsontext.Value) []byte {
 	dst = append(dst, '[')
 
@@ -253,11 +208,8 @@ func appendJSONArray(dst []byte, elements []jsontext.Value) []byte {
 	return append(dst, ']')
 }
 
-// jsonBindings maps each configuration key of typ to its JSON field binding.
-//
 // Direct fields shadow promoted fields with the same key.
-//
-// Bindings are cached by type. The returned map is shared and must not be changed.
+// The returned map is shared and must not be changed.
 func jsonBindings(typ reflect.Type) map[string]jsonFieldBinding {
 	jsonBindingsCacheMu.RLock()
 
@@ -284,12 +236,6 @@ func jsonBindings(typ reflect.Type) map[string]jsonFieldBinding {
 	return bindings
 }
 
-// collectJSONBindings adds bindings for typ and its embedded structs.
-//
-// Excluded and unexported fields are skipped; exported fields of embedded
-// structs are promoted.
-//
-// path prevents recursion through repeated embedded types.
 func collectJSONBindings(bindings map[string]jsonFieldBinding, typ reflect.Type, path map[reflect.Type]bool) {
 	if path[typ] {
 		return
@@ -329,8 +275,6 @@ func collectJSONBindings(bindings map[string]jsonFieldBinding, typ reflect.Type,
 	}
 }
 
-// addJSONBinding records a name for a binding unless an earlier field claimed
-// the name.
 func addJSONBinding(bindings map[string]jsonFieldBinding, name string, binding jsonFieldBinding) {
 	if name == "" || name == "-" {
 		return
@@ -343,12 +287,8 @@ func addJSONBinding(bindings map[string]jsonFieldBinding, name string, binding j
 	bindings[name] = binding
 }
 
-// jsonEmbeds reports whether a struct field is promoted rather than named.
-//
-// An anonymous struct field that its json tag does not name is inlined into the
-// struct around it, matching encoding/json and the defaults walk. An embedded
-// field of unexported struct type is promoted too, because the fields it carries
-// may be exported.
+// An embedded field of unexported struct type is promoted too, because
+// the fields it carries may be exported.
 func jsonEmbeds(field reflect.StructField) bool {
 	if !field.Anonymous {
 		return false
@@ -361,8 +301,6 @@ func jsonEmbeds(field reflect.StructField) bool {
 	return jsonStructType(field.Type) != nil
 }
 
-// jsonStructType returns the struct type a value of typ promotes, or nil when
-// typ is not a struct or names its own members.
 func jsonStructType(typ reflect.Type) reflect.Type {
 	typ = jsonValueType(typ)
 	if typ == nil || typ.Kind() != reflect.Struct {
@@ -372,12 +310,6 @@ func jsonStructType(typ reflect.Type) reflect.Type {
 	return typ
 }
 
-// jsonValueType reports the type a JSON value decodes into, or nil when nothing
-// about the value's members can be rewritten.
-//
-// A pointer is followed to the type it points at. An interface names no shape at
-// all: the document decides what it holds. A type that decodes itself names its
-// own members and is left alone.
 func jsonValueType(typ reflect.Type) reflect.Type {
 	if typ == nil {
 		return nil
@@ -398,8 +330,6 @@ func jsonValueType(typ reflect.Type) reflect.Type {
 	return typ
 }
 
-// jsonDecodesItself reports whether typ decodes a JSON value without help from
-// the field names around it.
 func jsonDecodesItself(typ reflect.Type) bool {
 	for _, iface := range jsonDecoderInterfaces {
 		if typ.Implements(iface) {
@@ -414,12 +344,6 @@ func jsonDecodesItself(typ reflect.Type) bool {
 	return false
 }
 
-// jsonTagName returns the name a json tag gives a field, and reports whether the
-// tag names one.
-//
-// The options a tag carries after its first comma are dropped, and a tag that
-// carries no name, as in `json:",omitempty"`, names nothing and leaves the field
-// matched by its Go name.
 func jsonTagName(field reflect.StructField) (string, bool) {
 	tag, ok := field.Tag.Lookup("json")
 	if !ok {

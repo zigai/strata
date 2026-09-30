@@ -15,33 +15,13 @@ import (
 )
 
 var (
-	// ErrUnsupportedType is returned when a leaf field's kind has no environment
-	// decoder, such as a map, an array, or a channel.
 	ErrUnsupportedType = errors.New("unsupported field type for environment binding")
 
-	// ErrInvalidEnvValue is returned when the text taken from an environment
-	// variable does not decode into its field, and when it decodes to a value
-	// that does not fit the field's type.
-	//
-	// The error names the dotted key and the environment variable. For a field
-	// marked secret the value is redacted instead of reproduced.
-	ErrInvalidEnvValue = errors.New("invalid environment variable value")
+	ErrInvalidValue = errors.New("invalid environment variable value")
 
-	// ErrInvalidBool is returned when text for a bool field is not an accepted
-	// spelling.
-	//
-	// Accepted for true are 1, t, true, yes, y, and on; accepted for false are 0,
-	// f, false, no, n, and off. Case is ignored and surrounding whitespace is
-	// trimmed.
 	ErrInvalidBool = errors.New("cannot parse boolean value")
 )
 
-// Options configures environment variable binding.
-//
-// Prefix is trimmed, uppercased, and given a trailing underscore if needed.
-// Nil Lookup and ParseDuration use [os.LookupEnv] and [time.ParseDuration].
-// OnBind receives each bound key, variable name, and raw value; secrets are
-// redacted before the callback.
 type Options struct {
 	Prefix        string
 	Lookup        func(string) (string, bool)
@@ -49,47 +29,26 @@ type Options struct {
 	ParseDuration func(string) (time.Duration, error)
 }
 
-// Var is one field the environment can supply.
-//
-// Name is the variable to document: the env tag when the field has one, and
-// otherwise the prefix followed by the upper-snake key joined by "_". Names
-// lists every variable [Apply] tries for it, in order; the first one set wins.
 type Var struct {
-	Key    string
-	Name   string
-	Names  []string
-	Secret bool
+	Key      string
+	Name     string
+	Names    []string
+	IsSecret bool
 }
 
-// Apply binds environment variables into target and reports each binding
-// through [Options.OnBind].
-//
-// target must be a non-nil struct pointer, or Apply returns
-// [defaulter.ErrTargetNotPointer].
-//
-// An explicit env tag is tried with the prefix, then without it. Otherwise,
-// the prefixed upper-snake key is used, trying "__" before "_" for nested keys.
-//
-// Unmatched fields stay unchanged. Nil struct pointers are allocated only for
-// fields that bind.
-//
-// Invalid or out-of-range values wrap [ErrInvalidEnvValue]; unsupported leaf
-// types return [ErrUnsupportedType].
-//
-// Secret values are redacted in [Options.OnBind] and errors.
 func Apply(target any, opts Options) error {
 	if target == nil {
-		return defaulter.ErrTargetNotPointer
+		return defaulter.ErrInvalidTarget
 	}
 
 	val := reflect.ValueOf(target)
 	if val.Kind() != reflect.Pointer || val.IsNil() {
-		return defaulter.ErrTargetNotPointer
+		return defaulter.ErrInvalidTarget
 	}
 
 	elem := val.Elem()
 	if elem.Kind() != reflect.Struct {
-		return defaulter.ErrTargetNotPointer
+		return defaulter.ErrInvalidTarget
 	}
 
 	lookup := opts.Lookup
@@ -100,10 +59,6 @@ func Apply(target any, opts Options) error {
 	return bindEnvStruct(elem, normalizePrefix(opts.Prefix), "", lookup, opts.OnBind, opts.ParseDuration, false, nil, nil)
 }
 
-// Describe lists the fields of the struct type typ that the environment can
-// supply under prefix, in declaration order, using the same names [Apply] tries.
-//
-// A field whose type the environment cannot decode, such as a map, is left out.
 func Describe(typ reflect.Type, prefix string) []Var {
 	for typ.Kind() == reflect.Pointer {
 		typ = typ.Elem()
@@ -120,8 +75,6 @@ func Describe(typ reflect.Type, prefix string) []Var {
 	return vars
 }
 
-// normalizePrefix trims and uppercases prefix, and appends an underscore when
-// it does not already end in one.
 func normalizePrefix(prefix string) string {
 	prefix = strings.ToUpper(strings.TrimSpace(prefix))
 	if prefix != "" && !strings.HasSuffix(prefix, "_") {
@@ -181,12 +134,9 @@ func describeField(sf reflect.StructField, prefix, parentPath string, inheritedS
 		return
 	}
 
-	*vars = append(*vars, Var{Key: dottedKey, Name: documentedName(sf, names), Names: names, Secret: secret})
+	*vars = append(*vars, Var{Key: dottedKey, Name: documentedName(sf, names), Names: names, IsSecret: secret})
 }
 
-// documentedName picks the variable to show a reader from the names
-// [candidateNames] returned: the env tag when there is one, otherwise the
-// single-underscore derived name, which candidateNames lists last.
 func documentedName(sf reflect.StructField, names []string) string {
 	if tag, _, _ := strings.Cut(sf.Tag.Get("env"), ","); strings.TrimSpace(tag) != "" {
 		return names[0]
@@ -195,7 +145,6 @@ func documentedName(sf reflect.StructField, names []string) string {
 	return names[len(names)-1]
 }
 
-// envDecodable reports whether [Apply] can decode text into a field of typ.
 func envDecodable(typ reflect.Type) bool {
 	if reflect.PointerTo(typ).Implements(reflect.TypeFor[encoding.TextUnmarshaler]()) {
 		return true
@@ -221,7 +170,7 @@ func bindEnvStruct(
 	parentPath string,
 	lookup func(string) (string, bool),
 	onBind func(key, envVar, rawVal string),
-	parseDur func(string) (time.Duration, error),
+	parseDuration func(string) (time.Duration, error),
 	inheritedSecret bool,
 	activeTypes []reflect.Type,
 	activePtrs []uintptr,
@@ -256,7 +205,7 @@ func bindEnvStruct(
 			dottedKey = parentPath + "." + key
 		}
 
-		if err := bindField(field, sf, prefix, dottedKey, lookup, onBind, parseDur, fieldSecret, activeTypes, activePtrs); err != nil {
+		if err := bindField(field, sf, prefix, dottedKey, lookup, onBind, parseDuration, fieldSecret, activeTypes, activePtrs); err != nil {
 			return err
 		}
 	}
@@ -271,20 +220,20 @@ func bindField(
 	dottedKey string,
 	lookup func(string) (string, bool),
 	onBind func(key, envVar, rawVal string),
-	parseDur func(string) (time.Duration, error),
+	parseDuration func(string) (time.Duration, error),
 	inheritedSecret bool,
 	activeTypes []reflect.Type,
 	activePtrs []uintptr,
 ) error {
 	if defaulter.IsNestedStruct(field) {
-		return bindEnvStruct(field, prefix, dottedKey, lookup, onBind, parseDur, inheritedSecret, activeTypes, activePtrs)
+		return bindEnvStruct(field, prefix, dottedKey, lookup, onBind, parseDuration, inheritedSecret, activeTypes, activePtrs)
 	}
 
 	if field.Kind() == reflect.Pointer && defaulter.IsNestedStructType(field.Type().Elem()) {
-		return bindPointerStructField(field, prefix, dottedKey, lookup, onBind, parseDur, inheritedSecret, activeTypes, activePtrs)
+		return bindPointerStructField(field, prefix, dottedKey, lookup, onBind, parseDuration, inheritedSecret, activeTypes, activePtrs)
 	}
 
-	return bindLeafField(field, sf, prefix, dottedKey, lookup, onBind, parseDur, inheritedSecret)
+	return bindLeafField(field, sf, prefix, dottedKey, lookup, onBind, parseDuration, inheritedSecret)
 }
 
 func bindPointerStructField(
@@ -293,7 +242,7 @@ func bindPointerStructField(
 	dottedKey string,
 	lookup func(string) (string, bool),
 	onBind func(key, envVar, rawVal string),
-	parseDur func(string) (time.Duration, error),
+	parseDuration func(string) (time.Duration, error),
 	inheritedSecret bool,
 	activeTypes []reflect.Type,
 	activePtrs []uintptr,
@@ -312,7 +261,7 @@ func bindPointerStructField(
 		activePtrs = append(activePtrs, ptr)
 		defer func() { activePtrs = activePtrs[:len(activePtrs)-1] }()
 
-		return bindEnvStruct(field.Elem(), prefix, dottedKey, lookup, onBind, parseDur, inheritedSecret, activeTypes, activePtrs)
+		return bindEnvStruct(field.Elem(), prefix, dottedKey, lookup, onBind, parseDuration, inheritedSecret, activeTypes, activePtrs)
 	}
 
 	tmp := reflect.New(elemType)
@@ -326,7 +275,7 @@ func bindPointerStructField(
 		}
 	}
 
-	if err := bindEnvStruct(tmp.Elem(), prefix, dottedKey, lookup, countBind, parseDur, inheritedSecret, activeTypes, activePtrs); err != nil {
+	if err := bindEnvStruct(tmp.Elem(), prefix, dottedKey, lookup, countBind, parseDuration, inheritedSecret, activeTypes, activePtrs); err != nil {
 		return err
 	}
 
@@ -344,7 +293,7 @@ func bindLeafField(
 	dottedKey string,
 	lookup func(string) (string, bool),
 	onBind func(key, envVar, rawVal string),
-	parseDur func(string) (time.Duration, error),
+	parseDuration func(string) (time.Duration, error),
 	inheritedSecret bool,
 ) error {
 	envVar, rawVal, found := lookupEnvValue(sf, prefix, dottedKey, lookup)
@@ -354,14 +303,14 @@ func bindLeafField(
 
 	secret := inheritedSecret || defaulter.IsSecret(sf)
 
-	if err := unmarshalValue(field, rawVal, parseDur); err != nil {
+	if err := unmarshalValue(field, rawVal, parseDuration); err != nil {
 		// NB: a secret field MUST NOT have its value reproduced here, and the
 		// parse library's own error text quotes the input.
 		if secret {
-			return fmt.Errorf("%w for %s from %s=[REDACTED]", ErrInvalidEnvValue, dottedKey, envVar)
+			return fmt.Errorf("%w for %s from %s=[REDACTED]", ErrInvalidValue, dottedKey, envVar)
 		}
 
-		return fmt.Errorf("%w for %s from %s=%q: %w", ErrInvalidEnvValue, dottedKey, envVar, rawVal, err)
+		return fmt.Errorf("%w for %s from %s=%q: %w", ErrInvalidValue, dottedKey, envVar, rawVal, err)
 	}
 
 	recordVal := rawVal
@@ -391,14 +340,8 @@ func lookupEnvValue(
 	return "", "", false
 }
 
-// candidateNames lists the environment variables that can supply a field, in
-// the order they are tried.
-//
-// An env tag names the variable exactly, tried with the prefix first. The
-// derived names, the prefix followed by the upper-snake key with nested
-// segments joined by "__" and then by "_", are tried only when a prefix is set:
-// without one, a derived name such as PORT or HOST would bind whatever the
-// process environment happens to hold.
+// Derived names require a prefix so generic process variables such as PORT
+// and HOST cannot bind accidentally.
 func candidateNames(sf reflect.StructField, prefix, dottedKey string) []string {
 	if isEnvSkipped(sf) {
 		return nil
@@ -451,7 +394,7 @@ func toUpperSnake(s string) string {
 	return strings.ToUpper(defaulter.ToSnakeCase(s))
 }
 
-func unmarshalValue(field reflect.Value, raw string, parseDur func(string) (time.Duration, error)) error {
+func unmarshalValue(field reflect.Value, raw string, parseDuration func(string) (time.Duration, error)) error {
 	if field.CanAddr() {
 		if u, ok := reflect.TypeAssert[encoding.TextUnmarshaler](field.Addr()); ok {
 			if err := u.UnmarshalText([]byte(raw)); err != nil {
@@ -465,31 +408,31 @@ func unmarshalValue(field reflect.Value, raw string, parseDur func(string) (time
 	//nolint:exhaustive // supported primitive, pointer, and slice kinds are bound; other kinds are rejected
 	switch field.Kind() {
 	case reflect.Pointer:
-		return unmarshalPointer(field, raw, parseDur)
+		return unmarshalPointer(field, raw, parseDuration)
 	case reflect.String:
 		field.SetString(raw)
 		return nil
 	case reflect.Bool:
 		return unmarshalBool(field, raw)
 	case reflect.Int, reflect.Int8, reflect.Int16, reflect.Int32, reflect.Int64:
-		return unmarshalInt(field, raw, parseDur)
+		return unmarshalInt(field, raw, parseDuration)
 	case reflect.Uint, reflect.Uint8, reflect.Uint16, reflect.Uint32, reflect.Uint64:
 		return unmarshalUint(field, raw)
 	case reflect.Float32, reflect.Float64:
 		return unmarshalFloat(field, raw)
 	case reflect.Slice:
-		return unmarshalSlice(field, raw, parseDur)
+		return unmarshalSlice(field, raw, parseDuration)
 	default:
 		return fmt.Errorf("%w: %s", ErrUnsupportedType, field.Type())
 	}
 }
 
-func unmarshalPointer(field reflect.Value, raw string, parseDur func(string) (time.Duration, error)) error {
+func unmarshalPointer(field reflect.Value, raw string, parseDuration func(string) (time.Duration, error)) error {
 	if field.IsNil() {
 		field.Set(reflect.New(field.Type().Elem()))
 	}
 
-	return unmarshalValue(field.Elem(), raw, parseDur)
+	return unmarshalValue(field.Elem(), raw, parseDuration)
 }
 
 func unmarshalBool(field reflect.Value, raw string) error {
@@ -503,10 +446,10 @@ func unmarshalBool(field reflect.Value, raw string) error {
 	return nil
 }
 
-func unmarshalInt(field reflect.Value, raw string, parseDur func(string) (time.Duration, error)) error {
+func unmarshalInt(field reflect.Value, raw string, parseDuration func(string) (time.Duration, error)) error {
 	if field.Type() == reflect.TypeFor[time.Duration]() {
-		if parseDur != nil {
-			d, err := parseDur(raw)
+		if parseDuration != nil {
+			d, err := parseDuration(raw)
 			if err != nil {
 				return err
 			}
@@ -533,7 +476,7 @@ func unmarshalInt(field reflect.Value, raw string, parseDur func(string) (time.D
 
 	// NB: without this check a narrowing field would wrap: int8("300") is 44.
 	if field.OverflowInt(v) {
-		return fmt.Errorf("%w: %d does not fit %s", ErrInvalidEnvValue, v, field.Type())
+		return fmt.Errorf("%w: %d does not fit %s", ErrInvalidValue, v, field.Type())
 	}
 
 	field.SetInt(v)
@@ -548,7 +491,7 @@ func unmarshalUint(field reflect.Value, raw string) error {
 	}
 
 	if field.OverflowUint(v) {
-		return fmt.Errorf("%w: %d does not fit %s", ErrInvalidEnvValue, v, field.Type())
+		return fmt.Errorf("%w: %d does not fit %s", ErrInvalidValue, v, field.Type())
 	}
 
 	field.SetUint(v)
@@ -564,7 +507,7 @@ func unmarshalFloat(field reflect.Value, raw string) error {
 
 	// NB: without this check a float32 field would saturate: 1e40 becomes +Inf.
 	if field.OverflowFloat(v) {
-		return fmt.Errorf("%w: %v does not fit %s", ErrInvalidEnvValue, v, field.Type())
+		return fmt.Errorf("%w: %v does not fit %s", ErrInvalidValue, v, field.Type())
 	}
 
 	field.SetFloat(v)
@@ -572,7 +515,7 @@ func unmarshalFloat(field reflect.Value, raw string) error {
 	return nil
 }
 
-func unmarshalSlice(field reflect.Value, raw string, parseDur func(string) (time.Duration, error)) error {
+func unmarshalSlice(field reflect.Value, raw string, parseDuration func(string) (time.Duration, error)) error {
 	if field.Type() == reflect.TypeFor[[]byte]() {
 		field.SetBytes([]byte(raw))
 		return nil
@@ -589,7 +532,7 @@ func unmarshalSlice(field reflect.Value, raw string, parseDur func(string) (time
 
 	for i, item := range items {
 		elem := slice.Index(i)
-		if err := unmarshalValue(elem, strings.TrimSpace(item), parseDur); err != nil {
+		if err := unmarshalValue(elem, strings.TrimSpace(item), parseDuration); err != nil {
 			return fmt.Errorf("slice element %d (%q): %w", i, item, err)
 		}
 	}

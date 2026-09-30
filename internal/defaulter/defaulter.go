@@ -19,15 +19,8 @@ const (
 )
 
 var (
-	// ErrTargetNotPointer is returned by Apply when target is not a non-nil
-	// pointer to a struct.
-	ErrTargetNotPointer = errors.New("target must be a non-nil pointer to a struct")
+	ErrInvalidTarget = errors.New("target must be a non-nil pointer to a struct")
 
-	// ErrSetDefaultsPanicked is returned when a [Defaulter]'s SetDefaults panics.
-	// The panicking value is included in the message.
-	//
-	// When the panic comes from a nested struct, the returned error is prefixed
-	// with the dotted key of that struct.
 	ErrSetDefaultsPanicked = errors.New("set defaults panicked")
 
 	candidateTags   = [...]string{"strata", "toml", "yaml", "json"}
@@ -35,45 +28,28 @@ var (
 	secretDirective = "secret"
 )
 
-// Defaulter is an optional interface that a struct can implement to declare its
-// defaults in Go code, with compile-time type checking.
-//
-// [Apply] calls SetDefaults on a target that implements the interface and on
-// nested fields whose type declares defaults, before any leaf value is recorded.
-// A panic from SetDefaults is reported as [ErrSetDefaultsPanicked].
 type Defaulter interface {
 	SetDefaults()
 }
 
-// visitor carries what one walk does at each field: report non-zero leaves, and
-// when apply is set, call SetDefaults and allocate defaulted nil pointers.
 type visitor struct {
 	report func(key, rawVal string)
 	apply  bool
 }
 
-// Apply applies defaults to target and reports nonzero leaves to onDefault.
-// Unexported and "-" tagged fields are skipped.
-//
-// target must be a non-nil struct pointer or Apply returns [ErrTargetNotPointer].
-//
-// onDefault receives dotted keys and rendered values, with secrets redacted.
-// A nil callback disables reporting only.
-//
-// A nested SetDefaults panic wraps [ErrSetDefaultsPanicked] with its dotted key.
 func Apply(target any, onDefault func(key, rawVal string)) error {
 	if target == nil {
-		return ErrTargetNotPointer
+		return ErrInvalidTarget
 	}
 
 	val := reflect.ValueOf(target)
 	if val.Kind() != reflect.Pointer || val.IsNil() {
-		return ErrTargetNotPointer
+		return ErrInvalidTarget
 	}
 
 	elem := val.Elem()
 	if elem.Kind() != reflect.Struct {
-		return ErrTargetNotPointer
+		return ErrInvalidTarget
 	}
 
 	ensureEmbeddedPointers(elem)
@@ -87,30 +63,19 @@ func Apply(target any, onDefault func(key, rawVal string)) error {
 	return recurseDefaults(elem, "", &visitor{report: onDefault, apply: true}, false, nil, nil)
 }
 
-// Report reports every non-zero leaf of target to onDefault, exactly as [Apply]
-// does, without calling any SetDefaults method or allocating nil pointers.
-//
-// It describes a value whose defaults were settled some other way, such as by
-// replacing it with an explicit defaults value after [Apply].
 func Report(target any, onDefault func(key, rawVal string)) error {
 	if target == nil {
-		return ErrTargetNotPointer
+		return ErrInvalidTarget
 	}
 
 	val := reflect.ValueOf(target)
 	if val.Kind() != reflect.Pointer || val.IsNil() || val.Elem().Kind() != reflect.Struct {
-		return ErrTargetNotPointer
+		return ErrInvalidTarget
 	}
 
 	return recurseDefaults(val.Elem(), "", &visitor{report: onDefault, apply: false}, false, nil, nil)
 }
 
-// IsNestedStruct reports whether v is a nested composite struct that the walk
-// recurses into rather than treating as a leaf.
-//
-// Struct types that carry their own text decoding are leaves: a value that
-// implements [encoding.TextUnmarshaler], an addressable value whose pointer
-// does, and [time.Time].
 func IsNestedStruct(v reflect.Value) bool {
 	if !v.IsValid() || v.Kind() != reflect.Struct {
 		return false
@@ -119,9 +84,6 @@ func IsNestedStruct(v reflect.Value) bool {
 	return IsNestedStructType(v.Type())
 }
 
-// IsNestedStructType reports whether typ is a nested composite struct rather
-// than a leaf type (such as [time.Time] or a type implementing
-// [encoding.TextUnmarshaler]).
 func IsNestedStructType(typ reflect.Type) bool {
 	if typ == nil {
 		return false
@@ -139,6 +101,7 @@ func IsNestedStructType(typ reflect.Type) bool {
 		return false
 	}
 
+	// Struct types that carry their own text decoding are leaves, as is time.Time.
 	if typ.Implements(reflect.TypeFor[encoding.TextUnmarshaler]()) {
 		return false
 	}
@@ -154,12 +117,6 @@ func IsNestedStructType(typ reflect.Type) bool {
 	return true
 }
 
-// FieldKey returns one configuration path segment for a struct field. The first
-// named strata, toml, yaml, or json tag wins, with whitespace trimmed and the
-// option list after its first comma discarded. Otherwise it uses the snake_case
-// Go name. An empty tag name, such as `strata:",secret"`, lets later tags name
-// the field. A name of "-" is returned unchanged for callers to skip. FieldKey
-// does not join nested path segments.
 func FieldKey(f reflect.StructField) string {
 	for _, tagName := range candidateTags {
 		tag := f.Tag.Get(tagName)
@@ -176,14 +133,6 @@ func FieldKey(f reflect.StructField) string {
 	return ToSnakeCase(f.Name)
 }
 
-// ToSnakeCase converts a CamelCase or PascalCase identifier to snake_case.
-//
-// An identifier with no uppercase letters is returned unchanged. All-ASCII
-// identifiers take a byte-wise path, and any identifier containing a non-ASCII
-// byte is walked as runes.
-//
-// A run of uppercase letters is treated as an acronym: "HTTPServer" becomes
-// "http_server".
 func ToSnakeCase(s string) string {
 	if s == "" {
 		return ""
@@ -201,33 +150,6 @@ func ToSnakeCase(s string) string {
 	return toSnakeCaseUnicode(s)
 }
 
-// ShouldInsertUnderscore reports whether an underscore is inserted before index
-// i of identifier s.
-//
-// It is called for each uppercase byte of s, with n equal to len(s), and returns
-// false for i == 0. Otherwise the result is true when s[i-1] is a lowercase
-// letter, or when s[i-1] is uppercase and a lowercase byte follows at i+1. The
-// second case separates an acronym from the word after it: "HTTPServer" becomes
-// "http_server".
-func ShouldInsertUnderscore(s string, i, n int) bool {
-	if i <= 0 {
-		return false
-	}
-
-	prev := s[i-1]
-	if isLower(prev) || isDigit(prev) {
-		return true
-	}
-
-	return isUpper(prev) && i+1 < n && isLower(s[i+1])
-}
-
-// IsSecret reports whether a struct field is tagged as secret.
-//
-// The strata or env tag must contain a "secret" option; a name containing that
-// word does not count. Whitespace around options is ignored.
-//
-// Callers must redact values when this returns true.
 func IsSecret(f reflect.StructField) bool {
 	typ := f.Type
 	for typ.Kind() == reflect.Pointer {
@@ -241,7 +163,6 @@ func IsSecret(f reflect.StructField) bool {
 	for _, tagName := range secretTags {
 		tag := f.Tag.Get(tagName)
 
-		// Skip splitting tags without "secret"; the option check confirms matches.
 		if !strings.Contains(tag, secretDirective) {
 			continue
 		}
@@ -254,6 +175,19 @@ func IsSecret(f reflect.StructField) bool {
 	}
 
 	return false
+}
+
+func shouldInsertUnderscore(s string, i, n int) bool {
+	if i <= 0 {
+		return false
+	}
+
+	prev := s[i-1]
+	if isLower(prev) || isDigit(prev) {
+		return true
+	}
+
+	return isUpper(prev) && i+1 < n && isLower(s[i+1])
 }
 
 func isLower(c byte) bool {
@@ -293,7 +227,7 @@ func toSnakeCaseASCII(s string) string {
 	for i := range len(s) {
 		c := s[i]
 		if c >= 'A' && c <= 'Z' {
-			if ShouldInsertUnderscore(s, i, n) {
+			if shouldInsertUnderscore(s, i, n) {
 				b.WriteByte('_')
 			}
 
@@ -373,12 +307,6 @@ func ensureEmbeddedPointersVisited(val reflect.Value, visited map[reflect.Type]b
 	}
 }
 
-// callSetDefaults invokes d.SetDefaults and converts a panic into an error.
-//
-// The error returned for a panic wraps [ErrSetDefaultsPanicked]. A panic left to
-// escape would terminate the caller's process, and recovering without an error
-// would report a configuration whose defaults were never applied,
-// indistinguishable from one that declares none.
 func callSetDefaults(d Defaulter) (err error) {
 	defer func() {
 		if r := recover(); r != nil {
@@ -460,10 +388,6 @@ func recordDefaultLeaf(field reflect.Value, sf reflect.StructField, fullKey stri
 	v.report(fullKey, rawValueOf(field))
 }
 
-// rawValueOf renders a leaf field for provenance.
-//
-// A pointer reports the value it points at, not an address. A nil pointer cannot
-// reach here: the caller skips zero fields before rendering.
 func rawValueOf(field reflect.Value) string {
 	if field.Kind() == reflect.Pointer {
 		if field.IsNil() {
@@ -476,8 +400,7 @@ func rawValueOf(field reflect.Value) string {
 	return formatLeafValue(field)
 }
 
-// formatLeafValue matches fmt's %v output. Types with value methods use fmt so
-// Stringer and Formatter still apply; other types use strconv where possible.
+// Types with value methods use fmt so Stringer and Formatter still apply.
 func formatLeafValue(field reflect.Value) string {
 	if field.Type().NumMethod() != 0 {
 		return fmt.Sprintf("%v", field.Interface())
@@ -555,11 +478,6 @@ func handlePointerStructField(field reflect.Value, fullKey string, v *visitor, i
 	return recurseDefaults(field.Elem(), fullKey, v, inheritedSecret, activeTypes, activePtrs)
 }
 
-// initNilStructPointer allocates a nil struct pointer field when its type
-// declares defaults, so the newly created value contributes its own defaults.
-//
-// The field is left nil when neither the pointer type nor its element type
-// implements [Defaulter].
 func initNilStructPointer(field reflect.Value, fullKey string, v *visitor, inheritedSecret bool, activeTypes []reflect.Type, activePtrs []uintptr) error {
 	elemType := field.Type().Elem()
 	ptrType := field.Type()
@@ -587,14 +505,9 @@ func initNilStructPointer(field reflect.Value, fullKey string, v *visitor, inher
 	return recurseDefaults(field.Elem(), fullKey, v, inheritedSecret, activeTypes, activePtrs)
 }
 
-// isPromotedSetDefaults reports whether target's SetDefaults is promoted from an
-// embedded struct that the field walk calls on its own, so calling it on target
-// too would run it twice.
-//
-// A method promoted from an unexported embedded struct is not one of those: the
-// walk skips unexported fields, and reflection cannot call a method through one.
-// It is called on target instead, unless the embedded field is a nil pointer,
-// which the walk cannot allocate and the method would dereference.
+// A promoted SetDefaults must not run twice: the field walk calls the embedded
+// struct itself. Unexported embedded fields are skipped, so their promoted
+// method runs on target unless the embedded pointer is nil.
 func isPromotedSetDefaults(target any) bool {
 	val := reflect.ValueOf(target)
 	t := val.Type()
@@ -617,8 +530,6 @@ func isPromotedSetDefaults(target any) bool {
 	return true
 }
 
-// declaresPromotedSetDefaults reports whether t, whose struct type is elem,
-// gets SetDefaults by promotion rather than declaring its own.
 func declaresPromotedSetDefaults(t, elem reflect.Type) bool {
 	if elem.Kind() == reflect.Struct && elem.Name() == "" {
 		return true
@@ -639,9 +550,8 @@ func declaresPromotedSetDefaults(t, elem reflect.Type) bool {
 	return strings.Contains(file, "<autogenerated>")
 }
 
-// unexportedSetDefaults finds an unexported embedded field of val that declares
-// SetDefaults. It reports whether the method has a receiver to run on, which a
-// nil embedded pointer does not provide, and then whether such a field exists.
+// The results report whether the method has a non-nil receiver, then whether
+// an unexported embedded field declaring SetDefaults exists.
 func unexportedSetDefaults(val reflect.Value) (bool, bool) {
 	defaulterType := reflect.TypeFor[Defaulter]()
 

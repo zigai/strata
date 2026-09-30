@@ -9,16 +9,12 @@ import (
 	"github.com/zigai/strata/codec"
 )
 
-// sampleConfig is the fixture shared by the codec tests. It carries a tag for
-// each built-in format, so one value exercises every codec.
 type sampleConfig struct {
 	Name string   `json:"name" toml:"name" yaml:"name"`
 	Port int      `json:"port" toml:"port" yaml:"port"`
 	Tags []string `json:"tags" toml:"tags" yaml:"tags"`
 }
 
-// TestRegistryDefaults pins the extension order that auto-discovery priority
-// depends on, and the presence of a codec behind each default extension.
 func TestRegistryDefaults(t *testing.T) {
 	t.Parallel()
 
@@ -129,9 +125,7 @@ func TestRegistryRestrict(t *testing.T) {
 	})
 }
 
-// JSONCodec.Encode writes JSON indented by two spaces, map keys sorted, and no
-// trailing newline, as its doc says; Save and Init write this text to disk.
-func TestJSONCodecEncodesIndentedSortedJSON(t *testing.T) {
+func TestJSONEncodesIndentedSortedJSON(t *testing.T) {
 	t.Parallel()
 
 	value := struct {
@@ -144,7 +138,7 @@ func TestJSONCodecEncodesIndentedSortedJSON(t *testing.T) {
 		Limits: map[string]int{"zeta": 1, "alpha": 2},
 	}
 
-	encoded, err := codec.NewJSONCodec().Encode(value)
+	encoded, err := codec.NewJSON().Encode(value)
 	if err != nil {
 		t.Fatalf("Encode: %v", err)
 	}
@@ -165,8 +159,6 @@ func TestJSONCodecEncodesIndentedSortedJSON(t *testing.T) {
 	}
 }
 
-// TestCodecNilTarget checks that every codec in the default registry reports an
-// error for a nil target rather than panicking.
 func TestCodecNilTarget(t *testing.T) {
 	t.Parallel()
 
@@ -184,12 +176,7 @@ func TestCodecNilTarget(t *testing.T) {
 	}
 }
 
-// TestYAMLCodecDistinguishesTrailingDocumentFromMalformedTail pins the two
-// reasons a second decode can fail. A stream carrying a second document is
-// reported as ErrMultipleDocuments; a stream that is merely malformed after the
-// first document is a parse failure, and reporting it as a second document would
-// send a caller looking for content that is not there.
-func TestYAMLCodecDistinguishesTrailingDocumentFromMalformedTail(t *testing.T) {
+func TestYAMLDistinguishesTrailingDocumentFromMalformedTail(t *testing.T) {
 	t.Parallel()
 
 	for _, tc := range []struct {
@@ -206,7 +193,7 @@ func TestYAMLCodecDistinguishesTrailingDocumentFromMalformedTail(t *testing.T) {
 
 			var target sampleConfig
 
-			err := codec.NewYAMLCodec().Decode([]byte(tc.document), &target)
+			err := codec.NewYAML().Decode([]byte(tc.document), &target)
 
 			if got := errors.Is(err, codec.ErrMultipleDocuments); got != tc.wantMulti {
 				t.Errorf("ErrMultipleDocuments = %v, want %v (err = %v)", got, tc.wantMulti, err)
@@ -215,10 +202,6 @@ func TestYAMLCodecDistinguishesTrailingDocumentFromMalformedTail(t *testing.T) {
 	}
 }
 
-// Every built-in codec MUST report a document it cannot parse by wrapping
-// ErrMalformed, so a caller can tell a broken file from a missing one without
-// knowing which format was involved. The parser's own error stays reachable, but
-// its type varies by format and is not a contract.
 func TestMalformedIsReportedByEveryCodec(t *testing.T) {
 	t.Parallel()
 
@@ -251,8 +234,6 @@ func TestMalformedIsReportedByEveryCodec(t *testing.T) {
 				t.Errorf("errors.Is(err, ErrMalformed) = false (err = %v)", err)
 			}
 
-			// A malformed document is not a nil target, and the two conditions
-			// MUST stay distinguishable.
 			if errors.Is(err, codec.ErrNilTarget) {
 				t.Errorf("%s reported a nil target for a malformed document", tc.ext)
 			}
@@ -260,8 +241,6 @@ func TestMalformedIsReportedByEveryCodec(t *testing.T) {
 	}
 }
 
-// A Registry is safe for concurrent use, as its doc says. Only the race detector
-// sees an unguarded access, so this test means something under `just test-race`.
 func TestRegistryConcurrentOperations(t *testing.T) {
 	t.Parallel()
 
@@ -281,7 +260,7 @@ func TestRegistryConcurrentOperations(t *testing.T) {
 
 		wg.Go(func() {
 			for range 50 {
-				reg.Register(".custom", codec.NewTOMLCodec())
+				reg.Register(".custom", codec.NewTOML())
 				_ = reg.Extensions()
 				_, _ = reg.Get(".custom")
 			}
@@ -304,9 +283,9 @@ func TestCrossFormatStrataKeyNaming(t *testing.T) {
 		codec  codec.Codec
 		input  string
 	}{
-		{"json", codec.NewJSONCodec(), `{"port": 9000, "api_key": "secret123"}`},
-		{"toml", codec.NewTOMLCodec(), "port = 9000\napi_key = \"secret123\"\n"},
-		{"yaml", codec.NewYAMLCodec(), "port: 9000\napi_key: secret123\n"},
+		{"json", codec.NewJSON(), `{"port": 9000, "api_key": "secret123"}`},
+		{"toml", codec.NewTOML(), "port = 9000\napi_key = \"secret123\"\n"},
+		{"yaml", codec.NewYAML(), "port: 9000\napi_key: secret123\n"},
 	}
 
 	for _, tc := range cases {

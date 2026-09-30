@@ -29,10 +29,10 @@ func NewRegistry() *Registry {
 		order:  []string{".toml", ".yaml", ".yml", ".json"},
 		mu:     sync.RWMutex{},
 	}
-	r.Register(".toml", NewTOMLCodec())
-	r.Register(".yaml", NewYAMLCodec())
-	r.Register(".yml", NewYAMLCodec())
-	r.Register(".json", NewJSONCodec())
+	r.Register(".toml", NewTOML())
+	r.Register(".yaml", NewYAML())
+	r.Register(".yml", NewYAML())
+	r.Register(".json", NewJSON())
 
 	return r
 }
@@ -86,7 +86,7 @@ func (r *Registry) Get(ext string) (Codec, bool) {
 }
 
 // Extensions returns the registered file extensions in auto-discovery priority
-// order. The first extension whose file exists in a tier wins for that tier.
+// order. The first extension whose file exists in a layer wins for that layer.
 //
 // The returned slice is owned by the caller. Mutating it does not affect the
 // registry.
@@ -138,10 +138,6 @@ func (r *Registry) Restrict(exts ...string) {
 	r.order = newOrder
 }
 
-// normalizeExt returns the canonical key for a file extension: trimmed,
-// lowercased, and prefixed with a dot when it does not have one.
-//
-// NB: an empty extension normalizes to the empty string.
 func normalizeExt(ext string) string {
 	trimmed := strings.ToLower(strings.TrimSpace(ext))
 	if trimmed == "" {

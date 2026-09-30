@@ -75,7 +75,7 @@ func TestProvenanceMetadata(t *testing.T) {
 		t.Errorf("latest origin = %+v, want SourceEnv 9999", latest)
 	}
 
-	meta.AddActiveFile("/home/user/.config/myapp/config.toml")
+	meta.RecordActiveFile("/home/user/.config/myapp/config.toml")
 
 	if len(meta.ActiveFiles()) != 1 {
 		t.Errorf("ActiveFiles len = %d, want 1", len(meta.ActiveFiles()))
@@ -132,8 +132,7 @@ func TestConfigErrorDiagnostics(t *testing.T) {
 	}
 }
 
-// A zero-value Metadata MUST be usable. Recording into one once panicked with
-// "assignment to entry in nil map".
+// Regression: recording into zero-value Metadata once panicked on a nil map.
 func TestMetadataZeroValueRecordsAndReports(t *testing.T) {
 	t.Parallel()
 
@@ -150,7 +149,7 @@ func TestMetadataZeroValueRecordsAndReports(t *testing.T) {
 		t.Fatalf("origin = %+v, want the recorded env origin", origin)
 	}
 
-	meta.AddActiveFile("/etc/app/config.toml")
+	meta.RecordActiveFile("/etc/app/config.toml")
 
 	if files := meta.ActiveFiles(); len(files) != 1 || files[0] != "/etc/app/config.toml" {
 		t.Fatalf("ActiveFiles() = %v, want the one recorded path", files)
@@ -161,7 +160,7 @@ func TestMetadataActiveFilesIsACopy(t *testing.T) {
 	t.Parallel()
 
 	meta := strata.NewMetadata()
-	meta.AddActiveFile("/original.toml")
+	meta.RecordActiveFile("/original.toml")
 
 	files := meta.ActiveFiles()
 	files[0] = "/mutated.toml"
@@ -171,9 +170,7 @@ func TestMetadataActiveFilesIsACopy(t *testing.T) {
 	}
 }
 
-// Provenance MUST report a number exactly as the document wrote it. JSON layers
-// once routed numbers through float64, rendering 9007199254740993 as
-// 9.007199254740992e+15.
+// Regression: float64 conversion rounded 9007199254740993.
 func TestProvenancePreservesExactIntegers(t *testing.T) {
 	t.Parallel()
 
@@ -210,9 +207,7 @@ func TestProvenancePreservesExactIntegers(t *testing.T) {
 	}
 }
 
-// Provenance MUST be recorded by a reader for the format that decoded the layer.
-// It once ran its own detection cascade instead, so a JSON document read from
-// standard input was reported by the YAML reader.
+// Regression: format auto-detection attributed JSON stdin to the YAML reader.
 func TestProvenanceFollowsStdinFormat(t *testing.T) {
 	t.Parallel()
 
@@ -286,8 +281,6 @@ func TestCustomKeyFileProvenance(t *testing.T) {
 	}
 }
 
-// A zero-valued default under a nil nested pointer still gets an origin, so
-// `config show` lists it.
 func TestNestedZeroDefaultsHaveOrigins(t *testing.T) {
 	_, meta, err := strata.LoadWithMetadata[nestedPrimitiveConfig]()
 	if err != nil {
@@ -353,8 +346,6 @@ func TestOriginsListsEveryResolvedKey(t *testing.T) {
 	}
 }
 
-// After a load, Where reports the exact origin of each key, whichever layer
-// set it: the variable name for env, the line only from YAML.
 func TestWhereReportsTheExactOriginPerSource(t *testing.T) {
 	tomlPath := writeFile(t, "c.toml", "host = 'h'\nport = 9000\n")
 	yamlPath := writeFile(t, "c.yaml", "host: h\nlabels:\n  env: prod\n")

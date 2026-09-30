@@ -8,14 +8,14 @@ import (
 	"github.com/pelletier/go-toml/v2"
 )
 
-// TOMLCodec implements [Codec] for TOML documents using go-toml/v2.
+// TOML implements [Codec] for TOML documents using go-toml/v2.
 //
-// A TOMLCodec is stateless and safe for concurrent use.
-type TOMLCodec struct{}
+// TOML is stateless and safe for concurrent use.
+type TOML struct{}
 
-// NewTOMLCodec returns a codec that decodes and encodes TOML documents.
-func NewTOMLCodec() *TOMLCodec {
-	return &TOMLCodec{}
+// NewTOML returns a codec that decodes and encodes TOML documents.
+func NewTOML() *TOML {
+	return &TOML{}
 }
 
 // Decode overlays a TOML document onto target.
@@ -26,7 +26,7 @@ func NewTOMLCodec() *TOMLCodec {
 //
 // It returns [ErrNilTarget] if target is nil. A malformed document returns an
 // error wrapping the go-toml/v2 failure.
-func (c *TOMLCodec) Decode(data []byte, target any) error {
+func (c *TOML) Decode(data []byte, target any) error {
 	if isNilTarget(target) {
 		return ErrNilTarget
 	}
@@ -66,8 +66,6 @@ func (c *TOMLCodec) Decode(data []byte, target any) error {
 	return nil
 }
 
-// tomlBindings binds each configuration key of typ to the name go-toml matches:
-// the field's toml tag, or its Go name.
 func tomlBindings(typ reflect.Type) map[string]fieldBinding {
 	return keyBindings(typ, func(field reflect.StructField) (string, bool) {
 		name, named := tagName(field, "toml")
@@ -176,7 +174,7 @@ func rewriteTOMLValue(val any, targetType reflect.Type) (any, error) {
 //
 // It returns an error wrapping the go-toml/v2 failure if value cannot be
 // represented in TOML.
-func (c *TOMLCodec) Encode(value any) ([]byte, error) {
+func (c *TOML) Encode(value any) ([]byte, error) {
 	data, err := toml.Marshal(keyedTOMLValue(value))
 	if err != nil {
 		return nil, fmt.Errorf("toml marshal: %w", err)

@@ -18,7 +18,7 @@ type lookupRoot struct {
 	Enabled bool
 }
 
-func TestLookup(t *testing.T) {
+func TestLeafFor(t *testing.T) {
 	for _, test := range []struct {
 		key    string
 		name   string
@@ -29,17 +29,17 @@ func TestLookup(t *testing.T) {
 		{"db.password", "db-password", plan.KindString, true},
 		{"enabled", "enabled", plan.KindBool, false},
 	} {
-		target, err := plan.Lookup(reflect.TypeFor[lookupRoot](), test.key)
+		target, err := plan.LeafFor(reflect.TypeFor[lookupRoot](), test.key)
 		if err != nil {
 			t.Fatal(err)
 		}
 
-		if target.Name != test.name || target.Kind != test.kind || target.Secret != test.secret {
+		if target.FlagName != test.name || target.Kind != test.kind || target.IsSecret != test.secret {
 			t.Fatalf("%s: %+v", test.key, target)
 		}
 	}
 
-	if _, err := plan.Lookup(reflect.TypeFor[lookupRoot](), "db.missing"); err == nil {
+	if _, err := plan.LeafFor(reflect.TypeFor[lookupRoot](), "db.missing"); err == nil {
 		t.Fatal("missing key was accepted")
 	}
 

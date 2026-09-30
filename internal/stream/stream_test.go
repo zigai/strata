@@ -76,7 +76,6 @@ func TestReadStdin(t *testing.T) {
 		t.Fatalf("first read got %q", string(first))
 	}
 
-	// A reader other than the process stdin is read directly, not from the cache.
 	secondBuf := bytes.NewBufferString("port = 9090\n")
 
 	second, err := ReadStdin(secondBuf, 1024)
@@ -110,13 +109,13 @@ func TestReadStdinPartialReadCorruptionPrevention(t *testing.T) {
 		_ = wPipe.Close()
 	}()
 
-	_, err1 := ReadStdin(nil, 10)
-	if !errors.Is(err1, ErrFileTooLarge) {
-		t.Fatalf("call 1: expected ErrFileTooLarge, got %v", err1)
+	_, readErr := ReadStdin(nil, 10)
+	if !errors.Is(readErr, ErrFileTooLarge) {
+		t.Fatalf("call 1: expected ErrFileTooLarge, got %v", readErr)
 	}
 
-	_, err2 := ReadStdin(nil, 100)
-	if !errors.Is(err2, ErrFileTooLarge) {
-		t.Fatalf("call 2: expected ErrFileTooLarge (not corrupted partial read), got %v", err2)
+	_, cachedErr := ReadStdin(nil, 100)
+	if !errors.Is(cachedErr, ErrFileTooLarge) {
+		t.Fatalf("call 2: expected ErrFileTooLarge (not corrupted partial read), got %v", cachedErr)
 	}
 }

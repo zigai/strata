@@ -14,7 +14,6 @@ import (
 	"github.com/zigai/strata/internal/defaulter"
 )
 
-// jsonSchemaProperty is the top-level JSON property naming a document's schema.
 const jsonSchemaProperty = "$schema"
 
 // ErrFileExists is returned when [Init] targets an existing file and
@@ -32,16 +31,16 @@ type InitOption func(*initOptions)
 // WithSchemaURL sets the schema URL that [Init] writes into the generated
 // template for editors and language servers.
 func WithSchemaURL(url string) InitOption {
-	return func(o *initOptions) {
-		o.schemaURL = url
+	return func(opts *initOptions) {
+		opts.schemaURL = url
 	}
 }
 
 // WithOverwrite sets whether [Init] may replace an existing configuration file.
 // The default is false, which reports an existing file as [ErrFileExists].
 func WithOverwrite(overwrite bool) InitOption {
-	return func(o *initOptions) {
-		o.overwrite = overwrite
+	return func(opts *initOptions) {
+		opts.overwrite = overwrite
 	}
 }
 
@@ -82,7 +81,7 @@ func Init[T any](targetPath string, opts ...InitOption) error {
 		return fmt.Errorf("apply defaults for template: %w", err)
 	}
 
-	data, err := formatInitData(codec.WithoutSecrets(target), filepath.Ext(targetPath), options.schemaURL)
+	data, err := formatInitData(codec.OmitSecrets(target), filepath.Ext(targetPath), options.schemaURL)
 	if err != nil {
 		return err
 	}
@@ -92,14 +91,14 @@ func Init[T any](targetPath string, opts ...InitOption) error {
 
 func writeInitFile(targetPath string, data []byte, overwrite bool) error {
 	if overwrite {
-		if err := atomicfile.WriteFileAtomic(targetPath, data, 0o644); err != nil {
+		if err := atomicfile.Write(targetPath, data, 0o644); err != nil {
 			return fmt.Errorf("write template file %s: %w", targetPath, err)
 		}
 
 		return nil
 	}
 
-	if err := atomicfile.CreateFileAtomic(targetPath, data, 0o644); err != nil {
+	if err := atomicfile.Create(targetPath, data, 0o644); err != nil {
 		if errors.Is(err, fs.ErrExist) || os.IsExist(err) {
 			return fmt.Errorf("%w: %s", ErrFileExists, targetPath)
 		}
@@ -160,7 +159,6 @@ func injectJSONSchema(data []byte, schemaURL string) ([]byte, error) {
 	b.WriteString("{\n  \"" + jsonSchemaProperty + "\": ")
 	b.Write(schemaEntry)
 
-	// NB: an object with no content beyond its braces takes no trailing comma.
 	rest := bytes.TrimSpace(trimmed[1:])
 	if len(rest) > 1 && rest[0] != '}' {
 		b.WriteString(",\n  ")

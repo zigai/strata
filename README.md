@@ -304,7 +304,7 @@ type Config struct {
 | `WithEnvPrefix(prefix)` | Read environment variables that start with this prefix. |
 | `WithStrict()` | Fail when a config file sets a key your struct doesn't have. |
 | `WithDefaults(value)` | Use this value as the defaults, in place of what `SetDefaults` set. |
-| `WithoutFiles()` | Skip system and user files. A `WithPath` file still loads. |
+| `WithoutFileDiscovery()` | Skip system and user files. A `WithPath` file still loads. |
 | `WithMaxFileSize(bytes)` | Reject bigger files with `ErrFileTooLarge`. The default is 1 MiB. |
 
 </details>
@@ -344,7 +344,7 @@ cfg, err := strata.Load[Config](
 )
 ```
 
-For a format strata doesn't ship, pass a decoder such as `json5.Unmarshal` to `WithDecoder`, or use `WithDecoderFunc` to decode straight into your type. To write the format too, implement `Codec` and register it with `WithCodec`.
+For a format strata doesn't ship, pass a decoder such as `json5.Unmarshal` to `WithDecoder`, or use `WithTypedDecoder` to decode straight into your type. To write the format too, implement `Codec` and register it with `WithCodec`.
 
 </details>
 

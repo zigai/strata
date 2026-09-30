@@ -28,12 +28,10 @@ database:
 
 	result := string(updated)
 
-	// The targeted key takes the new value.
 	if !strings.Contains(result, "port: 9090") {
 		t.Errorf("expected port: 9090 in result, got:\n%s", result)
 	}
 
-	// Comments elsewhere in the document are preserved.
 	if !strings.Contains(result, "# Main configuration") {
 		t.Errorf("expected # Main configuration comment preserved, got:\n%s", result)
 	}
@@ -50,7 +48,6 @@ database:
 		t.Errorf("expected host: 127.0.0.1 preserved, got:\n%s", result)
 	}
 
-	// A key that is absent is appended.
 	withAppended, err := edit.UpdateYAML([]byte(input), "server.timeout", "30s")
 	if err != nil {
 		t.Fatalf("UpdateYAML append error: %v", err)

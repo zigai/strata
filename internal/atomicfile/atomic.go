@@ -11,22 +11,11 @@ const (
 	defaultFilePerm os.FileMode = 0o644
 )
 
-// WriteFileAtomic writes data to targetPath through a temporary file in the
-// same directory.
-//
-// Parent directories are created if needed. Data is written, synced, and
-// renamed; an interrupted write leaves the old or complete new file. A zero
-// perm uses 0o644.
-//
-// A directory sync error can occur after the rename, when the new file is in
-// place but may not survive a crash.
-func WriteFileAtomic(targetPath string, data []byte, perm os.FileMode) error {
+func Write(targetPath string, data []byte, perm os.FileMode) error {
 	return writeFileAtomic(targetPath, data, perm, true)
 }
 
-// CreateFileAtomic writes data to targetPath atomically without overwriting an existing file.
-// If targetPath already exists, it returns an error matching [os.ErrExist].
-func CreateFileAtomic(targetPath string, data []byte, perm os.FileMode) error {
+func Create(targetPath string, data []byte, perm os.FileMode) error {
 	return writeFileAtomic(targetPath, data, perm, false)
 }
 
@@ -34,23 +23,23 @@ func writeTempFile(tmpFile *os.File, data []byte, perm os.FileMode) error {
 	tmpPath := tmpFile.Name()
 
 	// NB: os.CreateTemp always creates 0o600; perm must be applied explicitly.
-	if chErr := tmpFile.Chmod(perm); chErr != nil {
+	if chmodErr := tmpFile.Chmod(perm); chmodErr != nil {
 		_ = tmpFile.Close()
-		return fmt.Errorf("set permissions %#o on temporary file %s: %w", perm, tmpPath, chErr)
+		return fmt.Errorf("set permissions %#o on temporary file %s: %w", perm, tmpPath, chmodErr)
 	}
 
-	if _, wErr := tmpFile.Write(data); wErr != nil {
+	if _, writeErr := tmpFile.Write(data); writeErr != nil {
 		_ = tmpFile.Close()
-		return fmt.Errorf("write temporary file %s: %w", tmpPath, wErr)
+		return fmt.Errorf("write temporary file %s: %w", tmpPath, writeErr)
 	}
 
-	if sErr := tmpFile.Sync(); sErr != nil {
+	if syncErr := tmpFile.Sync(); syncErr != nil {
 		_ = tmpFile.Close()
-		return fmt.Errorf("sync temporary file %s: %w", tmpPath, sErr)
+		return fmt.Errorf("sync temporary file %s: %w", tmpPath, syncErr)
 	}
 
-	if cErr := tmpFile.Close(); cErr != nil {
-		return fmt.Errorf("close temporary file %s: %w", tmpPath, cErr)
+	if closeErr := tmpFile.Close(); closeErr != nil {
+		return fmt.Errorf("close temporary file %s: %w", tmpPath, closeErr)
 	}
 
 	return nil
@@ -58,8 +47,8 @@ func writeTempFile(tmpFile *os.File, data []byte, perm os.FileMode) error {
 
 func commitAtomicFile(tmpPath, targetPath string, overwrite bool) error {
 	if overwrite {
-		if rErr := replaceFile(tmpPath, targetPath); rErr != nil {
-			return fmt.Errorf("replace file %s with %s: %w", targetPath, tmpPath, rErr)
+		if replaceErr := replaceFile(tmpPath, targetPath); replaceErr != nil {
+			return fmt.Errorf("replace file %s with %s: %w", targetPath, tmpPath, replaceErr)
 		}
 
 		return nil
@@ -102,6 +91,8 @@ func writeFileAtomic(targetPath string, data []byte, perm os.FileMode, overwrite
 
 	success = true
 
+	// A directory sync error can occur after the rename, when the new file is in
+	// place but may not survive a crash.
 	if err := syncDir(dir); err != nil {
 		return fmt.Errorf("sync directory %s: %w", dir, err)
 	}

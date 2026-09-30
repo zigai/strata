@@ -16,8 +16,6 @@ type chanConfig struct {
 	Ch chan int `strata:"ch"`
 }
 
-// Schema MUST return an error for a type it cannot describe. The reflector
-// panics on such a type, and that panic once escaped a public API.
 func TestSchemaReportsUnsupportedTypesInsteadOfPanicking(t *testing.T) {
 	t.Parallel()
 
@@ -109,10 +107,6 @@ func schemaProperties(t *testing.T, data []byte) map[string]any {
 	return props
 }
 
-// The schema names each property by its Go field name in snake_case, as the
-// Schema doc says: strata, toml and yaml tags do not rename a property, and a
-// field tagged "-" is still listed. Whether the schema should follow the keys
-// strata reads instead is open (index To review, "Schema C1 strata keys").
 func TestSchemaPropertiesAreSnakeCaseGoNames(t *testing.T) {
 	t.Parallel()
 
@@ -136,8 +130,6 @@ func TestSchemaPropertiesAreSnakeCaseGoNames(t *testing.T) {
 	}
 }
 
-// Every key is optional in a config file, so the schema requires none: an
-// editor checking a sparse file against it finds no missing properties.
 func TestSchemaRequiresNoProperty(t *testing.T) {
 	t.Parallel()
 
@@ -156,8 +148,6 @@ func TestSchemaRequiresNoProperty(t *testing.T) {
 	}
 }
 
-// Without WithSchemaID, $id comes from the type's package path, and two calls
-// produce identical bytes.
 func TestSchemaDefaultIDAndDeterminism(t *testing.T) {
 	t.Parallel()
 

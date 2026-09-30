@@ -22,7 +22,7 @@ func TestEnvUnmarshalUintAndFloat(t *testing.T) {
 
 	cfg, err := strata.Load[numericConfig](
 		strata.WithEnvPrefix("NUM_"),
-		strata.WithoutFiles(),
+		strata.WithoutFileDiscovery(),
 	)
 	if err != nil {
 		t.Fatalf("Load error: %v", err)
@@ -37,8 +37,7 @@ func TestEnvUnmarshalUintAndFloat(t *testing.T) {
 	}
 }
 
-// A value that does not fit its field MUST be rejected. int8(300) once wrapped
-// to 44, and float32(1e40) once saturated to +Inf, both without an error.
+// Regression: int8(300) wrapped to 44 and float32(1e40) saturated to +Inf.
 func TestEnvRejectsValuesThatDoNotFitTheField(t *testing.T) {
 	for _, tc := range []struct {
 		name  string
@@ -53,7 +52,7 @@ func TestEnvRejectsValuesThatDoNotFitTheField(t *testing.T) {
 		t.Run(tc.name, func(t *testing.T) {
 			t.Setenv(tc.key, tc.value)
 
-			got, err := strata.Load[narrowConfig](strata.WithEnvPrefix("NARROW_"), strata.WithoutFiles())
+			got, err := strata.Load[narrowConfig](strata.WithEnvPrefix("NARROW_"), strata.WithoutFileDiscovery())
 			if err == nil {
 				t.Fatalf("%s = %q loaded as %+v, want an error", tc.key, tc.value, got)
 			}
@@ -70,7 +69,7 @@ func TestEnvAcceptsValuesAtTheFieldBoundary(t *testing.T) {
 	t.Setenv("NARROW_TINY", "255")
 	t.Setenv("NARROW_FLOAT", "3.5")
 
-	got, err := strata.Load[narrowConfig](strata.WithEnvPrefix("NARROW_"), strata.WithoutFiles())
+	got, err := strata.Load[narrowConfig](strata.WithEnvPrefix("NARROW_"), strata.WithoutFileDiscovery())
 	if err != nil {
 		t.Fatalf("Load: %v", err)
 	}
@@ -93,7 +92,7 @@ func TestPrimitivePointerEnv(t *testing.T) {
 
 	cfg, meta, err := strata.LoadWithMetadata[ptrConfig](
 		strata.WithEnvPrefix("PTR_"),
-		strata.WithoutFiles(),
+		strata.WithoutFileDiscovery(),
 	)
 	if err != nil {
 		t.Fatalf("Load error: %v", err)
@@ -168,7 +167,7 @@ func TestEnvVars(t *testing.T) {
 			t.Fatalf("no variable for %s in %+v", tt.key, vars)
 		}
 
-		if v.Name != tt.name || v.Secret != tt.secret {
+		if v.Name != tt.name || v.IsSecret != tt.secret {
 			t.Errorf("%s = %+v, want name %s secret %t", tt.key, v, tt.name, tt.secret)
 		}
 	}
@@ -232,8 +231,6 @@ func TestEnvDecodesBoolSpellings(t *testing.T) {
 	}
 }
 
-// Durations accept days and weeks from the environment, lists split on
-// commas, and a type with UnmarshalText decodes through it.
 func TestEnvDecodesByFieldType(t *testing.T) {
 	t.Setenv("DEC_WAIT", "7d")
 	t.Setenv("DEC_SPAN", "2w")
@@ -251,8 +248,6 @@ func TestEnvDecodesByFieldType(t *testing.T) {
 	}
 }
 
-// An env value that does not decode fails with ErrInvalidEnvValue, and the
-// message names both the key and the variable so the user can find it.
 func TestEnvErrorsNameTheKeyAndVariable(t *testing.T) {
 	for _, tc := range []struct {
 		name, variable, value, key string
@@ -276,13 +271,11 @@ func TestEnvErrorsNameTheKeyAndVariable(t *testing.T) {
 	}
 }
 
-// EnvVars lists every variable in declaration order, and each listed name
-// really sets its key when fed back into a load.
 func TestEnvVarsMatchesWhatLoadReads(t *testing.T) {
 	want := []strata.EnvVar{
 		{Key: "host", Name: "MYAPP_HOST", Names: []string{"MYAPP_HOST"}},
 		{Key: portKey, Name: "MYAPP_PORT", Names: []string{"MYAPP_PORT"}},
-		{Key: "api_key", Name: "MYAPP_API_KEY", Names: []string{"MYAPP_API_KEY"}, Secret: true},
+		{Key: "api_key", Name: "MYAPP_API_KEY", Names: []string{"MYAPP_API_KEY"}, IsSecret: true},
 		{Key: "database.port", Name: "MYAPP_DATABASE_PORT", Names: []string{"MYAPP_DATABASE__PORT", "MYAPP_DATABASE_PORT"}},
 		{Key: "database.max_conns", Name: "MYAPP_DATABASE_MAX_CONNS", Names: []string{"MYAPP_DATABASE__MAX_CONNS", "MYAPP_DATABASE_MAX_CONNS"}},
 	}

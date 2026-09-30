@@ -12,7 +12,7 @@ import (
 )
 
 type pendingFlag struct {
-	target  plan.Target
+	target  plan.Leaf
 	storage reflect.Value
 }
 
@@ -20,7 +20,7 @@ type textValue struct {
 	text *string
 }
 
-type extendedDurationValue struct{ duration *time.Duration }
+type durationFlagValue struct{ duration *time.Duration }
 
 func (v *textValue) Set(text string) error { *v.text = text; return nil }
 func (v *textValue) String() string        { return *v.text }
@@ -39,16 +39,16 @@ func bindFlag(p *pendingFlag) (cli.Flag, error) {
 	case plan.KindStringSlice, plan.KindIntSlice, plan.KindInt64Slice:
 		return bindSliceFlag(p)
 	case plan.KindUnsupported:
-		return nil, fmt.Errorf("%w: %s", plan.ErrUnsupportedFieldType, p.target.Display)
+		return nil, fmt.Errorf("%w: %s", plan.ErrUnsupportedFieldType, p.target.FieldName)
 	default:
-		return nil, fmt.Errorf("%w: %s", plan.ErrUnsupportedFieldType, p.target.Display)
+		return nil, fmt.Errorf("%w: %s", plan.ErrUnsupportedFieldType, p.target.FieldName)
 	}
 }
 
 func bindTextFlag(p *pendingFlag) (cli.Flag, error) {
 	storage, ok := reflect.TypeAssert[*string](p.storage)
 	if !ok {
-		return nil, fmt.Errorf("%w: %s", plan.ErrUnsupportedFieldType, p.target.Display)
+		return nil, fmt.Errorf("%w: %s", plan.ErrUnsupportedFieldType, p.target.FieldName)
 	}
 
 	value := &textValue{text: storage}
@@ -56,56 +56,56 @@ func bindTextFlag(p *pendingFlag) (cli.Flag, error) {
 	*destination = value
 
 	return &cli.GenericFlag{
-		Name:        p.target.Name,
+		Name:        p.target.FlagName,
 		Aliases:     flagAliases(&p.target),
 		Usage:       p.target.Usage,
 		Value:       value,
 		Destination: destination,
-		HideDefault: p.target.Secret,
+		HideDefault: p.target.IsSecret,
 	}, nil
 }
 
 func bindStringFlag(p *pendingFlag) (cli.Flag, error) {
 	storage, ok := reflect.TypeAssert[*string](p.storage)
 	if !ok {
-		return nil, fmt.Errorf("%w: %s", plan.ErrUnsupportedFieldType, p.target.Display)
+		return nil, fmt.Errorf("%w: %s", plan.ErrUnsupportedFieldType, p.target.FieldName)
 	}
 
 	return &cli.StringFlag{
-		Name:        p.target.Name,
+		Name:        p.target.FlagName,
 		Aliases:     flagAliases(&p.target),
 		Usage:       p.target.Usage,
 		Value:       *storage,
 		Destination: storage,
-		HideDefault: p.target.Secret,
+		HideDefault: p.target.IsSecret,
 	}, nil
 }
 
 func bindBoolFlag(p *pendingFlag) (cli.Flag, error) {
 	storage, ok := reflect.TypeAssert[*bool](p.storage)
 	if !ok {
-		return nil, fmt.Errorf("%w: %s", plan.ErrUnsupportedFieldType, p.target.Display)
+		return nil, fmt.Errorf("%w: %s", plan.ErrUnsupportedFieldType, p.target.FieldName)
 	}
 
 	return &cli.BoolFlag{
-		Name:        p.target.Name,
+		Name:        p.target.FlagName,
 		Aliases:     flagAliases(&p.target),
 		Usage:       p.target.Usage,
 		Value:       *storage,
 		Destination: storage,
-		HideDefault: p.target.Secret,
+		HideDefault: p.target.IsSecret,
 	}, nil
 }
 
 func bindNumericFlag(p *pendingFlag) (cli.Flag, error) {
 	usage := p.target.Usage
 	aliases := flagAliases(&p.target)
-	hidden := p.target.Secret
+	hidden := p.target.IsSecret
 
 	switch storage := p.storage.Interface().(type) {
 	case *int:
 		return &cli.IntFlag{
-			Name:        p.target.Name,
+			Name:        p.target.FlagName,
 			Aliases:     aliases,
 			Usage:       usage,
 			Value:       *storage,
@@ -114,7 +114,7 @@ func bindNumericFlag(p *pendingFlag) (cli.Flag, error) {
 		}, nil
 	case *int64:
 		return &cli.Int64Flag{
-			Name:        p.target.Name,
+			Name:        p.target.FlagName,
 			Aliases:     aliases,
 			Usage:       usage,
 			Value:       *storage,
@@ -123,7 +123,7 @@ func bindNumericFlag(p *pendingFlag) (cli.Flag, error) {
 		}, nil
 	case *uint:
 		return &cli.UintFlag{
-			Name:        p.target.Name,
+			Name:        p.target.FlagName,
 			Aliases:     aliases,
 			Usage:       usage,
 			Value:       *storage,
@@ -132,7 +132,7 @@ func bindNumericFlag(p *pendingFlag) (cli.Flag, error) {
 		}, nil
 	case *uint64:
 		return &cli.Uint64Flag{
-			Name:        p.target.Name,
+			Name:        p.target.FlagName,
 			Aliases:     aliases,
 			Usage:       usage,
 			Value:       *storage,
@@ -141,7 +141,7 @@ func bindNumericFlag(p *pendingFlag) (cli.Flag, error) {
 		}, nil
 	case *float32:
 		return &cli.Float32Flag{
-			Name:        p.target.Name,
+			Name:        p.target.FlagName,
 			Aliases:     aliases,
 			Usage:       usage,
 			Value:       *storage,
@@ -150,7 +150,7 @@ func bindNumericFlag(p *pendingFlag) (cli.Flag, error) {
 		}, nil
 	case *float64:
 		return &cli.Float64Flag{
-			Name:        p.target.Name,
+			Name:        p.target.FlagName,
 			Aliases:     aliases,
 			Usage:       usage,
 			Value:       *storage,
@@ -158,17 +158,17 @@ func bindNumericFlag(p *pendingFlag) (cli.Flag, error) {
 			HideDefault: hidden,
 		}, nil
 	case *time.Duration:
-		value := &extendedDurationValue{duration: storage}
+		value := &durationFlagValue{duration: storage}
 
 		var destination cli.Value = value
 
-		return &cli.GenericFlag{Name: p.target.Name, Aliases: aliases, Usage: usage, Value: value, Destination: &destination, HideDefault: hidden}, nil
+		return &cli.GenericFlag{Name: p.target.FlagName, Aliases: aliases, Usage: usage, Value: value, Destination: &destination, HideDefault: hidden}, nil
 	default:
-		return nil, fmt.Errorf("%w: %s", plan.ErrUnsupportedFieldType, p.target.Display)
+		return nil, fmt.Errorf("%w: %s", plan.ErrUnsupportedFieldType, p.target.FieldName)
 	}
 }
 
-func (v *extendedDurationValue) Set(raw string) error {
+func (v *durationFlagValue) Set(raw string) error {
 	duration, err := strata.ParseDuration(raw)
 	if err != nil {
 		return fmt.Errorf("parse duration flag: %w", err)
@@ -179,19 +179,19 @@ func (v *extendedDurationValue) Set(raw string) error {
 	return nil
 }
 
-func (v *extendedDurationValue) String() string { return v.duration.String() }
+func (v *durationFlagValue) String() string { return v.duration.String() }
 
-func (v *extendedDurationValue) Get() any { return *v.duration }
+func (v *durationFlagValue) Get() any { return *v.duration }
 
 func bindSliceFlag(p *pendingFlag) (cli.Flag, error) {
 	usage := p.target.Usage
 	aliases := flagAliases(&p.target)
-	hidden := p.target.Secret
+	hidden := p.target.IsSecret
 
 	switch storage := p.storage.Interface().(type) {
 	case *[]string:
 		return &cli.StringSliceFlag{
-			Name:        p.target.Name,
+			Name:        p.target.FlagName,
 			Aliases:     aliases,
 			Usage:       usage,
 			Value:       *storage,
@@ -200,7 +200,7 @@ func bindSliceFlag(p *pendingFlag) (cli.Flag, error) {
 		}, nil
 	case *[]int:
 		return &cli.IntSliceFlag{
-			Name:        p.target.Name,
+			Name:        p.target.FlagName,
 			Aliases:     aliases,
 			Usage:       usage,
 			Value:       *storage,
@@ -209,7 +209,7 @@ func bindSliceFlag(p *pendingFlag) (cli.Flag, error) {
 		}, nil
 	case *[]int64:
 		return &cli.Int64SliceFlag{
-			Name:        p.target.Name,
+			Name:        p.target.FlagName,
 			Aliases:     aliases,
 			Usage:       usage,
 			Value:       *storage,
@@ -217,11 +217,11 @@ func bindSliceFlag(p *pendingFlag) (cli.Flag, error) {
 			HideDefault: hidden,
 		}, nil
 	default:
-		return nil, fmt.Errorf("%w: %s", plan.ErrUnsupportedFieldType, p.target.Display)
+		return nil, fmt.Errorf("%w: %s", plan.ErrUnsupportedFieldType, p.target.FieldName)
 	}
 }
 
-func flagAliases(target *plan.Target) []string {
+func flagAliases(target *plan.Leaf) []string {
 	if target.Shorthand == "" {
 		return nil
 	}

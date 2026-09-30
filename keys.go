@@ -10,9 +10,6 @@ import (
 	"github.com/zigai/strata/internal/defaulter"
 )
 
-// suggestionLengthPerEdit is how many characters of a key buy one more edit of
-// tolerance when suggesting a correction: a four-letter key tolerates one edit,
-// a ten-letter key three.
 const suggestionLengthPerEdit = 5
 
 var keyTrees sync.Map // reflect.Type -> *keyTree
@@ -29,14 +26,11 @@ type UnknownKey struct {
 	Suggestion string
 }
 
-// keyNode is one level of the key tree a type declares. A nil children map
-// marks a node that accepts any key below it: a map, an interface, or a leaf.
+// A nil children map accepts any key below this node.
 type keyNode struct {
 	children map[string]*keyNode
 }
 
-// keyTree describes the keys a configuration type accepts, and the dotted names
-// used to suggest a correction.
 type keyTree struct {
 	root  *keyNode
 	names []string
@@ -128,8 +122,6 @@ func derefFieldType(typ reflect.Type) reflect.Type {
 	return typ
 }
 
-// known reports whether a dotted key, as a document wrote it, is exactly a
-// declared configuration key or lies below one that accepts any key.
 func (t *keyTree) known(dotted string) bool {
 	node := t.root
 
@@ -149,8 +141,6 @@ func (t *keyTree) known(dotted string) bool {
 	return true
 }
 
-// suggest returns the declared key closest to dotted, or empty when none is
-// close enough to be a likely typo.
 func (t *keyTree) suggest(dotted string) string {
 	target := strings.ToLower(dotted)
 	limit := 1 + len(target)/suggestionLengthPerEdit

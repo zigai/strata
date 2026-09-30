@@ -26,19 +26,19 @@ func createFileNoOverwrite(from, to string) error {
 }
 
 func syncDir(dir string) (err error) {
-	d, oErr := os.Open(dir)
-	if oErr != nil {
-		return fmt.Errorf("open directory %s: %w", dir, oErr)
+	d, openErr := os.Open(dir)
+	if openErr != nil {
+		return fmt.Errorf("open directory %s: %w", dir, openErr)
 	}
 
 	defer func() {
-		if cErr := d.Close(); cErr != nil && err == nil {
-			err = fmt.Errorf("close directory %s: %w", dir, cErr)
+		if closeErr := d.Close(); closeErr != nil && err == nil {
+			err = fmt.Errorf("close directory %s: %w", dir, closeErr)
 		}
 	}()
 
-	if sErr := d.Sync(); sErr != nil {
-		return fmt.Errorf("sync directory %s: %w", dir, sErr)
+	if syncErr := d.Sync(); syncErr != nil {
+		return fmt.Errorf("sync directory %s: %w", dir, syncErr)
 	}
 
 	return nil

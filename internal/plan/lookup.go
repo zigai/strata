@@ -16,39 +16,39 @@ var (
 	errUnknownKey           = errors.New("unknown configuration key")
 )
 
-type Target struct {
+type Leaf struct {
 	IndexPath []int
-	Display   string
+	FieldName string
 	ConfigKey string
-	Name      string
+	FlagName  string
 	Shorthand string
 	Usage     string
 	Kind      Kind
-	LeafType  reflect.Type
-	Secret    bool
+	Type      reflect.Type
+	IsSecret  bool
 }
 
-func Lookup(root reflect.Type, key string) (Target, error) {
-	index, field, secret, err := resolvedField(root, key)
+func LeafFor(root reflect.Type, key string) (Leaf, error) {
+	index, field, secret, err := fieldByKey(root, key)
 	if err != nil {
-		return Target{}, err
+		return Leaf{}, err
 	}
 
 	kind, leaf, err := Classify(field.Type)
 	if err != nil {
-		return Target{}, err
+		return Leaf{}, err
 	}
 
-	return Target{
+	return Leaf{
 		IndexPath: index,
-		Display:   field.Name,
+		FieldName: field.Name,
 		ConfigKey: key,
-		Name:      strings.ReplaceAll(strings.ReplaceAll(key, ".", "-"), "_", "-"),
+		FlagName:  strings.ReplaceAll(strings.ReplaceAll(key, ".", "-"), "_", "-"),
 		Shorthand: "",
 		Usage:     "",
 		Kind:      kind,
-		LeafType:  leaf,
-		Secret:    secret,
+		Type:      leaf,
+		IsSecret:  secret,
 	}, nil
 }
 
@@ -66,8 +66,8 @@ func FieldType(root reflect.Type, key string) (reflect.Type, error) {
 }
 
 func IsUnsetSecret(root reflect.Value, key string) bool {
-	target, err := Lookup(root.Type(), key)
-	if err != nil || !target.Secret {
+	target, err := LeafFor(root.Type(), key)
+	if err != nil || !target.IsSecret {
 		return false
 	}
 
@@ -121,7 +121,7 @@ func fieldTypeInStruct(typ reflect.Type, parts []string, active []reflect.Type) 
 	return nil, false
 }
 
-func resolvedField(root reflect.Type, key string) ([]int, *reflect.StructField, bool, error) {
+func fieldByKey(root reflect.Type, key string) ([]int, *reflect.StructField, bool, error) {
 	if root.Kind() != reflect.Struct {
 		return nil, nil, false, fmt.Errorf("%w: %s", ErrNotStruct, root)
 	}

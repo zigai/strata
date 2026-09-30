@@ -184,17 +184,10 @@ func TestSetScientificNotationAndSingleLetter(t *testing.T) {
 	}
 }
 
-// blankValue encodes to an empty document, which leaves a key with nothing to
-// hold.
 type blankValue struct{}
 
 func (blankValue) MarshalYAML() (any, error) { return &yaml.Node{Kind: yaml.ScalarNode}, nil }
 
-// The conditions SetBytes names MUST be classifiable through a sentinel on this
-// package, so a caller never imports a subsystem to branch on one. SetBytes and
-// Load report the same value for the same condition, so one check covers a
-// document that cannot be read and one that cannot be rewritten. A document the
-// parser rejects outright surfaces the parser's own error instead.
 func TestSetBytesFailuresAreClassifiable(t *testing.T) {
 	t.Parallel()
 
@@ -213,7 +206,7 @@ func TestSetBytesFailuresAreClassifiable(t *testing.T) {
 		{
 			"a scalar in the way",
 			func() ([]byte, error) { return strata.SetBytes(".json", []byte(`{"a": 1}`), "a.b", 2) },
-			strata.ErrNonObjectNavigation,
+			strata.ErrPathNotMapping,
 		},
 		{
 			"a root that is not a mapping",
@@ -228,12 +221,12 @@ func TestSetBytesFailuresAreClassifiable(t *testing.T) {
 		{
 			"an empty key path",
 			func() ([]byte, error) { return strata.SetBytes(".toml", []byte("a = 1\n"), "", 2) },
-			strata.ErrInvalidEmptyKeyPath,
+			strata.ErrEmptyKey,
 		},
 		{
 			"an empty path segment",
 			func() ([]byte, error) { return strata.SetBytes(".toml", []byte("a = 1\n"), "a..b", 2) },
-			strata.ErrInvalidEmptyPathSegment,
+			strata.ErrEmptyKeySegment,
 		},
 		{
 			"a duplicate JSON key",
@@ -261,9 +254,7 @@ func TestSetBytesFailuresAreClassifiable(t *testing.T) {
 	}
 }
 
-// A YAML stream carrying more than one document MUST be refused. It was once
-// decoded as its first document and rewritten as only that document, discarding
-// the rest of the file.
+// Regression: rewriting once silently discarded trailing YAML documents.
 func TestMultiDocumentYAMLIsRefused(t *testing.T) {
 	t.Parallel()
 
@@ -271,7 +262,7 @@ func TestMultiDocumentYAMLIsRefused(t *testing.T) {
 
 	var target narrowConfig
 
-	if err := codec.NewYAMLCodec().Decode([]byte(stream), &target); !errors.Is(err, codec.ErrMultipleDocuments) {
+	if err := codec.NewYAML().Decode([]byte(stream), &target); !errors.Is(err, codec.ErrMultipleDocuments) {
 		t.Fatalf("Decode err = %v, want ErrMultipleDocuments", err)
 	}
 
@@ -280,14 +271,11 @@ func TestMultiDocumentYAMLIsRefused(t *testing.T) {
 		t.Fatalf("SetBytes rewrote a multi-document stream as %q, want a refusal", out)
 	}
 
-	// The same condition reached through either API MUST carry one identity.
 	if !errors.Is(err, strata.ErrMultipleDocuments) {
 		t.Errorf("SetBytes err = %v, want it to match strata.ErrMultipleDocuments", err)
 	}
 }
 
-// A key is matched exactly. A key differing only in case is a different key,
-// so it is left alone and the requested key is added beside it.
 func TestSetMatchesKeysExactly(t *testing.T) {
 	t.Parallel()
 
@@ -328,8 +316,6 @@ func TestSetBytesAppendedTOMLKeyEndsWithNewline(t *testing.T) {
 	}
 }
 
-// Set rejects unknown keys and badly typed values, and writes valid values in a
-// form that loads back.
 func TestSetChecksKeysAndValues(t *testing.T) {
 	path := filepath.Join(t.TempDir(), "config.toml")
 	if err := strata.Init[primitiveConfig](path); err != nil {
@@ -517,8 +503,6 @@ func TestSaveThenSetUsesOneKeySpelling(t *testing.T) {
 	}
 }
 
-// After Set, the file loads back to exactly the original values with only the
-// named key changed, in every format.
 func TestSetChangesOnlyTheNamedKey(t *testing.T) {
 	t.Parallel()
 
@@ -564,7 +548,6 @@ type rejectEditConfig struct {
 	Level   editLevel
 }
 
-// A rejected Set returns an error and leaves the file byte-identical.
 func TestSetRejectionLeavesTheFileUnchanged(t *testing.T) {
 	t.Parallel()
 
@@ -629,8 +612,6 @@ func requireFileContent(t *testing.T, path, want string) {
 	}
 }
 
-// Set converts by the field's type, not by what the text looks like: numeric
-// or boolean text for a string field is written as a string.
 func TestSetKeepsStringFieldsAsStrings(t *testing.T) {
 	t.Parallel()
 
@@ -657,8 +638,6 @@ func TestSetKeepsStringFieldsAsStrings(t *testing.T) {
 	}
 }
 
-// decodeGeneric decodes a file into a map with its format's own parser, so a
-// value's written type is visible.
 func decodeGeneric(t *testing.T, path string) map[string]any {
 	t.Helper()
 
@@ -685,8 +664,6 @@ func decodeGeneric(t *testing.T, path string) map[string]any {
 	return doc
 }
 
-// SetBytes has no struct to consult, so it infers the type from the text:
-// integers, numbers with a dot or exponent, and the full words true and false.
 func TestSetBytesInfersValueTypes(t *testing.T) {
 	t.Parallel()
 

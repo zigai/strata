@@ -12,20 +12,14 @@ import (
 
 type portNumber int
 
-// level puts String on the value receiver, so the value method set is non-empty
-// and formatLeafValue MUST defer to fmt for it.
 type level int
 
 func (l level) String() string { return fmt.Sprintf("level-%d", int(l)) }
 
-// ptrLevel puts String on the pointer receiver instead, so the value method set
-// is empty and fmt does not call it.
 type ptrLevel int
 
 func (l *ptrLevel) String() string { return fmt.Sprintf("ptr-%d", int(*l)) }
 
-// failure renders through error rather than Stringer. It is not a struct, so the
-// walk treats it as a leaf rather than recursing into it.
 type failure int
 
 func (f failure) Error() string { return fmt.Sprintf("failure(%d)", int(f)) }
@@ -75,11 +69,6 @@ func corpus() leafCorpus {
 	}
 }
 
-// TestDefaultRawValuesMatchFormatting verifies that every recorded raw value is
-// exactly what fmt's %v would produce for its field.
-//
-// Consumers of RawValue already read that rendering, so the fast path may skip
-// the fmt printer but MUST NOT change its output.
 func TestDefaultRawValuesMatchFormatting(t *testing.T) {
 	t.Parallel()
 
@@ -102,8 +91,6 @@ func TestDefaultRawValuesMatchFormatting(t *testing.T) {
 		field := val.Field(i)
 		key := defaulter.FieldKey(sf)
 
-		// NB: a pointer leaf reports the value it points at, so the expectation
-		// dereferences it the same way the walk does.
 		if field.Kind() == reflect.Pointer {
 			field = field.Elem()
 		}
@@ -129,10 +116,6 @@ func TestDefaultRawValuesMatchFormatting(t *testing.T) {
 	}
 }
 
-// TestInterceptingTypesAreNotFormattedByKind pins the cases that make a plain
-// kind switch wrong: a Stringer and an error both MUST keep going through fmt.
-// It also pins that a String method on the pointer receiver is not called for a
-// value field.
 func TestInterceptingTypesAreNotFormattedByKind(t *testing.T) {
 	t.Parallel()
 
@@ -146,10 +129,10 @@ func TestInterceptingTypesAreNotFormattedByKind(t *testing.T) {
 	}
 
 	for key, want := range map[string]string{
-		"nap":       "10s",         // time.Duration implements Stringer
-		"level":     "level-3",     // String method on the value receiver
-		"ptr_level": "9",           // String method on the pointer receiver, which %v ignores
-		"failing":   "failure(42)", // error
+		"nap":       "10s",
+		"level":     "level-3",
+		"ptr_level": "9", // String method on the pointer receiver, which %v ignores
+		"failing":   "failure(42)",
 	} {
 		if got := recorded[key]; got != want {
 			t.Errorf("%s = %q, want %q", key, got, want)

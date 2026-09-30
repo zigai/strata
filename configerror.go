@@ -55,8 +55,6 @@ func (e *ConfigError) Unwrap() error {
 	return e.Err
 }
 
-// formatOriginSource renders the layer that supplied a value, for a
-// [ConfigError] diagnostic.
 func formatOriginSource(origin Origin) string {
 	switch origin.Source {
 	case SourceEnv:

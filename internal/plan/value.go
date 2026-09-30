@@ -7,15 +7,8 @@ import (
 	"reflect"
 )
 
-// ErrValueOverflow is returned when a configuration value does not fit the
-// destination field's width.
-//
-// The assignment helpers raise it when a value cannot be stored.
 var ErrValueOverflow = errors.New("value does not fit the destination field")
 
-// StructTarget reports the struct value cfg points at. A cfg that is nil, is not
-// a pointer, or does not point to a struct produces an error wrapping
-// [ErrNotStruct].
 func StructTarget(cfg any) (reflect.Value, error) {
 	if cfg == nil {
 		return reflect.Value{}, fmt.Errorf("%w: cfg is nil", ErrNotStruct)
@@ -34,13 +27,7 @@ func StructTarget(cfg any) (reflect.Value, error) {
 	return elem, nil
 }
 
-// SeedStorage copies the configuration value a target addresses into its
-// detached flag storage, converting it to the storage representation of the
-// target's kind.
-//
-// A container the target's index path cannot reach seeds nothing and reports no
-// error.
-func SeedStorage(storage reflect.Value, root reflect.Value, target *Target) error {
+func SeedStorage(storage reflect.Value, root reflect.Value, target *Leaf) error {
 	source, ok := ResolveField(root, target.IndexPath)
 	if !ok {
 		return nil
@@ -55,18 +42,12 @@ func SeedStorage(storage reflect.Value, root reflect.Value, target *Target) erro
 	}
 
 	if err := EncodeLeaf(storage.Elem(), source, target.Kind); err != nil {
-		return fmt.Errorf("seed %s: %w", target.Display, err)
+		return fmt.Errorf("seed %s: %w", target.FieldName, err)
 	}
 
 	return nil
 }
 
-// EncodeLeaf writes src into dst, which holds the detached storage of a leaf of
-// the given kind, converting the value to the storage representation.
-//
-// A value with no storage mapping, and a slice element that is neither
-// assignable nor convertible to the destination element type, produce an error
-// wrapping [ErrUnsupportedFieldType].
 func EncodeLeaf(dst, src reflect.Value, kind Kind) error {
 	//nolint:exhaustive // KindUnsupported never reaches storage seeding
 	switch kind {
@@ -106,11 +87,6 @@ func EncodeLeaf(dst, src reflect.Value, kind Kind) error {
 	}
 }
 
-// CloneSlice replaces dst with a copy of src, converting every element that is
-// not directly assignable to the destination element type.
-//
-// An element that is neither assignable nor convertible produces an error
-// wrapping [ErrUnsupportedFieldType].
 func CloneSlice(dst, src reflect.Value) error {
 	out := reflect.MakeSlice(dst.Type(), src.Len(), src.Len())
 
@@ -133,12 +109,9 @@ func CloneSlice(dst, src reflect.Value) error {
 	return nil
 }
 
-// MarshalLeaf renders src as text. A value that implements
-// [encoding.TextMarshaler], directly or through its address, is rendered by its
-// own marshaller; every other value uses [fmt.Sprint].
 func MarshalLeaf(src reflect.Value) (string, error) {
-	if marshaller, ok := reflect.TypeAssert[encoding.TextMarshaler](src); ok {
-		text, err := marshaller.MarshalText()
+	if marshaler, ok := reflect.TypeAssert[encoding.TextMarshaler](src); ok {
+		text, err := marshaler.MarshalText()
 		if err != nil {
 			return "", fmt.Errorf("marshal %s: %w", src.Type(), err)
 		}
@@ -153,8 +126,8 @@ func MarshalLeaf(src reflect.Value) (string, error) {
 		target = tmp
 	}
 
-	if marshaller, ok := reflect.TypeAssert[encoding.TextMarshaler](target.Addr()); ok {
-		text, err := marshaller.MarshalText()
+	if marshaler, ok := reflect.TypeAssert[encoding.TextMarshaler](target.Addr()); ok {
+		text, err := marshaler.MarshalText()
 		if err != nil {
 			return "", fmt.Errorf("marshal %s: %w", src.Type(), err)
 		}
@@ -165,15 +138,10 @@ func MarshalLeaf(src reflect.Value) (string, error) {
 	return fmt.Sprint(src.Interface()), nil
 }
 
-// UnmarshalLeaf decodes value into dst through [encoding.TextUnmarshaler], which
-// dst must implement directly or through its address.
-//
-// A dst with no unmarshaller produces an error wrapping
-// [ErrUnsupportedFieldType].
 func UnmarshalLeaf(dst reflect.Value, value string) error {
 	if dst.CanAddr() {
-		if unmarshaller, ok := reflect.TypeAssert[encoding.TextUnmarshaler](dst.Addr()); ok {
-			if err := unmarshaller.UnmarshalText([]byte(value)); err != nil {
+		if unmarshaler, ok := reflect.TypeAssert[encoding.TextUnmarshaler](dst.Addr()); ok {
+			if err := unmarshaler.UnmarshalText([]byte(value)); err != nil {
 				return fmt.Errorf("unmarshal %s: %w", dst.Type(), err)
 			}
 
@@ -184,8 +152,6 @@ func UnmarshalLeaf(dst reflect.Value, value string) error {
 	return fmt.Errorf("%w: %s does not implement encoding.TextUnmarshaler", ErrUnsupportedFieldType, dst.Type())
 }
 
-// AssignInt stores value in dst, and reports [ErrValueOverflow] when the value
-// does not fit the destination field's width.
 func AssignInt(dst reflect.Value, value int64) error {
 	if dst.OverflowInt(value) {
 		return fmt.Errorf("%w: %d does not fit %s", ErrValueOverflow, value, dst.Type())
@@ -196,8 +162,6 @@ func AssignInt(dst reflect.Value, value int64) error {
 	return nil
 }
 
-// AssignUint stores value in dst, and reports [ErrValueOverflow] when the value
-// does not fit the destination field's width.
 func AssignUint(dst reflect.Value, value uint64) error {
 	if dst.OverflowUint(value) {
 		return fmt.Errorf("%w: %d does not fit %s", ErrValueOverflow, value, dst.Type())
@@ -208,8 +172,6 @@ func AssignUint(dst reflect.Value, value uint64) error {
 	return nil
 }
 
-// AssignFloat stores value in dst, and reports [ErrValueOverflow] when the value
-// does not fit the destination field's width.
 func AssignFloat(dst reflect.Value, value float64) error {
 	if dst.OverflowFloat(value) {
 		return fmt.Errorf("%w: %v does not fit %s", ErrValueOverflow, value, dst.Type())
@@ -220,9 +182,6 @@ func AssignFloat(dst reflect.Value, value float64) error {
 	return nil
 }
 
-// AssignSlice replaces dst with the elements of src converted to the
-// destination element type. An element that does not fit produces an error
-// wrapping [ErrValueOverflow].
 func AssignSlice(dst, src reflect.Value) error {
 	out := reflect.MakeSlice(dst.Type(), src.Len(), src.Len())
 

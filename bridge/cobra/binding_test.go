@@ -80,8 +80,6 @@ func TestCobraRequiresFormatsOnExecute(t *testing.T) {
 	}
 }
 
-// Help shows each flag's default from SetDefaults, nested structs included, and
-// a strata.Duration flag is a duration flag.
 func TestCobraHelpShowsDefaultsAndTypes(t *testing.T) {
 	var cfg bridgetest.Config
 
@@ -99,7 +97,6 @@ func TestCobraHelpShowsDefaultsAndTypes(t *testing.T) {
 	}
 }
 
-// A root hook set before Bind still runs, once, for commands that skip loading.
 func TestCobraRootHookRunsForSkippedCommands(t *testing.T) {
 	path := filepath.Join(t.TempDir(), "config.toml")
 	if err := os.WriteFile(path, []byte("port = abc\n"), 0o600); err != nil {
@@ -160,7 +157,6 @@ type bindKinds struct {
 	Timeout  strata.Duration
 }
 
-// Each supported field kind maps to a pflag type and accepts pflag's syntax.
 func TestCobraFlagKinds(t *testing.T) {
 	var cfg bindKinds
 
@@ -182,7 +178,6 @@ func TestCobraFlagKinds(t *testing.T) {
 	}
 }
 
-// A flag bound on the root's persistent flags applies to its children.
 func TestCobraPersistentFlagOnChild(t *testing.T) {
 	var cfg bridgetest.Config
 
@@ -226,7 +221,6 @@ func TestCobraChainsBothRootHooks(t *testing.T) {
 	}
 }
 
-// Cobra's hidden shell-completion commands must not fail on a broken file.
 func TestCobraSkipsShellCompletion(t *testing.T) {
 	path := filepath.Join(t.TempDir(), "config.toml")
 	if err := os.WriteFile(path, []byte("port = abc\n"), 0o600); err != nil {
@@ -250,8 +244,6 @@ func TestCobraSkipsShellCompletion(t *testing.T) {
 	}
 }
 
-// Cobra adds help and completion only at the root. A deeper command that shares
-// one of those names is the program's own and needs its configuration.
 func TestCobraSkipsOnlyRootLevelBuiltIns(t *testing.T) {
 	path := filepath.Join(t.TempDir(), "config.toml")
 	if err := os.WriteFile(path, []byte("port = 9000\n"), 0o600); err != nil {
@@ -278,7 +270,6 @@ func TestCobraSkipsOnlyRootLevelBuiltIns(t *testing.T) {
 	}
 }
 
-// Binding two keys to the same flag name on one flag set panics at setup.
 func TestCobraDuplicateFlagNamePanics(t *testing.T) {
 	var cfg bridgetest.Config
 

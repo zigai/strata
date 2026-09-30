@@ -70,7 +70,7 @@ func TestLoadIntoWithDefaults(t *testing.T) {
 
 	var target customDefaults
 
-	_, err := strata.LoadInto(&target, strata.WithoutFiles(), strata.WithDefaults(seed))
+	_, err := strata.LoadInto(&target, strata.WithoutFileDiscovery(), strata.WithDefaults(seed))
 	if err != nil {
 		t.Fatalf("LoadInto error: %v", err)
 	}
@@ -81,7 +81,7 @@ func TestLoadIntoWithDefaults(t *testing.T) {
 }
 
 func TestPrecedenceCascading(t *testing.T) {
-	isolateTiers(t)
+	isolateLayers(t)
 
 	projectFile := writeFile(t, "precedence.toml", "app_name = \"project-app\"\nmax_retries = 10\n")
 
@@ -187,7 +187,7 @@ func TestSliceReplacementSemantics(t *testing.T) {
 	}
 }
 
-func TestExplicitPathOutranksWithoutFiles(t *testing.T) {
+func TestExplicitPathOutranksWithoutFileDiscovery(t *testing.T) {
 	t.Parallel()
 
 	path := filepath.Join(t.TempDir(), "cfg.toml")
@@ -195,7 +195,7 @@ func TestExplicitPathOutranksWithoutFiles(t *testing.T) {
 		t.Fatalf("seed: %v", err)
 	}
 
-	got, err := strata.Load[narrowConfig](strata.WithPath(path), strata.WithoutFiles(), strata.WithFormats("toml"))
+	got, err := strata.Load[narrowConfig](strata.WithPath(path), strata.WithoutFileDiscovery(), strata.WithFormats("toml"))
 	if err != nil {
 		t.Fatalf("Load: %v", err)
 	}
@@ -260,21 +260,21 @@ func TestFileTooLargeIsClassifiable(t *testing.T) {
 func TestPanickingDefaultsIsReported(t *testing.T) {
 	t.Parallel()
 
-	_, err := strata.Load[panickyConfig](strata.WithoutFiles())
+	_, err := strata.Load[panickyConfig](strata.WithoutFileDiscovery())
 	if err == nil || !strings.Contains(err.Error(), "defaults exploded") {
 		t.Fatalf("top-level err = %v, want the panic reported", err)
 	}
 
-	if _, err := strata.Load[nestedPanicky](strata.WithoutFiles()); err == nil {
+	if _, err := strata.Load[nestedPanicky](strata.WithoutFileDiscovery()); err == nil {
 		t.Fatal("nested panicking SetDefaults returned no error")
 	} else if !strings.Contains(err.Error(), "defaults exploded") {
 		t.Errorf("err = %v, want it to carry the panicking value", err)
 	}
 }
 
-func TestUserTierDotConfigEndToEnd(t *testing.T) {
+func TestUserLayerDotConfigEndToEnd(t *testing.T) {
 	if filepath.Separator == '\\' {
-		t.Skip("skipping Unix/macOS user tier test on Windows")
+		t.Skip("skipping Unix/macOS user layer test on Windows")
 	}
 
 	homeDir := t.TempDir()
@@ -289,7 +289,7 @@ func TestUserTierDotConfigEndToEnd(t *testing.T) {
 		t.Fatalf("WriteFile: %v", err)
 	}
 
-	isolateTiers(t)
+	isolateLayers(t)
 	t.Setenv("XDG_CONFIG_HOME", "")
 	t.Setenv("HOME", homeDir)
 
@@ -329,7 +329,7 @@ func TestUntaggedStructResolution(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	isolateTiers(t)
+	isolateLayers(t)
 	t.Setenv("TESTUNTAGGED_PORT", "9999")
 
 	cfg, meta, err := strata.LoadWithMetadata[ServerConfig](
@@ -443,71 +443,68 @@ func TestWithDefaultsTypeMismatch(t *testing.T) {
 	}
 }
 
-type tierConfig struct {
+type layerConfig struct {
 	Port int    `strata:"port"`
 	Note string `strata:"note"`
 }
 
-func (c *tierConfig) SetDefaults() {
+func (c *layerConfig) SetDefaults() {
 	c.Port = 1
 	c.Note = "default"
 }
 
-// Every subset of the four layers sets port to its own value; the highest
-// layer present wins. note is set only by the system file and survives
-// whatever sits above it.
-func TestLayerPrecedenceAcrossEveryTierSubset(t *testing.T) {
-	type tiers struct{ system, user, file, env bool }
+func TestLayerPrecedenceAcrossEveryLayerSubset(t *testing.T) {
+	type layers struct{ system, user, file, env bool }
 
 	for _, tc := range []struct {
-		tiers    tiers
+		layers   layers
 		wantPort int
 		wantNote string
 	}{
-		{tiers{}, 1, "default"},
-		{tiers{system: true}, 2, "system"},
-		{tiers{user: true}, 3, "default"},
-		{tiers{file: true}, 4, "default"},
-		{tiers{env: true}, 5, "default"},
-		{tiers{system: true, user: true}, 3, "system"},
-		{tiers{system: true, file: true}, 4, "system"},
-		{tiers{system: true, env: true}, 5, "system"},
-		{tiers{user: true, file: true}, 4, "default"},
-		{tiers{user: true, env: true}, 5, "default"},
-		{tiers{file: true, env: true}, 5, "default"},
-		{tiers{system: true, user: true, file: true}, 4, "system"},
-		{tiers{system: true, user: true, env: true}, 5, "system"},
-		{tiers{system: true, file: true, env: true}, 5, "system"},
-		{tiers{user: true, file: true, env: true}, 5, "default"},
-		{tiers{system: true, user: true, file: true, env: true}, 5, "system"},
+		{layers{}, 1, "default"},
+		{layers{system: true}, 2, "system"},
+		{layers{user: true}, 3, "default"},
+		{layers{file: true}, 4, "default"},
+		{layers{env: true}, 5, "default"},
+		{layers{system: true, user: true}, 3, "system"},
+		{layers{system: true, file: true}, 4, "system"},
+		{layers{system: true, env: true}, 5, "system"},
+		{layers{user: true, file: true}, 4, "default"},
+		{layers{user: true, env: true}, 5, "default"},
+		{layers{file: true, env: true}, 5, "default"},
+		{layers{system: true, user: true, file: true}, 4, "system"},
+		{layers{system: true, user: true, env: true}, 5, "system"},
+		{layers{system: true, file: true, env: true}, 5, "system"},
+		{layers{user: true, file: true, env: true}, 5, "default"},
+		{layers{system: true, user: true, file: true, env: true}, 5, "system"},
 	} {
-		t.Run(fmt.Sprintf("%+v", tc.tiers), func(t *testing.T) {
-			systemBase, userBase := isolateTiers(t)
+		t.Run(fmt.Sprintf("%+v", tc.layers), func(t *testing.T) {
+			systemBase, userBase := isolateLayers(t)
 
 			opts := []strata.Option{strata.WithAppName("myapp"), strata.WithFormats("toml"), strata.WithEnvPrefix("MYAPP_")}
 
-			if tc.tiers.system {
-				writeTierFile(t, systemBase, "port = 2\nnote = \"system\"\n")
+			if tc.layers.system {
+				writeLayerFile(t, systemBase, "port = 2\nnote = \"system\"\n")
 			}
 
-			if tc.tiers.user {
-				writeTierFile(t, userBase, "port = 3\n")
+			if tc.layers.user {
+				writeLayerFile(t, userBase, "port = 3\n")
 			}
 
-			if tc.tiers.file {
+			if tc.layers.file {
 				opts = append(opts, strata.WithPath(writeFile(t, "explicit.toml", "port = 4\n")))
 			}
 
-			if tc.tiers.env {
+			if tc.layers.env {
 				t.Setenv("MYAPP_PORT", "5")
 			}
 
-			got, err := strata.Load[tierConfig](opts...)
+			got, err := strata.Load[layerConfig](opts...)
 			if err != nil {
 				t.Fatalf("Load: %v", err)
 			}
 
-			want := tierConfig{Port: tc.wantPort, Note: tc.wantNote}
+			want := layerConfig{Port: tc.wantPort, Note: tc.wantNote}
 			if got != want {
 				t.Fatalf("got %+v, want %+v", got, want)
 			}
@@ -515,8 +512,6 @@ func TestLayerPrecedenceAcrossEveryTierSubset(t *testing.T) {
 	}
 }
 
-// LoadInto starts from the value the caller seeded: a key no layer mentions
-// keeps the seeded value instead of being zeroed.
 func TestLoadIntoKeepsSeededValues(t *testing.T) {
 	t.Parallel()
 
@@ -540,10 +535,8 @@ func TestLoadIntoKeepsSeededValues(t *testing.T) {
 	}
 }
 
-// Without options, only defaults apply: tier files under the program's own
-// name and bare or prefixed env vars are all ignored.
 func TestLoadWithoutOptionsReadsOnlyDefaults(t *testing.T) {
-	systemBase, userBase := isolateTiers(t)
+	systemBase, userBase := isolateLayers(t)
 	program := filepath.Base(os.Args[0])
 
 	for _, base := range []string{systemBase, userBase} {
@@ -560,12 +553,12 @@ func TestLoadWithoutOptionsReadsOnlyDefaults(t *testing.T) {
 	t.Setenv("PORT", "7")
 	t.Setenv("MYAPP_PORT", "8")
 
-	got, meta, err := strata.LoadWithMetadata[tierConfig]()
+	got, meta, err := strata.LoadWithMetadata[layerConfig]()
 	if err != nil {
 		t.Fatalf("Load: %v", err)
 	}
 
-	if want := (tierConfig{Port: 1, Note: "default"}); got != want {
+	if want := (layerConfig{Port: 1, Note: "default"}); got != want {
 		t.Fatalf("got %+v, want %+v", got, want)
 	}
 
@@ -574,9 +567,7 @@ func TestLoadWithoutOptionsReadsOnlyDefaults(t *testing.T) {
 	}
 }
 
-// A missing tier file is skipped, but a tier file that exists and cannot be
-// read or parsed fails the load.
-func TestBrokenTierFilesFailTheLoad(t *testing.T) {
+func TestBrokenLayerFilesFailTheLoad(t *testing.T) {
 	for _, tc := range []struct {
 		name  string
 		setup func(t *testing.T, systemBase, userBase string)
@@ -584,11 +575,11 @@ func TestBrokenTierFilesFailTheLoad(t *testing.T) {
 	}{
 		{"system malformed", func(t *testing.T, systemBase, _ string) {
 			t.Helper()
-			writeTierFile(t, systemBase, "port = = 2\n")
+			writeLayerFile(t, systemBase, "port = = 2\n")
 		}, strata.ErrMalformed},
 		{"user malformed", func(t *testing.T, _, userBase string) {
 			t.Helper()
-			writeTierFile(t, userBase, "port = = 3\n")
+			writeLayerFile(t, userBase, "port = = 3\n")
 		}, strata.ErrMalformed},
 		{"user unreadable", func(t *testing.T, _, userBase string) {
 			t.Helper()
@@ -597,44 +588,42 @@ func TestBrokenTierFilesFailTheLoad(t *testing.T) {
 				t.Skip("root reads mode 000 files")
 			}
 
-			path := writeTierFile(t, userBase, "port = 3\n")
+			path := writeLayerFile(t, userBase, "port = 3\n")
 			if err := os.Chmod(path, 0o000); err != nil {
 				t.Fatal(err)
 			}
 		}, fs.ErrPermission},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
-			systemBase, userBase := isolateTiers(t)
+			systemBase, userBase := isolateLayers(t)
 			tc.setup(t, systemBase, userBase)
 
-			got, err := strata.Load[tierConfig](strata.WithAppName("myapp"), strata.WithFormats("toml"))
+			got, err := strata.Load[layerConfig](strata.WithAppName("myapp"), strata.WithFormats("toml"))
 			if !errors.Is(err, tc.want) {
 				t.Fatalf("err = %v, want it to wrap %v", err, tc.want)
 			}
 
-			if got != (tierConfig{}) {
+			if got != (layerConfig{}) {
 				t.Fatalf("got %+v, want the zero value on error", got)
 			}
 		})
 	}
 }
 
-// WithoutFiles ignores populated system and user tiers, but still reads the
-// WithPath file.
-func TestWithoutFilesSkipsPopulatedTiers(t *testing.T) {
-	systemBase, userBase := isolateTiers(t)
-	writeTierFile(t, systemBase, "port = 2\nnote = \"system\"\n")
-	writeTierFile(t, userBase, "port = 3\nnote = \"user\"\n")
+func TestWithoutFileDiscoverySkipsPopulatedLayers(t *testing.T) {
+	systemBase, userBase := isolateLayers(t)
+	writeLayerFile(t, systemBase, "port = 2\nnote = \"system\"\n")
+	writeLayerFile(t, userBase, "port = 3\nnote = \"user\"\n")
 	path := writeFile(t, "explicit.toml", "port = 4\n")
 
-	got, meta, err := strata.LoadWithMetadata[tierConfig](
-		strata.WithAppName("myapp"), strata.WithFormats("toml"), strata.WithoutFiles(), strata.WithPath(path),
+	got, meta, err := strata.LoadWithMetadata[layerConfig](
+		strata.WithAppName("myapp"), strata.WithFormats("toml"), strata.WithoutFileDiscovery(), strata.WithPath(path),
 	)
 	if err != nil {
 		t.Fatalf("Load: %v", err)
 	}
 
-	if want := (tierConfig{Port: 4, Note: "default"}); got != want {
+	if want := (layerConfig{Port: 4, Note: "default"}); got != want {
 		t.Fatalf("got %+v, want %+v", got, want)
 	}
 
@@ -646,8 +635,8 @@ func TestWithoutFilesSkipsPopulatedTiers(t *testing.T) {
 func TestLoadRejectsBadTargetsAndDirectoryPaths(t *testing.T) {
 	t.Parallel()
 
-	if _, err := strata.LoadInto[tierConfig](nil); !errors.Is(err, strata.ErrTargetNotPointer) {
-		t.Errorf("nil target: err = %v, want ErrTargetNotPointer", err)
+	if _, err := strata.LoadInto[layerConfig](nil); !errors.Is(err, strata.ErrInvalidTarget) {
+		t.Errorf("nil target: err = %v, want ErrInvalidTarget", err)
 	}
 
 	t.Run("non-struct target", func(t *testing.T) {
@@ -660,8 +649,8 @@ func TestLoadRejectsBadTargetsAndDirectoryPaths(t *testing.T) {
 		}()
 
 		var notStruct int
-		if _, err := strata.LoadInto(&notStruct); !errors.Is(err, strata.ErrTargetNotPointer) {
-			t.Errorf("err = %v, want ErrTargetNotPointer", err)
+		if _, err := strata.LoadInto(&notStruct); !errors.Is(err, strata.ErrInvalidTarget) {
+			t.Errorf("err = %v, want ErrInvalidTarget", err)
 		}
 	})
 
@@ -670,13 +659,11 @@ func TestLoadRejectsBadTargetsAndDirectoryPaths(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	if _, err := strata.Load[tierConfig](strata.WithPath(dir), strata.WithFormats("toml")); !errors.Is(err, strata.ErrPathIsDirectory) {
+	if _, err := strata.Load[layerConfig](strata.WithPath(dir), strata.WithFormats("toml")); !errors.Is(err, strata.ErrPathIsDirectory) {
 		t.Errorf("directory path: err = %v, want ErrPathIsDirectory", err)
 	}
 }
 
-// WithDefaults ranks below every file and env var: each layer above it wins
-// for the keys it sets, and WithDefaults supplies the rest.
 func TestWithDefaultsRanksBelowFilesAndEnv(t *testing.T) {
 	t.Setenv("WD_HOST", "env.example")
 
@@ -718,8 +705,6 @@ type nilEmbeddedDefaults struct {
 	*PanickyEmbedded
 }
 
-// A panicking SetDefaults, including one promoted through a nil embedded
-// pointer, fails the load with ErrSetDefaultsPanicked instead of crashing.
 func TestPanickingDefaultsWrapTheSentinel(t *testing.T) {
 	t.Parallel()
 
@@ -747,8 +732,6 @@ func TestPanickingDefaultsWrapTheSentinel(t *testing.T) {
 	}
 }
 
-// WithPath("-") reads stdin with the first listed format and records the
-// stdin source on every key it sets.
 func TestStdinOriginIsStdin(t *testing.T) {
 	t.Parallel()
 
@@ -769,14 +752,11 @@ func TestStdinOriginIsStdin(t *testing.T) {
 	}
 }
 
-// Input exactly at the limit loads; one byte more fails with ErrFileTooLarge,
-// for a file and for stdin. A limit of zero means 1 MiB.
 func TestMaxFileSizeBoundary(t *testing.T) {
 	t.Parallel()
 
 	const mib = 1 << 20
 
-	// sized returns a valid TOML document of exactly n bytes.
 	sized := func(n int) string {
 		const head = "host = '"
 		return head + strings.Repeat("a", n-len(head)-2) + "'\n"
@@ -834,8 +814,6 @@ type outerWithUnexportedEmbed struct {
 	Host string `strata:"host"`
 }
 
-// SetDefaults runs on every nested struct that declares it, including one
-// embedded through an unexported type.
 func TestSetDefaultsRunsOnUnexportedEmbeddedStruct(t *testing.T) {
 	t.Parallel()
 
@@ -855,9 +833,6 @@ type outerWithNilUnexportedEmbed struct {
 	Host string `strata:"host"`
 }
 
-// A SetDefaults promoted through a nil unexported embedded pointer has no
-// receiver the loader can allocate, so it is skipped rather than failing the
-// load with a nil dereference.
 func TestSetDefaultsSkipsNilUnexportedEmbeddedPointer(t *testing.T) {
 	t.Parallel()
 

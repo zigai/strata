@@ -24,7 +24,7 @@ const (
 )
 
 type boundFlag struct {
-	target plan.Target
+	target plan.Leaf
 	flag   *pflag.Flag
 }
 
@@ -41,7 +41,7 @@ type Binding[T any] struct {
 	opts       []strata.Option
 	configPath string
 	meta       *strata.Metadata
-	targets    []boundFlag
+	flags      []boundFlag
 	defaults   reflect.Value
 }
 
@@ -73,7 +73,7 @@ func Bind[T any](root *cobra.Command, cfg *T, opts ...strata.Option) *Binding[T]
 	}
 
 	resolvedOpts := append([]strata.Option{strata.WithAppName(root.Name())}, opts...)
-	b := &Binding[T]{root: root, cfg: cfg, opts: resolvedOpts, configPath: "", meta: nil, targets: nil, defaults: reflect.ValueOf(defaults)}
+	b := &Binding[T]{root: root, cfg: cfg, opts: resolvedOpts, configPath: "", meta: nil, flags: nil, defaults: reflect.ValueOf(defaults)}
 	root.PersistentFlags().StringVarP(&b.configPath, "config", "c", "", "config file to load on top of the user config")
 	previous := root.PersistentPreRun
 	previousE := root.PersistentPreRunE
@@ -122,11 +122,6 @@ func skipCommand(cmd *cobra.Command) bool {
 	return false
 }
 
-// isBuiltIn reports whether cmd is one of the commands Cobra adds to the root:
-// help, completion, and the hidden shell-completion requests. Cobra adds them
-// only at the root, and a root child a program defines under the same name
-// replaces the built-in and serves the same purpose, so a command deeper in the
-// tree that happens to share a name still loads configuration.
 func isBuiltIn(cmd *cobra.Command) bool {
 	parent := cmd.Parent()
 	if parent == nil || parent.HasParent() {
@@ -154,19 +149,19 @@ func (b *Binding[T]) FlagP(fs *pflag.FlagSet, key, shorthand, usage string) {
 		panic("stratacobra.Flag requires a flag set")
 	}
 
-	target, err := plan.Lookup(reflect.TypeFor[T](), key)
+	target, err := plan.LeafFor(reflect.TypeFor[T](), key)
 	if err != nil {
 		panic(err)
 	}
 
-	if target.Secret {
+	if target.IsSecret {
 		panic(fmt.Sprintf("secret key %q cannot be a flag", key))
 	}
 
 	target.Usage = usage
 	target.Shorthand = shorthand
 
-	storage := reflect.New(plan.StorageTypeFor(target.Kind, target.LeafType))
+	storage := reflect.New(plan.StorageTypeFor(target.Kind, target.Type))
 	if err := plan.SeedStorage(storage, b.defaults, &target); err != nil {
 		panic(err)
 	}
@@ -175,7 +170,7 @@ func (b *Binding[T]) FlagP(fs *pflag.FlagSet, key, shorthand, usage string) {
 		panic(err)
 	}
 
-	b.targets = append(b.targets, boundFlag{target: target, flag: fs.Lookup(target.Name)})
+	b.flags = append(b.flags, boundFlag{target: target, flag: fs.Lookup(target.FlagName)})
 }
 
 // Load merges defaults, files, environment, and changed flags into the bound
@@ -194,7 +189,7 @@ func (b *Binding[T]) Load(cmd *cobra.Command) error {
 			return err
 		}
 
-		for _, bound := range b.targets {
+		for _, bound := range b.flags {
 			if err := syncTarget(cmd, root, &bound, meta); err != nil {
 				return err
 			}
@@ -221,15 +216,15 @@ func (b *Binding[T]) Load(cmd *cobra.Command) error {
 // the first load.
 func (b *Binding[T]) Metadata() *strata.Metadata { return b.meta }
 
-// Path returns the file used for edits: --config or WithPath when set,
-// otherwise the user-tier file selected by the loading options.
-func (b *Binding[T]) Path() (string, error) {
+// EditPath returns the file used for edits: --config or WithPath when set,
+// otherwise the user-layer file selected by the loading options.
+func (b *Binding[T]) EditPath() (string, error) {
 	opts := append([]strata.Option(nil), b.opts...)
 	if b.configPath != "" {
 		opts = append(opts, strata.WithPath(b.configPath))
 	}
 
-	path, err := strata.ConfigEditPath(opts...)
+	path, err := strata.EditPath(opts...)
 	if err != nil {
 		return "", fmt.Errorf("find user configuration file: %w", err)
 	}
@@ -237,10 +232,10 @@ func (b *Binding[T]) Path() (string, error) {
 	return path, nil
 }
 
-// Set checks key and value against T, then edits Path's file. A missing file
+// Set checks key and value against T, then edits EditPath's file. A missing file
 // reports that config init should be run first. It does not run ValidateWith.
 func (b *Binding[T]) Set(key, value string) (string, error) {
-	path, err := b.Path()
+	path, err := b.EditPath()
 	if err != nil {
 		return "", err
 	}
@@ -258,10 +253,10 @@ func (b *Binding[T]) Set(key, value string) (string, error) {
 	return path, nil
 }
 
-// Init writes a new user config file at Path, creating its parent directory.
+// Init writes a new user config file at EditPath, creating its parent directory.
 // Secrets are omitted from the template.
 func (b *Binding[T]) Init() (string, error) {
-	path, err := b.Path()
+	path, err := b.EditPath()
 	if err != nil {
 		return "", err
 	}
@@ -362,7 +357,7 @@ func (b *Binding[T]) configPathCommand() *cobra.Command {
 	return &cobra.Command{Use: "path", Short: "Show the config file path", Args: cobra.NoArgs, RunE: func(cmd *cobra.Command, _ []string) error {
 		cmd.SilenceUsage = true
 
-		resolved, err := b.Path()
+		resolved, err := b.EditPath()
 		if err != nil {
 			return err
 		}

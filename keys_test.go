@@ -99,9 +99,6 @@ func TestStrictRejectsUnknownKeys(t *testing.T) {
 	}
 }
 
-// A YAML key that only holds an anchor for other keys to reuse sets nothing, so
-// it is neither reported as unknown nor rejected in strict mode. An anchor that
-// nothing reuses is still treated as a typo.
 func TestReusedYAMLAnchorsAreNotUnknownKeys(t *testing.T) {
 	t.Parallel()
 
@@ -128,8 +125,6 @@ func TestReusedYAMLAnchorsAreNotUnknownKeys(t *testing.T) {
 	}
 }
 
-// UnknownKeys lists every undeclared key in read order with its file, line and
-// suggestion. Keys match exactly, so maxconns for max_conns is unknown.
 func TestUnknownKeysAreListedInReadOrder(t *testing.T) {
 	t.Parallel()
 

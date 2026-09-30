@@ -2,37 +2,24 @@ package origins
 
 import "strings"
 
-// Record is one configuration key found in a document.
 type Record struct {
-	// Key is the dotted key as written in the document.
 	Key string
 
-	// Line is the line that defined the key.
-	//
-	// NB: Only the YAML reader populates this. It walks a node tree that carries
-	// positions; the TOML and JSON readers report zero.
+	// Only the YAML reader populates Line; TOML and JSON report zero.
 	Line int
 
-	// RawValue is the value as text, with a string's surrounding quotes removed.
 	RawValue string
 
-	// Template reports that the key sits under a YAML anchor the document
+	// IsTemplate reports that the key sits under a YAML anchor the document
 	// reuses through an alias, as in a `base: &b {...}` entry that exists to be
 	// merged elsewhere. Only the YAML reader sets it.
-	Template bool
+	IsTemplate bool
 }
 
-// Read reports one Record per key in data, using the reader for format.
-//
-// format accepts an extension with or without its leading dot and is matched
-// case-insensitively. When format names no reader, TOML, YAML, and JSON are
-// tried in turn and the first that parses wins.
-//
-// A document that no reader can parse reports nothing. Read never fails: a
-// caller that needs the document decoded has already done so through a codec,
-// and provenance is a description of a document that is known to be valid.
-func Read(data []byte, format string, emit func(Record)) {
-	ext := strings.ToLower(strings.TrimSpace(format))
+func Read(data []byte, ext string, emit func(Record)) {
+	// Provenance describes a document the codec already accepted, so an unreadable
+	// document reports nothing rather than failing the load.
+	ext = strings.ToLower(strings.TrimSpace(ext))
 	if !strings.HasPrefix(ext, ".") && ext != "" {
 		ext = "." + ext
 	}

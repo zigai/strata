@@ -21,8 +21,8 @@ type EnvVar struct {
 	// segments, as in MYAPP_DATABASE__PORT, which is tried first.
 	Names []string
 
-	// Secret reports whether the field is tagged secret.
-	Secret bool
+	// IsSecret reports whether the field is tagged secret.
+	IsSecret bool
 }
 
 // EnvVars lists the environment variables that [WithEnvPrefix] with prefix
@@ -36,7 +36,7 @@ func EnvVars[T any](prefix string) []EnvVar {
 
 	vars := make([]EnvVar, len(described))
 	for i, v := range described {
-		vars[i] = EnvVar{Key: v.Key, Name: v.Name, Names: v.Names, Secret: v.Secret}
+		vars[i] = EnvVar{Key: v.Key, Name: v.Name, Names: v.Names, IsSecret: v.IsSecret}
 	}
 
 	return vars

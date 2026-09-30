@@ -6,7 +6,6 @@ import (
 	"github.com/zigai/strata/internal/origins"
 )
 
-// collect runs Read and returns the records indexed by key.
 func collect(t *testing.T, data, format string) map[string]origins.Record {
 	t.Helper()
 
@@ -24,8 +23,6 @@ const nested = `{
   "name": "app"
 }`
 
-// A nested mapping contributes one record per leaf, with the segments joined by
-// a dot, matching the key every other tier records.
 func TestReadJoinsNestedKeys(t *testing.T) {
 	t.Parallel()
 
@@ -42,7 +39,6 @@ func TestReadJoinsNestedKeys(t *testing.T) {
 	}
 }
 
-// Only the YAML reader walks a node tree, so only it can report a line.
 func TestReadReportsLinesForYAMLOnly(t *testing.T) {
 	t.Parallel()
 
@@ -63,7 +59,6 @@ func TestReadReportsLinesForYAMLOnly(t *testing.T) {
 		}
 	}
 
-	// Formats without a leading dot should select the correct reader directly
 	yamlNoDot := collect(t, "server:\n  port: 8080\nname: app\n", "yaml")
 	if got := yamlNoDot["server.port"].Line; got != 2 {
 		t.Errorf("YAML (no dot) server.port line = %d, want 2", got)
@@ -100,7 +95,6 @@ func TestReadUnquotesStrings(t *testing.T) {
 	}
 }
 
-// A format with no reader of its own is tried as TOML, then YAML, then JSON.
 func TestReadIdentifiesAnUnknownFormat(t *testing.T) {
 	t.Parallel()
 
@@ -122,8 +116,6 @@ func TestReadIdentifiesAnUnknownFormat(t *testing.T) {
 	}
 }
 
-// Read never reports an error: provenance describes a document a codec has
-// already accepted. A document no reader understands reports nothing.
 func TestReadReportsNothingForUnreadableInput(t *testing.T) {
 	t.Parallel()
 
@@ -139,8 +131,6 @@ func TestReadReportsNothingForUnreadableInput(t *testing.T) {
 	}
 }
 
-// Keys under an anchor that an alias reuses are templates. Keys a merge brings
-// in, and keys under an anchor nothing reuses, are ordinary records.
 func TestReadMarksReusedYAMLAnchorsAsTemplates(t *testing.T) {
 	t.Parallel()
 
@@ -157,8 +147,8 @@ func TestReadMarksReusedYAMLAnchorsAsTemplates(t *testing.T) {
 			t.Fatalf("no record for %q, got %v", key, keysOf(records))
 		}
 
-		if record.Template != want {
-			t.Errorf("%s Template = %t, want %t", key, record.Template, want)
+		if record.IsTemplate != want {
+			t.Errorf("%s Template = %t, want %t", key, record.IsTemplate, want)
 		}
 	}
 }

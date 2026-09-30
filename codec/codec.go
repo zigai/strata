@@ -14,7 +14,7 @@ var ErrNilTarget = errors.New("decode target cannot be nil")
 // available through [errors.As], but its type is not stable.
 var ErrMalformed = errors.New("malformed configuration document")
 
-// ErrMultipleDocuments is wrapped by [YAMLCodec.Decode] for a stream with more
+// ErrMultipleDocuments is wrapped by [YAML.Decode] for a stream with more
 // than one document. Malformed trailing content returns [ErrMalformed] instead.
 var ErrMultipleDocuments = errors.New("yaml stream contains more than one document")
 
@@ -32,7 +32,6 @@ type Codec interface {
 	Encode(value any) ([]byte, error)
 }
 
-// isNilTarget reports whether target is nil or a typed nil pointer.
 func isNilTarget(target any) bool {
 	if target == nil {
 		return true

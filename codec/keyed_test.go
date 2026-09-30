@@ -19,7 +19,6 @@ type keyedBase struct {
 	LogLevel string
 }
 
-// keyedLevel has its own text form, which every encoder MUST use.
 type keyedLevel int
 
 func (l keyedLevel) MarshalText() ([]byte, error) { return []byte([]string{"info", "debug"}[l]), nil }
@@ -77,7 +76,7 @@ func TestYAMLMergeKeepsAliasedConfigurationKeys(t *testing.T) {
 	} {
 		var cfg mergeConfig
 
-		if err := codec.NewYAMLCodec().Decode([]byte(tc.data), &cfg); err != nil {
+		if err := codec.NewYAML().Decode([]byte(tc.data), &cfg); err != nil {
 			t.Fatal(err)
 		}
 
@@ -91,14 +90,11 @@ func TestYAMLMergeRejectsAliasCycle(t *testing.T) {
 	data := []byte("database: &db\n  <<: *db\n")
 
 	var cfg mergeConfig
-	if err := codec.NewYAMLCodec().Decode(data, &cfg); !errors.Is(err, codec.ErrMalformed) {
+	if err := codec.NewYAML().Decode(data, &cfg); !errors.Is(err, codec.ErrMalformed) {
 		t.Fatalf("err = %v, want ErrMalformed for a cyclic merge", err)
 	}
 }
 
-// TestEncodersWriteConfigurationKeys pins that every built-in encoder names a
-// field by its configuration key, so a written file uses the keys that
-// provenance, Set, and the documentation use.
 func TestEncodersWriteConfigurationKeys(t *testing.T) {
 	t.Parallel()
 
@@ -120,9 +116,9 @@ func TestEncodersWriteConfigurationKeys(t *testing.T) {
 		name  string
 		codec codec.Codec
 	}{
-		{name: "toml", codec: codec.NewTOMLCodec()},
-		{name: "yaml", codec: codec.NewYAMLCodec()},
-		{name: "json", codec: codec.NewJSONCodec()},
+		{name: "toml", codec: codec.NewTOML()},
+		{name: "yaml", codec: codec.NewYAML()},
+		{name: "json", codec: codec.NewJSON()},
 	}
 
 	for _, tt := range tests {
@@ -163,14 +159,12 @@ func TestEncodersWriteConfigurationKeys(t *testing.T) {
 	}
 }
 
-// TestEncodersKeepRecursiveTypes pins that a type a mirror cannot express is
-// still encoded rather than rejected.
 func TestEncodersKeepRecursiveTypes(t *testing.T) {
 	t.Parallel()
 
 	value := keyedNode{Name: "root", Children: []keyedNode{{Name: "leaf"}}}
 
-	encoded, err := codec.NewYAMLCodec().Encode(value)
+	encoded, err := codec.NewYAML().Encode(value)
 	if err != nil {
 		t.Fatalf("Encode: %v", err)
 	}
@@ -180,9 +174,6 @@ func TestEncodersKeepRecursiveTypes(t *testing.T) {
 	}
 }
 
-// TestDecodersAcceptOnlyConfigurationKeys pins that a field is named by its
-// configuration key, spelled exactly. The spellings a decoder would match on its
-// own, such as the Go name, are ignored in every format.
 func TestDecodersAcceptOnlyConfigurationKeys(t *testing.T) {
 	t.Parallel()
 
@@ -191,9 +182,9 @@ func TestDecodersAcceptOnlyConfigurationKeys(t *testing.T) {
 		codec    codec.Codec
 		document string
 	}{
-		{name: "toml", codec: codec.NewTOMLCodec(), document: "http_port = 1\nHTTPPort = 2\nhttpport = 3\n[database]\nmax_conns = 4\nMaxConns = 5\n"},
-		{name: "yaml", codec: codec.NewYAMLCodec(), document: "http_port: 1\nHTTPPort: 2\nhttpport: 3\ndatabase:\n  max_conns: 4\n  MaxConns: 5\n"},
-		{name: "json", codec: codec.NewJSONCodec(), document: `{"http_port": 1, "HTTPPort": 2, "httpport": 3, "database": {"max_conns": 4, "MaxConns": 5}}`},
+		{name: "toml", codec: codec.NewTOML(), document: "http_port = 1\nHTTPPort = 2\nhttpport = 3\n[database]\nmax_conns = 4\nMaxConns = 5\n"},
+		{name: "yaml", codec: codec.NewYAML(), document: "http_port: 1\nHTTPPort: 2\nhttpport: 3\ndatabase:\n  max_conns: 4\n  MaxConns: 5\n"},
+		{name: "json", codec: codec.NewJSON(), document: `{"http_port": 1, "HTTPPort": 2, "httpport": 3, "database": {"max_conns": 4, "MaxConns": 5}}`},
 	}
 
 	for _, tt := range tests {
@@ -226,8 +217,8 @@ func TestFormatTagDashExcludesFieldFromThatFormat(t *testing.T) {
 		document string
 		want     formatExcludedConfig
 	}{
-		{name: "yaml", codec: codec.NewYAMLCodec(), document: "name: fromyaml\nport: 2\n", want: formatExcludedConfig{Name: "keep", Port: 2}},
-		{name: "json", codec: codec.NewJSONCodec(), document: `{"name": "fromjson", "port": 2}`, want: formatExcludedConfig{Name: "fromjson", Port: 1}},
+		{name: "yaml", codec: codec.NewYAML(), document: "name: fromyaml\nport: 2\n", want: formatExcludedConfig{Name: "keep", Port: 2}},
+		{name: "json", codec: codec.NewJSON(), document: `{"name": "fromjson", "port": 2}`, want: formatExcludedConfig{Name: "fromjson", Port: 1}},
 	}
 
 	for _, tt := range tests {
@@ -273,9 +264,6 @@ type restoreConfig struct {
 	Named map[string]restoreItem
 }
 
-// Decoding YAML matches decoding into the target directly: a replaced sequence
-// or map entry starts from zero, and a pointer or map is kept and written
-// through.
 func TestYAMLDecodeKeepsIdentityAndDropsReplacedState(t *testing.T) {
 	t.Parallel()
 
@@ -284,7 +272,7 @@ func TestYAMLDecodeKeepsIdentityAndDropsReplacedState(t *testing.T) {
 	target := restoreConfig{Items: []restoreItem{{N: 1, hidden: 7}}, DB: db, Other: db, Named: named}
 
 	document := "items:\n  - n: 9\nnamed:\n  replace:\n    n: 3\n"
-	if err := codec.NewYAMLCodec().Decode([]byte(document), &target); err != nil {
+	if err := codec.NewYAML().Decode([]byte(document), &target); err != nil {
 		t.Fatalf("Decode: %v", err)
 	}
 
@@ -302,7 +290,7 @@ func TestYAMLDecodeKeepsIdentityAndDropsReplacedState(t *testing.T) {
 			target.Named, reflect.ValueOf(target.Named).UnsafePointer() == reflect.ValueOf(named).UnsafePointer(), wantNamed)
 	}
 
-	if err := codec.NewYAMLCodec().Decode([]byte("db:\n  port: 2\n"), &target); err != nil {
+	if err := codec.NewYAML().Decode([]byte("db:\n  port: 2\n"), &target); err != nil {
 		t.Fatalf("Decode: %v", err)
 	}
 

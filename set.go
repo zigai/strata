@@ -60,7 +60,7 @@ type unknownSetKeyError struct {
 // becomes an integer and "1e5" a number. Only the full words "true" and
 // "false" become booleans; a single letter such as "t" stays a string.
 func SetBytes(format string, data []byte, dottedKey string, value any) ([]byte, error) {
-	return setBytes(format, data, dottedKey, inferCLIValue(value))
+	return setBytes(format, data, dottedKey, inferScalar(value))
 }
 
 // Set updates one key in the file at targetPath after checking that T declares
@@ -135,14 +135,14 @@ func setBytes(format string, data []byte, dottedKey string, val any) ([]byte, er
 }
 
 func setFile(targetPath string, dottedKey string, value any) error {
-	resolvedPath, symErr := filepath.EvalSymlinks(targetPath)
-	if symErr == nil {
+	resolvedPath, symlinkErr := filepath.EvalSymlinks(targetPath)
+	if symlinkErr == nil {
 		targetPath = resolvedPath
 	}
 
-	f, oErr := os.Open(targetPath)
-	if oErr != nil {
-		return fmt.Errorf("open target configuration %s: %w", targetPath, oErr)
+	f, openErr := os.Open(targetPath)
+	if openErr != nil {
+		return fmt.Errorf("open target configuration %s: %w", targetPath, openErr)
 	}
 
 	info, statErr := f.Stat()
@@ -151,24 +151,24 @@ func setFile(targetPath string, dottedKey string, value any) error {
 		return fmt.Errorf("stat target configuration %s: %w", targetPath, statErr)
 	}
 
-	data, rErr := stream.ReadBounded(f, stream.DefaultMaxFileSize)
-	if cErr := f.Close(); cErr != nil && rErr == nil {
-		return fmt.Errorf("close target configuration %s: %w", targetPath, cErr)
+	data, readErr := stream.ReadBounded(f, stream.DefaultMaxFileSize)
+	if closeErr := f.Close(); closeErr != nil && readErr == nil {
+		return fmt.Errorf("close target configuration %s: %w", targetPath, closeErr)
 	}
 
-	if rErr != nil {
-		return fmt.Errorf("read target configuration %s: %w", targetPath, rErr)
+	if readErr != nil {
+		return fmt.Errorf("read target configuration %s: %w", targetPath, readErr)
 	}
 
 	ext := filepath.Ext(targetPath)
 
-	updated, sErr := setBytes(ext, data, dottedKey, value)
-	if sErr != nil {
-		return fmt.Errorf("update %s in %s: %w", dottedKey, targetPath, sErr)
+	updated, editErr := setBytes(ext, data, dottedKey, value)
+	if editErr != nil {
+		return fmt.Errorf("update %s in %s: %w", dottedKey, targetPath, editErr)
 	}
 
-	if wErr := atomicfile.WriteFileAtomic(targetPath, updated, info.Mode().Perm()); wErr != nil {
-		return fmt.Errorf("write updated configuration to %s: %w", targetPath, wErr)
+	if writeErr := atomicfile.Write(targetPath, updated, info.Mode().Perm()); writeErr != nil {
+		return fmt.Errorf("write updated configuration to %s: %w", targetPath, writeErr)
 	}
 
 	return nil
@@ -176,7 +176,7 @@ func setFile(targetPath string, dottedKey string, value any) error {
 
 func typedEditValue(typ reflect.Type, value any) (any, error) {
 	if typ.Kind() == reflect.Interface {
-		return inferCLIValue(value), nil
+		return inferScalar(value), nil
 	}
 
 	if raw, ok := value.(string); ok {
@@ -192,7 +192,7 @@ func typedEditValue(typ reflect.Type, value any) (any, error) {
 		return nil, fmt.Errorf("%w: cannot decode %T as %s", errInvalidEditValue, value, typ)
 	}
 
-	if typ == reflect.TypeFor[time.Duration]() || reflect.PointerTo(typ).Implements(reflect.TypeFor[encoding.TextUnmarshaler]()) || scalarKind(typ.Kind()) {
+	if typ == reflect.TypeFor[time.Duration]() || reflect.PointerTo(typ).Implements(reflect.TypeFor[encoding.TextUnmarshaler]()) || isScalarKind(typ.Kind()) {
 		return typedEditString(typ, fmt.Sprint(value))
 	}
 
@@ -216,7 +216,7 @@ func typedEditStringValue(typ reflect.Type, value any) (any, error) {
 	return nil, fmt.Errorf("%w: cannot decode %T as %s", errInvalidEditValue, value, typ)
 }
 
-func scalarKind(kind reflect.Kind) bool {
+func isScalarKind(kind reflect.Kind) bool {
 	return kind == reflect.Bool || kind >= reflect.Int && kind <= reflect.Uint64 || kind == reflect.Float32 || kind == reflect.Float64
 }
 
@@ -349,16 +349,16 @@ func parseEditFloat(typ reflect.Type, raw string) (any, error) {
 	return parsed, nil
 }
 
-func inferCLIValue(val any) any {
+func inferScalar(val any) any {
 	s, ok := val.(string)
 	if !ok {
 		return val
 	}
 
-	return inferCLIString(s)
+	return inferScalarString(s)
 }
 
-func inferCLIString(s string) any {
+func inferScalarString(s string) any {
 	trimmed := strings.TrimSpace(s)
 	if i, err := strconv.ParseInt(trimmed, 10, 64); err == nil {
 		return i

@@ -140,11 +140,11 @@ func (m *Metadata) RecordSecret(key string) {
 	m.canonical[cleanKey] = key
 }
 
-// AddActiveFile records a configuration file that contributed to the result.
+// RecordActiveFile records a configuration file that contributed to the result.
 //
 // Paths are kept in first-seen order, and a repeated path is ignored. A nil
 // receiver is a no-op.
-func (m *Metadata) AddActiveFile(path string) {
+func (m *Metadata) RecordActiveFile(path string) {
 	if m == nil {
 		return
 	}
@@ -312,8 +312,6 @@ func (m *Metadata) resolveCanonical(normKey, snakeKey, cleanKey, defaultKey stri
 	return defaultKey
 }
 
-// normalizeKey trims surrounding whitespace and lowercases, so that two spellings
-// of one key resolve to the same entry.
 func normalizeKey(s string) string {
 	trimmed := strings.TrimSpace(s)
 	hasUpper := false

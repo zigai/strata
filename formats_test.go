@@ -128,7 +128,7 @@ func TestDiscoveryRequiresFormatsWithoutExistingFiles(t *testing.T) {
 		t.Fatalf("defaults-only load: %v", err)
 	}
 
-	if _, err := strata.Load[defaultedFormatsConfig](strata.WithAppName("myapp"), strata.WithoutFiles()); err != nil {
+	if _, err := strata.Load[defaultedFormatsConfig](strata.WithAppName("myapp"), strata.WithoutFileDiscovery()); err != nil {
 		t.Fatalf("disabled file discovery: %v", err)
 	}
 }
@@ -436,14 +436,14 @@ func TestWithDecoder(t *testing.T) {
 	}
 }
 
-func TestWithDecoderFunc(t *testing.T) {
+func TestWithTypedDecoder(t *testing.T) {
 	t.Parallel()
 
 	iniPath := writeFile(t, "config.ini", "port=4040\nhost=ini-host\n")
 
 	cfg, meta, err := strata.LoadWithMetadata[formatsTestConfig](
 		strata.WithPath(iniPath),
-		strata.WithDecoderFunc(".ini", func(data []byte, target *formatsTestConfig) error {
+		strata.WithTypedDecoder(".ini", func(data []byte, target *formatsTestConfig) error {
 			for line := range strings.SplitSeq(string(data), "\n") {
 				line = strings.TrimSpace(line)
 				if line == "" {
@@ -473,7 +473,7 @@ func TestWithDecoderFunc(t *testing.T) {
 		strata.WithFormats(".ini"),
 	)
 	if err != nil {
-		t.Fatalf("Load WithDecoderFunc: %v", err)
+		t.Fatalf("Load WithTypedDecoder: %v", err)
 	}
 
 	if cfg.Port != 4040 || cfg.Host != "ini-host" {
@@ -498,17 +498,17 @@ func TestWithDecoderNilPanics(t *testing.T) {
 	strata.WithDecoder(".custom", nil)
 }
 
-func TestWithDecoderFuncNilPanics(t *testing.T) {
+func TestWithTypedDecoderNilPanics(t *testing.T) {
 	t.Parallel()
 
 	defer func() {
 		r := recover()
 		if r == nil {
-			t.Fatal("expected WithDecoderFunc(nil) to panic")
+			t.Fatal("expected WithTypedDecoder(nil) to panic")
 		}
 	}()
 
-	strata.WithDecoderFunc[formatsTestConfig](".custom", nil)
+	strata.WithTypedDecoder[formatsTestConfig](".custom", nil)
 }
 
 func TestWithDecoderMalformed(t *testing.T) {
@@ -675,7 +675,7 @@ func TestWithFormatAliasCombinedWithFormats(t *testing.T) {
 	}
 }
 
-func TestWithFormatAliasCascadingTiers(t *testing.T) {
+func TestWithFormatAliasCascadingLayers(t *testing.T) {
 	dir := t.TempDir()
 	userDir := filepath.Join(dir, "user")
 	appUserDir := filepath.Join(userDir, "myapp")
@@ -718,7 +718,7 @@ func TestWithFormatAliasCascadingTiers(t *testing.T) {
 	}
 
 	if cfg.Host != "user-host" {
-		t.Fatalf("cfg.Host = %q, want user-host (user tier preserved)", cfg.Host)
+		t.Fatalf("cfg.Host = %q, want user-host (user layer preserved)", cfg.Host)
 	}
 
 	if len(meta.ActiveFiles()) != 2 {
@@ -749,7 +749,7 @@ func TestWithDecoderCodecContracts(t *testing.T) {
 	}
 }
 
-func TestWithDecoderFuncTypeMismatch(t *testing.T) {
+func TestWithTypedDecoderTypeMismatch(t *testing.T) {
 	t.Parallel()
 
 	iniPath := writeFile(t, "config.ini", "data")
@@ -759,7 +759,7 @@ func TestWithDecoderFuncTypeMismatch(t *testing.T) {
 	_, err := strata.LoadInto(
 		&mismatched,
 		strata.WithPath(iniPath),
-		strata.WithDecoderFunc(".ini", func(_ []byte, _ *formatsTestConfig) error {
+		strata.WithTypedDecoder(".ini", func(_ []byte, _ *formatsTestConfig) error {
 			return nil
 		}),
 		strata.WithFormats(".ini"),
@@ -773,7 +773,7 @@ func TestWithDecoderFuncTypeMismatch(t *testing.T) {
 	}
 }
 
-func TestWithDecoderFuncNilTargetAndErrorWrapping(t *testing.T) {
+func TestWithTypedDecoderNilTargetAndErrorWrapping(t *testing.T) {
 	t.Parallel()
 
 	iniPath := writeFile(t, "config.ini", "bad-data")
@@ -782,7 +782,7 @@ func TestWithDecoderFuncNilTargetAndErrorWrapping(t *testing.T) {
 
 	_, err := strata.Load[formatsTestConfig](
 		strata.WithPath(iniPath),
-		strata.WithDecoderFunc(".ini", func(_ []byte, _ *formatsTestConfig) error {
+		strata.WithTypedDecoder(".ini", func(_ []byte, _ *formatsTestConfig) error {
 			return customErr
 		}),
 		strata.WithFormats(".ini"),
@@ -922,8 +922,6 @@ func TestWithFormatsYMLPathExcludedWhenYAMLOnly(t *testing.T) {
 	}
 }
 
-// replacingCodec answers every decode with port 777, so it is visible
-// whenever it, rather than the built-in, reads a file.
 type replacingCodec struct{}
 
 func (replacingCodec) Decode(_ []byte, target any) error {
@@ -939,8 +937,6 @@ func (replacingCodec) Decode(_ []byte, target any) error {
 
 func (replacingCodec) Encode(any) ([]byte, error) { return []byte("replaced = true\n"), nil }
 
-// WithCodec replaces a built-in for one load only; the next load, Save and
-// Init still use the built-in.
 func TestWithCodecAppliesToOneLoadOnly(t *testing.T) {
 	t.Parallel()
 

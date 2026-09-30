@@ -49,8 +49,8 @@ func TestApplyDefaults(t *testing.T) {
 		var cfg appConfig
 
 		err := defaulter.Apply(cfg, nil)
-		if !errors.Is(err, defaulter.ErrTargetNotPointer) {
-			t.Fatalf("expected ErrTargetNotPointer, got %v", err)
+		if !errors.Is(err, defaulter.ErrInvalidTarget) {
+			t.Fatalf("expected ErrInvalidTarget, got %v", err)
 		}
 	})
 
@@ -60,8 +60,8 @@ func TestApplyDefaults(t *testing.T) {
 		var cfg *appConfig
 
 		err := defaulter.Apply(cfg, nil)
-		if !errors.Is(err, defaulter.ErrTargetNotPointer) {
-			t.Fatalf("expected ErrTargetNotPointer, got %v", err)
+		if !errors.Is(err, defaulter.ErrInvalidTarget) {
+			t.Fatalf("expected ErrInvalidTarget, got %v", err)
 		}
 	})
 

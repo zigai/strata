@@ -27,7 +27,7 @@
 // # Extension points
 //
 // [Defaulter] supplies defaults; [Validator] and [MetadataValidator] validate
-// the merged result. [WithCodec], [WithDecoder], and [WithDecoderFunc] register
+// the merged result. [WithCodec], [WithDecoder], and [WithTypedDecoder] register
 // readers for one load. [Save], [Init], and [Set] write only built-in TOML,
 // YAML, and JSON formats.
 //

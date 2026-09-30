@@ -8,7 +8,7 @@ const (
 	SourceDefault SourceKind = "default"
 
 	// SourceSystem is the system-wide configuration file layer. It is the
-	// lowest-precedence file tier, discovered under /etc/xdg on Unix and
+	// lowest-precedence file layer, discovered under /etc/xdg on Unix and
 	// %ProgramData% on Windows.
 	SourceSystem SourceKind = "system"
 

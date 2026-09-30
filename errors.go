@@ -24,9 +24,9 @@ var (
 	// value whose type does not match the decoder's expected type parameter.
 	ErrCodecTargetMismatch = errors.New("codec target type mismatch")
 
-	// ErrTargetNotPointer is returned when [LoadInto] is given a nil pointer, or
+	// ErrInvalidTarget is returned when [LoadInto] is given a nil pointer, or
 	// a pointer whose element is not a struct.
-	ErrTargetNotPointer = defaulter.ErrTargetNotPointer
+	ErrInvalidTarget = defaulter.ErrInvalidTarget
 
 	// ErrSetDefaultsPanicked is returned when a [Defaulter]'s SetDefaults panics.
 	// The panicking value is included in the message.
@@ -43,7 +43,7 @@ var (
 	// ErrInvalidEnvValue is returned when a bound environment variable cannot be
 	// decoded into its field. It covers a value too wide for the field's type,
 	// and a field type that cannot be bound from the environment at all.
-	ErrInvalidEnvValue = env.ErrInvalidEnvValue
+	ErrInvalidEnvValue = env.ErrInvalidValue
 
 	// ErrMalformed is returned when a configuration file cannot be parsed into
 	// the target. It covers every format, so a caller can tell a broken file
@@ -53,17 +53,17 @@ var (
 	ErrMalformed = codec.ErrMalformed
 
 	// ErrMultipleDocuments is returned for a YAML stream carrying more than one
-	// document. A configuration tier is a single document.
+	// document. A configuration layer is a single document.
 	//
 	// Both [Load] and [SetBytes] report it, and both report the same value, so
 	// one check covers a document that cannot be read and one that cannot be
 	// rewritten.
 	ErrMultipleDocuments = codec.ErrMultipleDocuments
 
-	// ErrNonObjectNavigation is returned when [SetBytes] must traverse a value
+	// ErrPathNotMapping is returned when [SetBytes] must traverse a value
 	// that is not an object to reach the requested key in a TOML or JSON
 	// document. A YAML edit replaces such a value with a mapping instead.
-	ErrNonObjectNavigation = edit.ErrNonObjectNavigation
+	ErrPathNotMapping = edit.ErrPathNotMapping
 
 	// ErrRootNotMapping is returned when [SetBytes] is given a document whose
 	// root is not a mapping, so there is no key to address.
@@ -73,11 +73,11 @@ var (
 	// encodes to an empty document, leaving the key with nothing to hold.
 	ErrEmptyEncodedValue = edit.ErrEmptyEncodedValue
 
-	// ErrInvalidEmptyKeyPath is returned when a dotted key path is empty.
-	ErrInvalidEmptyKeyPath = edit.ErrInvalidEmptyKeyPath
+	// ErrEmptyKey is returned when a dotted key path is empty.
+	ErrEmptyKey = edit.ErrEmptyKey
 
-	// ErrInvalidEmptyPathSegment is returned when a dotted key path contains an empty segment.
-	ErrInvalidEmptyPathSegment = edit.ErrInvalidEmptyPathSegment
+	// ErrEmptyKeySegment is returned when a dotted key path contains an empty segment.
+	ErrEmptyKeySegment = edit.ErrEmptyKeySegment
 
 	// ErrDefaultsTypeMismatch is returned when the type given to [WithDefaults]
 	// differs from the type being loaded.

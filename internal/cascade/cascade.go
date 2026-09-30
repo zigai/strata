@@ -13,27 +13,15 @@ import (
 )
 
 const (
-	// SourceSystem marks a layer discovered in the system tier: /etc/xdg or the
-	// XDG_CONFIG_DIRS entries, and %ProgramData% on Windows.
 	SourceSystem = "system"
 
-	// SourceUser marks a layer discovered in the user tier: ~/.config or
-	// XDG_CONFIG_HOME on Unix and macOS, and %APPDATA% on Windows.
 	SourceUser = "user"
 
-	// SourceFile marks the layer read from the path named by
-	// [Params.ExplicitPath].
 	SourceFile = "file"
 
-	// SourceStdin marks the layer read from standard input, which
-	// [Params.ExplicitPath] selects with "-".
 	SourceStdin = "stdin"
 )
 
-// ErrPathIsDirectory is returned when an explicit configuration path names a
-// directory.
-//
-// The error carries the path.
 var ErrPathIsDirectory = errors.New("explicit configuration path is a directory")
 
 var (
@@ -41,47 +29,27 @@ var (
 	errNoHome         = errors.New("home directory is not available")
 )
 
-// Layer is one configuration source discovered in the cascade order.
-//
-// Source is one of the Source* constants. Data holds the bytes of a stdin layer
-// and is nil for a file layer, whose contents the caller reads from Path.
 type Layer struct {
 	Source string
 	Path   string
-	Data   []byte
+	// Data holds stdin bytes and is nil for file layers, which the caller reads from Path.
+	Data []byte
 }
 
-// Params specifies the input to [Discover].
-//
-// Extensions are tried in the order given. MaxFileSize bounds the bytes read for
-// a stdin layer, and StdinReader overrides the process standard input.
-//
-// OptionalPath makes a missing ExplicitPath contribute nothing instead of
-// failing the discovery.
-type Params struct {
-	AppName      string
-	ExplicitPath string
-	OptionalPath bool
-	WithoutFiles bool
-	StdinReader  io.Reader
-	MaxFileSize  int64
-	Extensions   []string
+type DiscoverOptions struct {
+	AppName       string
+	ExplicitPath  string
+	OptionalPath  bool
+	SkipDiscovery bool
+	StdinReader   io.Reader
+	MaxFileSize   int64
+	Extensions    []string
 }
 
-// Discover returns the configuration layers to merge, in ascending precedence.
-//
-// AppName selects up to one system and one user file. Extensions are tried in
-// the order in Params. A missing tier file contributes nothing. Empty AppName
-// or WithoutFiles skips both tiers.
-//
-// ExplicitPath applies above them even with WithoutFiles. "-" reads stdin;
-// missing paths fail unless OptionalPath is set.
-//
-// It returns [ErrPathIsDirectory] if an explicit path names a directory.
-func Discover(p Params) ([]Layer, error) {
-	if p.WithoutFiles {
-		if p.ExplicitPath != "" {
-			return discoverExplicitLayer(p)
+func Discover(opts DiscoverOptions) ([]Layer, error) {
+	if opts.SkipDiscovery {
+		if opts.ExplicitPath != "" {
+			return discoverExplicitLayer(opts)
 		}
 
 		return nil, nil
@@ -89,8 +57,8 @@ func Discover(p Params) ([]Layer, error) {
 
 	var layers []Layer
 
-	if p.AppName != "" {
-		if sysPath := discoverSystemTier(p.AppName, p.Extensions); sysPath != "" {
+	if opts.AppName != "" {
+		if sysPath := discoverSystemLayer(opts.AppName, opts.Extensions); sysPath != "" {
 			layers = append(layers, Layer{
 				Source: SourceSystem,
 				Path:   sysPath,
@@ -98,7 +66,7 @@ func Discover(p Params) ([]Layer, error) {
 			})
 		}
 
-		if userPath := discoverUserTier(p.AppName, p.Extensions); userPath != "" {
+		if userPath := discoverUserLayer(opts.AppName, opts.Extensions); userPath != "" {
 			layers = append(layers, Layer{
 				Source: SourceUser,
 				Path:   userPath,
@@ -107,8 +75,8 @@ func Discover(p Params) ([]Layer, error) {
 		}
 	}
 
-	if p.ExplicitPath != "" {
-		explicitLayers, err := discoverExplicitLayer(p)
+	if opts.ExplicitPath != "" {
+		explicitLayers, err := discoverExplicitLayer(opts)
 		if err != nil {
 			return nil, err
 		}
@@ -166,9 +134,9 @@ func userConfigBase() (string, error) {
 	return filepath.Join(home, ".config"), nil
 }
 
-func discoverExplicitLayer(p Params) ([]Layer, error) {
-	if p.ExplicitPath == "-" {
-		data, err := stream.ReadStdin(p.StdinReader, p.MaxFileSize)
+func discoverExplicitLayer(opts DiscoverOptions) ([]Layer, error) {
+	if opts.ExplicitPath == "-" {
+		data, err := stream.ReadStdin(opts.StdinReader, opts.MaxFileSize)
 		if err != nil {
 			return nil, fmt.Errorf("read stdin: %w", err)
 		}
@@ -182,31 +150,31 @@ func discoverExplicitLayer(p Params) ([]Layer, error) {
 		}, nil
 	}
 
-	cleanPath := filepath.Clean(p.ExplicitPath)
+	cleanPath := filepath.Clean(opts.ExplicitPath)
 
 	info, err := os.Stat(cleanPath)
 	if err != nil {
-		if p.OptionalPath && errors.Is(err, os.ErrNotExist) {
+		if opts.OptionalPath && errors.Is(err, os.ErrNotExist) {
 			return nil, nil
 		}
 
-		return nil, fmt.Errorf("explicit configuration path %s: %w", p.ExplicitPath, err)
+		return nil, fmt.Errorf("explicit configuration path %s: %w", opts.ExplicitPath, err)
 	}
 
 	if info.IsDir() {
-		return nil, fmt.Errorf("%w: %s", ErrPathIsDirectory, p.ExplicitPath)
+		return nil, fmt.Errorf("%w: %s", ErrPathIsDirectory, opts.ExplicitPath)
 	}
 
 	return []Layer{
 		{
 			Source: SourceFile,
-			Path:   p.ExplicitPath,
+			Path:   opts.ExplicitPath,
 			Data:   nil,
 		},
 	}, nil
 }
 
-func discoverSystemTier(appName string, exts []string) string {
+func discoverSystemLayer(appName string, exts []string) string {
 	if runtime.GOOS == "windows" {
 		programData := os.Getenv("ProgramData")
 		if programData == "" {
@@ -242,7 +210,7 @@ func discoverSystemTier(appName string, exts []string) string {
 	return ""
 }
 
-func discoverUserTier(appName string, exts []string) string {
+func discoverUserLayer(appName string, exts []string) string {
 	base, err := userConfigBase()
 	if err != nil {
 		return ""
@@ -262,13 +230,8 @@ func findConfigFile(dir string, exts []string) string {
 	return ""
 }
 
-// isRegularFile reports whether path names a regular file.
-//
-// Directories, FIFOs, sockets, and device nodes are rejected. Opening a FIFO
-// with no writer blocks indefinitely, and the rest are not configuration
-// documents.
-//
-// Symlinks are followed: a link to a regular file is accepted.
+// Opening a FIFO with no writer blocks indefinitely, so only regular files
+// are accepted. Symlinks to regular files are followed.
 func isRegularFile(path string) bool {
 	info, err := os.Stat(filepath.Clean(path))
 	if err != nil {

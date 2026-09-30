@@ -8,29 +8,18 @@ import (
 	"github.com/zigai/strata/codec"
 )
 
-// bindingPromoted is embedded in bindingConfig, so its fields are reachable from
-// the struct that promotes them. Its type is unexported and its field is not: an
-// embedded struct type is promoted whatever its own visibility.
 type bindingPromoted struct {
 	Promoted int `strata:"promoted"`
 }
 
-// BindingPointer is embedded in bindingConfig as a pointer, so its fields are
-// promoted through a pointer that decoding allocates when a document names one
-// of them.
 type BindingPointer struct {
 	Allocated int `strata:"allocated"`
 }
 
-// bindingNested is the element type of the nested fields bindingConfig carries.
 type bindingNested struct {
 	MaxConns int `strata:"max_conns"`
 }
 
-// bindingConfig names its fields the way the package names configuration keys: a
-// strata, toml, or yaml tag where one is declared, and the snake_case form of the
-// Go name otherwise. Only JSONKey declares a json tag, and only Skipped is
-// excluded from the key model.
 type bindingConfig struct {
 	bindingPromoted
 	*BindingPointer
@@ -49,12 +38,8 @@ type bindingConfig struct {
 	Excluded   int                      `json:"-"`
 }
 
-// A JSON member MUST reach a field by the name encoding/json matches and by the
-// configuration key the rest of the package derives for it, so a document
-// written in the key style provenance reports loads into the struct it belongs
-// to. Matching one and not the other was a silent no-op: the document loaded,
-// the field kept its default, and the origin of the key was recorded anyway.
-func TestJSONCodecBindsConfigurationKeys(t *testing.T) {
+// Regression: key rewriting once recorded an origin without setting the field.
+func TestJSONBindsConfigurationKeys(t *testing.T) {
 	t.Parallel()
 
 	for _, tc := range []struct {
@@ -150,7 +135,7 @@ func TestJSONCodecBindsConfigurationKeys(t *testing.T) {
 
 			var target bindingConfig
 
-			if err := codec.NewJSONCodec().Decode([]byte(tc.document), &target); err != nil {
+			if err := codec.NewJSON().Decode([]byte(tc.document), &target); err != nil {
 				t.Fatalf("Decode(%s) error: %v", tc.document, err)
 			}
 
@@ -161,9 +146,7 @@ func TestJSONCodecBindsConfigurationKeys(t *testing.T) {
 	}
 }
 
-// A document overlays the value it is decoded into: a field the document omits
-// keeps the value it holds, whatever the rewrite did to the members around it.
-func TestJSONCodecKeepsOmittedFields(t *testing.T) {
+func TestJSONKeepsOmittedFields(t *testing.T) {
 	t.Parallel()
 
 	target := bindingConfig{
@@ -172,7 +155,7 @@ func TestJSONCodecKeepsOmittedFields(t *testing.T) {
 		Items:     []bindingNested{{MaxConns: 2}},
 	}
 
-	if err := codec.NewJSONCodec().Decode([]byte(`{"toml_key": "set"}`), &target); err != nil {
+	if err := codec.NewJSON().Decode([]byte(`{"toml_key": "set"}`), &target); err != nil {
 		t.Fatalf("Decode error: %v", err)
 	}
 
@@ -188,15 +171,12 @@ func TestJSONCodecKeepsOmittedFields(t *testing.T) {
 	}
 }
 
-// Only the configuration key names a field. A member spelled the way
-// encoding/json would match on its own is ignored, so it cannot compete with the
-// key for the same field.
-func TestJSONCodecIgnoresOtherSpellings(t *testing.T) {
+func TestJSONIgnoresOtherSpellings(t *testing.T) {
 	t.Parallel()
 
 	var target bindingNested
 
-	if err := codec.NewJSONCodec().Decode([]byte(`{"max_conns": 1, "MaxConns": 2, "maxconns": 3}`), &target); err != nil {
+	if err := codec.NewJSON().Decode([]byte(`{"max_conns": 1, "MaxConns": 2, "maxconns": 3}`), &target); err != nil {
 		t.Fatalf("Decode error: %v", err)
 	}
 
@@ -205,10 +185,7 @@ func TestJSONCodecIgnoresOtherSpellings(t *testing.T) {
 	}
 }
 
-// Rewriting a document MUST NOT weaken what encoding/json rejects: a duplicate
-// member, invalid UTF-8, and a syntax error each stay the parse failures they
-// were, whatever the rewrite would have done with the members around them.
-func TestJSONCodecKeepsParseFailures(t *testing.T) {
+func TestJSONKeepsParseFailures(t *testing.T) {
 	t.Parallel()
 
 	for _, tc := range []struct {
@@ -225,7 +202,7 @@ func TestJSONCodecKeepsParseFailures(t *testing.T) {
 
 			var target bindingNested
 
-			err := codec.NewJSONCodec().Decode([]byte(tc.document), &target)
+			err := codec.NewJSON().Decode([]byte(tc.document), &target)
 			if err == nil {
 				t.Fatalf("Decode accepted %s and produced %+v", tc.document, target)
 			}
@@ -237,9 +214,6 @@ func TestJSONCodecKeepsParseFailures(t *testing.T) {
 	}
 }
 
-// verbatimDocument records the JSON text it is handed, so a test can tell that a
-// type which decodes itself was given its members exactly as the document wrote
-// them.
 type verbatimDocument struct {
 	text string
 }
@@ -250,17 +224,14 @@ func (v *verbatimDocument) UnmarshalJSON(data []byte) error {
 	return nil
 }
 
-// A type that decodes itself names its own members, so the rewrite stops at it:
-// the field around it is renamed to the name encoding/json matches, and its value
-// reaches the decoder as the document wrote it.
-func TestJSONCodecLeavesSelfDecodingValuesAlone(t *testing.T) {
+func TestJSONLeavesSelfDecodingValuesAlone(t *testing.T) {
 	t.Parallel()
 
 	var target struct {
 		Own verbatimDocument `strata:"own"`
 	}
 
-	if err := codec.NewJSONCodec().Decode([]byte(`{"own": {"inner_value": 1}}`), &target); err != nil {
+	if err := codec.NewJSON().Decode([]byte(`{"own": {"inner_value": 1}}`), &target); err != nil {
 		t.Fatalf("Decode error: %v", err)
 	}
 

@@ -13,9 +13,7 @@ import (
 	"github.com/zigai/strata/internal/cascade"
 )
 
-// A tier entry named config.<ext> that is not a regular file is skipped. A
-// FIFO would block the open forever, so the discovery runs under a deadline.
-func TestDiscoverSkipsNonRegularTierFiles(t *testing.T) {
+func TestDiscoverSkipsNonRegularLayerFiles(t *testing.T) {
 	for _, tc := range []struct {
 		name string
 		make func(path string) error
@@ -24,7 +22,7 @@ func TestDiscoverSkipsNonRegularTierFiles(t *testing.T) {
 		{"fifo", func(path string) error { return syscall.Mkfifo(path, 0o600) }},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
-			systemBase, userBase := isolateTiers(t)
+			systemBase, userBase := isolateLayers(t)
 
 			for _, base := range []string{systemBase, userBase} {
 				dir := filepath.Join(base, "testapp")
@@ -37,7 +35,7 @@ func TestDiscoverSkipsNonRegularTierFiles(t *testing.T) {
 				}
 			}
 
-			userYAML := writeTierFile(t, userBase, "config.yaml")
+			userYAML := writeLayerFile(t, userBase, "config.yaml")
 
 			type result struct {
 				layers []cascade.Layer
@@ -47,7 +45,7 @@ func TestDiscoverSkipsNonRegularTierFiles(t *testing.T) {
 			done := make(chan result, 1)
 
 			go func() {
-				layers, err := cascade.Discover(cascade.Params{AppName: "testapp", Extensions: []string{".toml", ".yaml"}})
+				layers, err := cascade.Discover(cascade.DiscoverOptions{AppName: "testapp", Extensions: []string{".toml", ".yaml"}})
 				done <- result{layers, err}
 			}()
 

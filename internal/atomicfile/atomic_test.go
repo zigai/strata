@@ -15,7 +15,7 @@ func TestWriteFileAtomic(t *testing.T) {
 	targetPath := filepath.Join(tmpDir, "nested", "dir", "config.toml")
 	data1 := []byte("version = 1\n")
 
-	if err := atomicfile.WriteFileAtomic(targetPath, data1, 0o644); err != nil {
+	if err := atomicfile.Write(targetPath, data1, 0o644); err != nil {
 		t.Fatalf("first WriteFileAtomic error: %v", err)
 	}
 
@@ -28,9 +28,8 @@ func TestWriteFileAtomic(t *testing.T) {
 		t.Fatalf("first file content = %q, want %q", string(read1), string(data1))
 	}
 
-	// A write over an existing target replaces its contents.
 	data2 := []byte("version = 2\n")
-	if err := atomicfile.WriteFileAtomic(targetPath, data2, 0o644); err != nil {
+	if err := atomicfile.Write(targetPath, data2, 0o644); err != nil {
 		t.Fatalf("overwrite WriteFileAtomic error: %v", err)
 	}
 

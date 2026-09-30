@@ -18,8 +18,8 @@ type SaveOption func(*saveOptions)
 // WithFileMode sets the permission bits used when [Save] creates the file.
 // The default is 0o644.
 func WithFileMode(mode os.FileMode) SaveOption {
-	return func(o *saveOptions) {
-		o.mode = mode
+	return func(opts *saveOptions) {
+		opts.mode = mode
 	}
 }
 
@@ -48,7 +48,7 @@ func Save[T any](targetPath string, cfg T, opts ...SaveOption) error {
 		return fmt.Errorf("encode configuration for %s: %w", targetPath, err)
 	}
 
-	if err := atomicfile.WriteFileAtomic(targetPath, encoded, options.mode); err != nil {
+	if err := atomicfile.Write(targetPath, encoded, options.mode); err != nil {
 		return fmt.Errorf("save configuration to %s: %w", targetPath, err)
 	}
 

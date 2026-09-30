@@ -1,8 +1,3 @@
-// Package bridgetest holds the behavior every CLI bridge shares, as scenarios
-// that each bridge's tests run through a small adapter for its CLI library.
-//
-// Behavior that belongs to one library, such as Cobra's hook chaining or
-// urfave/cli's shell-completion flag, stays in that bridge's own tests.
 package bridgetest
 
 import (
@@ -19,15 +14,12 @@ import (
 	"github.com/zigai/strata"
 )
 
-// AppName is the root command name of every app a scenario builds.
 const AppName = "app"
 
-// Database is the nested section of [Config].
 type Database struct {
 	Port int
 }
 
-// Config is the configuration every scenario binds.
 type Config struct {
 	Port    int
 	Timeout strata.Duration
@@ -37,50 +29,39 @@ type Config struct {
 	Token   strata.Secret
 }
 
-// SetDefaults gives the non-zero defaults the scenarios assert on.
 func (c *Config) SetDefaults() {
 	c.Port = 8080
 	c.Timeout = strata.Duration(30 * time.Second)
 	c.DB.Port = 5432
 }
 
-// Flag is one bound flag: a configuration key and an optional shorthand.
 type Flag struct {
 	Key   string
 	Short string
 }
 
-// App describes the CLI a scenario runs. Besides the commands listed here, each
-// app has the bridge's config command, a -c/--config flag, and a "ping"
-// command with its own unbound string --port flag.
 type App struct {
 	Options []strata.Option
 
-	// Commands maps each command under the root to the keys it binds as flags.
 	Commands map[string][]Flag
 }
 
-// Instance is one app built by a bridge. Run may be called more than once.
 type Instance interface {
-	// Run executes the app with args, which exclude the program name, and
-	// returns what the app wrote to standard output.
+	// args excludes the program name.
 	Run(args ...string) (string, error)
 
-	// Stderr returns what the last Run wrote to standard error.
 	Stderr() string
 	Metadata() *strata.Metadata
-	Path() (string, error)
+	EditPath() (string, error)
 	Init() (string, error)
 }
 
-// Bridge builds an app with one CLI library, bound to cfg.
 type Bridge func(t *testing.T, cfg *Config, app App) Instance
 
-// Run runs every shared scenario against bridge. The scenarios set environment
-// variables, so they do not run in parallel.
 func Run(t *testing.T, bridge Bridge) {
 	t.Helper()
 
+	// The scenarios set environment variables, so they do not run in parallel.
 	for _, scenario := range []struct {
 		name string
 		run  func(*testing.T, Bridge)
@@ -100,7 +81,6 @@ func Run(t *testing.T, bridge Bridge) {
 		{"FlagSetupPanicsOnBadKeys", flagSetupPanicsOnBadKeys},
 	} {
 		t.Run(scenario.name, func(t *testing.T) {
-			// Keep real system and user files for "app" out of every scenario.
 			t.Setenv("XDG_CONFIG_HOME", t.TempDir())
 			t.Setenv("XDG_CONFIG_DIRS", t.TempDir())
 			t.Setenv("APPDATA", t.TempDir())
@@ -111,8 +91,6 @@ func Run(t *testing.T, bridge Bridge) {
 	}
 }
 
-// Defaults, files, environment, and flags stack in that order; only flags the
-// user typed override, and `config show` reports where each value came from.
 func layersFlagsAndShow(t *testing.T, bridge Bridge) {
 	path := writeConfig(t, "port = 8100\n[db]\nport = 6000\n")
 	t.Setenv("APP_PORT", "8200")
@@ -155,8 +133,6 @@ func layersFlagsAndShow(t *testing.T, bridge Bridge) {
 	}
 }
 
-// A flag another command declares under a bound flag's name is not bound, and
-// the same key can be bound on several commands.
 func unrelatedFlagWithTheSameName(t *testing.T, bridge Bridge) {
 	var cfg Config
 
@@ -188,8 +164,6 @@ func unrelatedFlagWithTheSameName(t *testing.T, bridge Bridge) {
 	}
 }
 
-// The edit commands run without loading, so they can repair a broken file, and
-// setting a secret does not echo its value.
 func editsSkipLoadingABrokenFile(t *testing.T, bridge Bridge) {
 	path := writeConfig(t, "port = abc\n")
 
@@ -223,7 +197,6 @@ func editsSkipLoadingABrokenFile(t *testing.T, bridge Bridge) {
 	}
 }
 
-// The library's own help and completion commands need no configuration.
 func builtInsSkipLoadingABrokenFile(t *testing.T, bridge Bridge) {
 	path := writeConfig(t, "port = abc\n")
 
@@ -240,7 +213,6 @@ func builtInsSkipLoadingABrokenFile(t *testing.T, bridge Bridge) {
 	}
 }
 
-// A program's own commands named like the edit subcommands still load.
 func userCommandsNamedLikeEditsLoad(t *testing.T, bridge Bridge) {
 	var cfg Config
 
@@ -257,8 +229,6 @@ func userCommandsNamedLikeEditsLoad(t *testing.T, bridge Bridge) {
 	}
 }
 
-// Without WithAppName, the root command's name picks the user file, and the
-// file `config init` writes is the one the next load reads.
 func defaultAppNameMatchesEditPath(t *testing.T, bridge Bridge) {
 	var cfg Config
 
@@ -266,7 +236,7 @@ func defaultAppNameMatchesEditPath(t *testing.T, bridge Bridge) {
 
 	mustRun(t, app, "config", "init")
 
-	path, err := app.Path()
+	path, err := app.EditPath()
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -282,7 +252,6 @@ func defaultAppNameMatchesEditPath(t *testing.T, bridge Bridge) {
 	}
 }
 
-// A WithPath passed to Bind is also where edits go.
 func editPathUsesExplicitLoadingPath(t *testing.T, bridge Bridge) {
 	path := filepath.Join(t.TempDir(), "config.toml")
 
@@ -290,7 +259,7 @@ func editPathUsesExplicitLoadingPath(t *testing.T, bridge Bridge) {
 
 	app := bridge(t, &cfg, App{Options: []strata.Option{strata.WithPath(path)}, Commands: nil})
 
-	got, err := app.Path()
+	got, err := app.EditPath()
 	if err != nil || got != path {
 		t.Fatalf("edit path = %q, %v, want %q", got, err, path)
 	}
@@ -309,7 +278,6 @@ func secretKeyCannotBeAFlag(t *testing.T, bridge Bridge) {
 	bridge(t, &cfg, App{Options: nil, Commands: map[string][]Flag{"serve": {{Key: "token"}}}})
 }
 
-// A flag value that does not fit the field is an error, not a wrapped value.
 func flagValueMustFitTheField(t *testing.T, bridge Bridge) {
 	var cfg Config
 
@@ -320,8 +288,6 @@ func flagValueMustFitTheField(t *testing.T, bridge Bridge) {
 	}
 }
 
-// config show prints every key in declaration order with its value and
-// source, masks a secret that is set, and warns about unknown keys on stderr.
 func showListsKeysInOrderAndWarns(t *testing.T, bridge Bridge) {
 	path := writeConfig(t, "prot = 1\nport = 8100\ntoken = 'hunter2-secret'\n")
 
@@ -358,8 +324,6 @@ func showListsKeysInOrderAndWarns(t *testing.T, bridge Bridge) {
 	}
 }
 
-// config set prints the file it edited and the key; with no file there, it
-// fails with a hint to run config init and wraps [fs.ErrNotExist].
 func setReportsThePathAndNeedsAFile(t *testing.T, bridge Bridge) {
 	path := writeConfig(t, "port = 8100\n")
 
@@ -384,7 +348,6 @@ func setReportsThePathAndNeedsAFile(t *testing.T, bridge Bridge) {
 	}
 }
 
-// A bound flag's help shows the SetDefaults value, not the zero value.
 func helpShowsTheDefault(t *testing.T, bridge Bridge) {
 	var cfg Config
 
@@ -396,7 +359,6 @@ func helpShowsTheDefault(t *testing.T, bridge Bridge) {
 	}
 }
 
-// Binding an unknown key, or one that holds a whole section, panics at setup.
 func flagSetupPanicsOnBadKeys(t *testing.T, bridge Bridge) {
 	for _, key := range []string{"prot", "db"} {
 		t.Run(key, func(t *testing.T) {

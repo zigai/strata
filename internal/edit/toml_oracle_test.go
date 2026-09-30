@@ -14,9 +14,6 @@ import (
 	"github.com/zigai/strata/internal/edit"
 )
 
-// requireTOMLEdit checks an edit against go-toml as the reference: output
-// decodes to input's document with only the value at path replaced by value.
-// Every other key, at any depth, must keep its decoded value.
 func requireTOMLEdit(t *testing.T, input, output []byte, path []string, value any) {
 	t.Helper()
 
@@ -36,8 +33,6 @@ func requireTOMLEdit(t *testing.T, input, output []byte, path []string, value an
 	}
 }
 
-// decodedTOMLValue is value as go-toml decodes it back, such as int64 for an
-// int and []any for a slice.
 func decodedTOMLValue(t *testing.T, value any) any {
 	t.Helper()
 
@@ -54,8 +49,6 @@ func decodedTOMLValue(t *testing.T, value any) any {
 	return doc["v"]
 }
 
-// setDecoded returns a deep copy of doc with value at path, creating tables
-// on the way.
 func setDecoded(t *testing.T, doc map[string]any, path []string, value any) map[string]any {
 	t.Helper()
 
@@ -74,8 +67,6 @@ func setDecoded(t *testing.T, doc map[string]any, path []string, value any) map[
 	return out
 }
 
-// Each regression document the editor once broke, checked with the reference
-// oracle so an edit that also moved a sibling value fails here.
 func TestUpdateTOMLChangesOnlyTheNamedKey(t *testing.T) {
 	t.Parallel()
 
@@ -129,10 +120,6 @@ var (
 	quotedDottedKey = regexp.MustCompile(`(?m)^\s*(\[+[^\]\n]*|[^=\n]*)["'][^"'\n]*\.[^"'\n]*["'][^=\n]*(\]|=)`)
 )
 
-// For any document go-toml accepts and any bare dotted key whose parent path
-// holds tables, UpdateTOML succeeds and changes nothing but that key. A path
-// through a scalar must be refused rather than rewritten. Replacing a table or
-// an array with a scalar may be refused, and must be exact when it is not.
 func FuzzUpdateTOML(f *testing.F) {
 	for _, seed := range []struct {
 		doc, key string
@@ -189,17 +176,17 @@ func FuzzUpdateTOML(f *testing.F) {
 		out, err := edit.UpdateTOML([]byte(doc), key, value)
 
 		switch tomlPathReach(before, path) {
-		case pathThroughScalar:
-			if !errors.Is(err, edit.ErrNonObjectNavigation) {
-				t.Fatalf("path %q runs through a scalar: err = %v, want ErrNonObjectNavigation\ninput:\n%s\noutput:\n%s", key, err, doc, out)
+		case pathReachThroughScalar:
+			if !errors.Is(err, edit.ErrPathNotMapping) {
+				t.Fatalf("path %q runs through a scalar: err = %v, want ErrPathNotMapping\ninput:\n%s\noutput:\n%s", key, err, doc, out)
 			}
-		case pathThroughArray:
+		case pathReachThroughArray:
 			t.Skip("a path through an array of tables has no single target")
-		case leafIsTable:
+		case pathReachLeafIsTable:
 			if err == nil {
 				requireTOMLEdit(t, []byte(doc), out, path, value)
 			}
-		case pathOK:
+		case pathReachOK:
 			if err != nil {
 				t.Fatalf("UpdateTOML(%q) refused a valid edit: %v\ninput:\n%s", key, err, doc)
 			}
@@ -209,8 +196,6 @@ func FuzzUpdateTOML(f *testing.F) {
 	})
 }
 
-// mixedLineEndings reports a document that uses both CRLF and bare LF, which
-// the editor rewrites to CRLF throughout.
 func mixedLineEndings(doc string) bool {
 	return strings.Contains(doc, "\r\n") && strings.Contains(strings.ReplaceAll(doc, "\r\n", ""), "\n")
 }
@@ -218,35 +203,32 @@ func mixedLineEndings(doc string) bool {
 type pathReach int
 
 const (
-	pathOK pathReach = iota
-	pathThroughScalar
-	pathThroughArray
-	leafIsTable
+	pathReachOK pathReach = iota
+	pathReachThroughScalar
+	pathReachThroughArray
+	pathReachLeafIsTable
 )
 
-// tomlPathReach reports what the parents of path's leaf hold in doc, and
-// whether the leaf itself is a table or array of tables, which a scalar may
-// not replace.
 func tomlPathReach(doc map[string]any, path []string) pathReach {
 	cur := doc
 
 	for _, part := range path[:len(path)-1] {
 		switch next := cur[part].(type) {
 		case nil:
-			return pathOK
+			return pathReachOK
 		case map[string]any:
 			cur = next
 		case []any:
-			return pathThroughArray
+			return pathReachThroughArray
 		default:
-			return pathThroughScalar
+			return pathReachThroughScalar
 		}
 	}
 
 	switch cur[path[len(path)-1]].(type) {
 	case map[string]any, []any:
-		return leafIsTable
+		return pathReachLeafIsTable
 	}
 
-	return pathOK
+	return pathReachOK
 }

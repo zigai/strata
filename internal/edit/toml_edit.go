@@ -15,7 +15,6 @@ import (
 )
 
 const (
-	// tripleQuoteLen is the length of a multi-line string delimiter.
 	tripleQuoteLen = 3
 	// maxClosingContentQuotes is how many quote characters a multi-line string
 	// may end with directly before its closing delimiter.
@@ -23,14 +22,12 @@ const (
 )
 
 var (
-	// ErrInvalidEmptyKeyPath is returned when a dotted key path is empty.
-	ErrInvalidEmptyKeyPath = errors.New("invalid empty key path")
+	ErrEmptyKey = errors.New("invalid empty key path")
 
-	// ErrInvalidEmptyPathSegment is returned when a dotted key path contains an empty segment.
-	ErrInvalidEmptyPathSegment = errors.New("invalid empty path segment")
+	ErrEmptyKeySegment = errors.New("invalid empty path segment")
 )
 
-type candAssignment struct {
+type tomlAssignment struct {
 	lineIdx      int
 	eqIdx        int
 	endIdx       int
@@ -38,9 +35,7 @@ type candAssignment struct {
 	fullKey      []string
 }
 
-// tomlLine is what [scanTOMLLines] learned about one line.
 type tomlLine struct {
-	// header holds the parts of a table header on this line, or nil.
 	header []string
 	// eqIdx is the index of an assignment's "=", or -1.
 	eqIdx int
@@ -49,29 +44,21 @@ type tomlLine struct {
 	end int
 }
 
-// tomlLexer follows the strings, arrays, and inline tables of TOML text across
-// lines, so a quote, bracket, "=" or "#" inside a string is not read as syntax.
 type tomlLexer struct {
-	// quote is the delimiter of the string the text is inside, or "".
 	quote string
-	// depth counts the arrays and inline tables open outside strings.
 	depth int
 }
 
-// UpdateTOML writes value at dottedKey. Existing assignments retain surrounding
-// formatting, except replaced multiline values lose their continuation lines.
-// Missing keys are added to the matching table or a new one. Keys match exactly.
 func UpdateTOML(data []byte, dottedKey string, value any) ([]byte, error) {
 	formattedVal, err := formatTOMLValue(value)
 	if err != nil {
 		return nil, fmt.Errorf("format toml value: %w", err)
 	}
 
-	return UpdateFormatted(data, dottedKey, value, formattedVal)
+	return UpdateTOMLFormatted(data, dottedKey, value, formattedVal)
 }
 
-// UpdateFormatted updates dottedKey in TOML data using an already formatted literal.
-func UpdateFormatted(data []byte, dottedKey string, value any, formattedVal string) ([]byte, error) {
+func UpdateTOMLFormatted(data []byte, dottedKey string, value any, formattedVal string) ([]byte, error) {
 	crlf := bytes.Contains(data, []byte("\r\n"))
 	rawLines := strings.Split(string(data), "\n")
 
@@ -82,11 +69,11 @@ func UpdateFormatted(data []byte, dottedKey string, value any, formattedVal stri
 
 	targetParts := splitDottedKey(dottedKey)
 	if len(targetParts) == 0 {
-		return nil, ErrInvalidEmptyKeyPath
+		return nil, ErrEmptyKey
 	}
 
 	if slices.Contains(targetParts, "") {
-		return nil, fmt.Errorf("%w in %q", ErrInvalidEmptyPathSegment, dottedKey)
+		return nil, fmt.Errorf("%w in %q", ErrEmptyKeySegment, dottedKey)
 	}
 
 	scanned := scanTOMLLines(lines)
@@ -182,14 +169,10 @@ func scanTOMLLines(lines []string) []tomlLine {
 	return scanned
 }
 
-// open reports whether the text scanned so far leaves a string, array, or
-// inline table open, so the value continues on the next line.
 func (lx *tomlLexer) open() bool {
 	return lx.quote != "" || lx.depth > 0
 }
 
-// scan lexes line and returns the index of the first byte stop outside a
-// string, or -1. A comment ends the line, so it ends the scan unless stop is '#'.
 func (lx *tomlLexer) scan(line string, stop byte) int {
 	for i := 0; i < len(line); {
 		if lx.quote != "" {
@@ -226,15 +209,12 @@ func (lx *tomlLexer) scan(line string, stop byte) int {
 	return -1
 }
 
-// endLine closes a one-line string left open, which cannot continue below.
 func (lx *tomlLexer) endLine() {
 	if len(lx.quote) == 1 {
 		lx.quote = ""
 	}
 }
 
-// skipString advances through the content of the open string from i, closing
-// the string at its delimiter, and returns the index lexing resumes at.
 func (lx *tomlLexer) skipString(line string, i int) int {
 	for i < len(line) {
 		switch {
@@ -262,10 +242,10 @@ func (lx *tomlLexer) skipString(line string, i int) int {
 	return i
 }
 
-func collectAssignments(lines []string, scanned []tomlLine) []candAssignment {
+func collectAssignments(lines []string, scanned []tomlLine) []tomlAssignment {
 	var (
 		currentTable []string
-		candidates   []candAssignment
+		candidates   []tomlAssignment
 	)
 
 	for i, info := range scanned {
@@ -284,7 +264,7 @@ func collectAssignments(lines []string, scanned []tomlLine) []candAssignment {
 		lineFullKey = append(lineFullKey, currentTable...)
 		lineFullKey = append(lineFullKey, keyParts...)
 
-		candidates = append(candidates, candAssignment{
+		candidates = append(candidates, tomlAssignment{
 			lineIdx:      i,
 			eqIdx:        info.eqIdx,
 			endIdx:       info.end,
@@ -296,7 +276,7 @@ func collectAssignments(lines []string, scanned []tomlLine) []candAssignment {
 	return candidates
 }
 
-func findMatchingCandidate(candidates []candAssignment, targetParts []string) int {
+func findMatchingCandidate(candidates []tomlAssignment, targetParts []string) int {
 	for idx, cand := range candidates {
 		if partsEqual(cand.fullKey, targetParts) {
 			return idx
@@ -306,7 +286,7 @@ func findMatchingCandidate(candidates []candAssignment, targetParts []string) in
 	return -1
 }
 
-func handleInlineTableUpdate(lines []string, candidates []candAssignment, targetParts []string, value any) ([]string, bool, error) {
+func handleInlineTableUpdate(lines []string, candidates []tomlAssignment, targetParts []string, value any) ([]string, bool, error) {
 	for _, cand := range candidates {
 		if len(cand.fullKey) >= len(targetParts) || !partsEqual(cand.fullKey, targetParts[:len(cand.fullKey)]) {
 			continue
@@ -329,7 +309,7 @@ func handleInlineTableUpdate(lines []string, candidates []candAssignment, target
 			return lines, true, nil
 		}
 
-		return nil, false, fmt.Errorf("%w: key %q is not a table", ErrNonObjectNavigation, strings.Join(cand.fullKey, "."))
+		return nil, false, fmt.Errorf("%w: key %q is not a table", ErrPathNotMapping, strings.Join(cand.fullKey, "."))
 	}
 
 	return lines, false, nil
@@ -365,9 +345,7 @@ func parseTableHeader(trimmed string) ([]string, bool) {
 	return canonicalHeaderParts(inner), true
 }
 
-// isTOMLKeySyntax reports whether s is a dotted key as TOML writes one: bare
-// or quoted segments joined by dots, with optional whitespace around each. An
-// array such as [1, 2] or a nested array line such as ["a"]] is not.
+// An array such as [1, 2] or a nested array line such as ["a"]] is not a key.
 func isTOMLKeySyntax(s string) bool {
 	s = strings.TrimSpace(s)
 	if s == "" {
@@ -393,8 +371,6 @@ func isTOMLKeySyntax(s string) bool {
 	}
 }
 
-// consumeTOMLKeySegment strips one bare or quoted key segment from the start
-// of s and returns the rest.
 func consumeTOMLKeySegment(s string) (string, bool) {
 	if s == "" {
 		return "", false
@@ -419,16 +395,8 @@ func consumeTOMLKeySegment(s string) (string, bool) {
 	return s[n:], n > 0
 }
 
-// canonicalHeaderParts returns the header segments a caller's dotted key is
-// compared against.
-//
-// The joined header is split a second time deliberately. A header written as
-// [table."sub.key"] and a header written as [table.sub.key] name the same table,
-// and a caller does not have to know how the file quoted a segment.
-//
-// NB: the collapsed form also means a quoted segment that contains a dot cannot
-// be addressed as one segment. That ambiguity is longstanding and is preserved
-// deliberately.
+// [table."sub.key"] and [table.sub.key] address the same table. A quoted
+// segment containing a dot cannot be addressed as one segment.
 func canonicalHeaderParts(raw string) []string {
 	segments := splitDottedKey(strings.TrimSpace(raw))
 	canonical := make([]string, 0, len(segments))
@@ -492,16 +460,12 @@ func splitDottedKey(s string) []string {
 	return parts
 }
 
-// findAssignmentEquals returns the index of the "=" of an assignment on line,
-// or -1 when line assigns nothing.
 func findAssignmentEquals(line string) int {
 	var key tomlLexer
 
 	return key.scan(line, '=')
 }
 
-// findInlineComment returns the index of the "#" starting a comment in s, a
-// value that starts outside any string, or -1.
 func findInlineComment(s string) int {
 	var value tomlLexer
 
@@ -531,9 +495,7 @@ func partsEqual(a, b []string) bool {
 	return true
 }
 
-// updateMatchingLine replaces the value of the assignment cand, removing the
-// continuation lines of a multi-line value it replaces.
-func updateMatchingLine(lines []string, cand candAssignment, formattedVal string) []string {
+func updateMatchingLine(lines []string, cand tomlAssignment, formattedVal string) []string {
 	lines[cand.lineIdx] = replaceLineValue(lines[cand.lineIdx], cand.eqIdx, formattedVal)
 
 	return slices.Delete(lines, cand.lineIdx+1, cand.endIdx+1)
@@ -626,7 +588,7 @@ func replaceLineValue(line string, eqIdx int, newVal string) string {
 	return beforeVal + spaces + newVal
 }
 
-func appendTOMLKey(lines []string, scanned []tomlLine, candidates []candAssignment, targetParts []string, formattedVal string) []byte {
+func appendTOMLKey(lines []string, scanned []tomlLine, candidates []tomlAssignment, targetParts []string, formattedVal string) []byte {
 	if len(targetParts) == 1 {
 		return appendRootKey(lines, scanned, targetParts[0], formattedVal)
 	}
@@ -653,7 +615,7 @@ func appendRootKey(lines []string, scanned []tomlLine, key, formattedVal string)
 	return []byte(strings.Join(lines, "\n"))
 }
 
-func appendTableKey(lines []string, scanned []tomlLine, candidates []candAssignment, tableParts []string, leaf, formattedVal string) []byte {
+func appendTableKey(lines []string, scanned []tomlLine, candidates []tomlAssignment, tableParts []string, leaf, formattedVal string) []byte {
 	tableIdx := -1
 
 	for i, info := range scanned {
@@ -702,11 +664,9 @@ func appendTableKey(lines []string, scanned []tomlLine, candidates []candAssignm
 	return buf.Bytes()
 }
 
-// lastDottedDefinition returns the last assignment that defines a key inside
-// tableParts through a dotted key, as in server.port = 80 for the table server.
-func lastDottedDefinition(candidates []candAssignment, tableParts []string) (candAssignment, bool) {
+func lastDottedDefinition(candidates []tomlAssignment, tableParts []string) (tomlAssignment, bool) {
 	var (
-		last  candAssignment
+		last  tomlAssignment
 		found bool
 	)
 
@@ -766,12 +726,12 @@ func updateInlineTable(inlineText string, parts []string, value any) (string, er
 
 	tableVal, ok := m["dummy"]
 	if !ok {
-		return "", ErrNonObjectNavigation
+		return "", ErrPathNotMapping
 	}
 
 	tableMap, ok := tableVal.(map[string]any)
 	if !ok {
-		return "", ErrNonObjectNavigation
+		return "", ErrPathNotMapping
 	}
 
 	if err := setMapNested(tableMap, parts, value); err != nil {
@@ -802,7 +762,7 @@ func setMapNested(m map[string]any, parts []string, value any) error {
 
 	childMap, ok := child.(map[string]any)
 	if !ok {
-		return ErrNonObjectNavigation
+		return ErrPathNotMapping
 	}
 
 	return setMapNested(childMap, parts[1:], value)

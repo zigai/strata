@@ -27,7 +27,6 @@ func (s *secretFileConfig) SetDefaults() {
 	s.Token = "default-secret"
 }
 
-// Secret hides its value from fmt and slog, and Value returns it.
 func TestSecretRedactsWhenPrinted(t *testing.T) {
 	secret := strata.Secret("private-value")
 	if secret.String() != "[REDACTED]" || secret.GoString() != "[REDACTED]" || secret.LogValue().String() != "[REDACTED]" || secret.Value() != "private-value" {
@@ -35,8 +34,6 @@ func TestSecretRedactsWhenPrinted(t *testing.T) {
 	}
 }
 
-// A Secret and a plain [time.Duration] decode from every format; the secret's
-// origin is redacted, and Save writes its real value.
 func TestSecretAndDurationRoundTripEveryFormat(t *testing.T) {
 	secret := strata.Secret("private-value")
 
@@ -85,7 +82,7 @@ func TestSecretTagMasking(t *testing.T) {
 	t.Setenv("SECRET_TOKEN", "super-secret-api-key")
 
 	_, meta, err := strata.LoadWithMetadata[secretConfig](
-		strata.WithoutFiles(),
+		strata.WithoutFileDiscovery(),
 	)
 	if err != nil {
 		t.Fatalf("Load error: %v", err)
@@ -140,7 +137,6 @@ type redactCredentials struct {
 	Pass string `strata:"pass"`
 }
 
-// redactConfig declares a secret in every supported form.
 type redactConfig struct {
 	Typed     strata.Secret     `strata:"typed"`
 	Pointer   *strata.Secret    `strata:"pointer"`
@@ -152,9 +148,7 @@ type redactConfig struct {
 
 var redactKeys = []string{"typed", "pointer", "tagged", "env_tagged", "database.password", "creds.user", "creds.pass"}
 
-// Whatever layer sets a secret key, its origin, from Where and from Origins,
-// holds [REDACTED] and never the value. Each layer uses its own literal, so a
-// leak cannot hide behind another layer's value.
+// Distinct values per layer ensure a leak cannot hide behind another layer.
 func TestSecretOriginsAreRedactedInEveryLayer(t *testing.T) {
 	const leak = "leak-7f3a"
 

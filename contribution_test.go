@@ -21,7 +21,7 @@ func (c *contributionValidatedConfig) Validate() error {
 	return nil
 }
 
-func TestWithContributionOverridesLowerTiers(t *testing.T) {
+func TestWithContributionOverridesLowerLayers(t *testing.T) {
 	t.Parallel()
 
 	filePath := writeFile(t, "config.yaml", "port: 8080\n")
@@ -196,8 +196,6 @@ func TestWithContributionMultipleInOrder(t *testing.T) {
 	}
 }
 
-// A contribution runs after environment binding, so it sees and can override
-// the env value, and its origin replaces the env origin.
 func TestWithContributionSeesEnvironmentValues(t *testing.T) {
 	type envConfig struct {
 		Port int `strata:"port"`

@@ -48,7 +48,7 @@ func TestFailedStagingLeavesTheOriginal(t *testing.T) {
 
 	t.Cleanup(func() { _ = os.Chmod(dir, 0o755) })
 
-	if err := atomicfile.WriteFileAtomic(target, []byte("version = 2\n"), 0o644); err == nil {
+	if err := atomicfile.Write(target, []byte("version = 2\n"), 0o644); err == nil {
 		t.Fatal("WriteFileAtomic succeeded in a read-only directory")
 	}
 
@@ -61,8 +61,6 @@ func TestFailedStagingLeavesTheOriginal(t *testing.T) {
 	}
 }
 
-// When the staged file cannot replace the target, the staging file is
-// removed and the target is untouched.
 func TestFailedCommitRemovesTheStagingFile(t *testing.T) {
 	t.Parallel()
 
@@ -74,7 +72,7 @@ func TestFailedCommitRemovesTheStagingFile(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	if err := atomicfile.WriteFileAtomic(target, []byte("version = 2\n"), 0o644); err == nil {
+	if err := atomicfile.Write(target, []byte("version = 2\n"), 0o644); err == nil {
 		t.Fatal("WriteFileAtomic replaced a non-empty directory")
 	}
 
@@ -87,8 +85,6 @@ func TestFailedCommitRemovesTheStagingFile(t *testing.T) {
 	}
 }
 
-// A reader that opened the file before the write keeps reading the old bytes:
-// the write replaces the file rather than rewriting it in place.
 func TestReaderOpenedBeforeTheWriteSeesTheOldFile(t *testing.T) {
 	t.Parallel()
 
@@ -104,7 +100,7 @@ func TestReaderOpenedBeforeTheWriteSeesTheOldFile(t *testing.T) {
 
 	t.Cleanup(func() { _ = reader.Close() })
 
-	if err := atomicfile.WriteFileAtomic(target, []byte("version = 22\n"), 0o644); err != nil {
+	if err := atomicfile.Write(target, []byte("version = 22\n"), 0o644); err != nil {
 		t.Fatalf("WriteFileAtomic: %v", err)
 	}
 

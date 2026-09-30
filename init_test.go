@@ -186,8 +186,6 @@ func TestInitNoOverwriteRace(t *testing.T) {
 	}
 }
 
-// Init leaves secret fields out of the template, whether they are marked by the
-// Secret type or by the secret tag option.
 func TestInitOmitsSecrets(t *testing.T) {
 	typed := filepath.Join(t.TempDir(), "config.toml")
 	if err := strata.Init[primitiveConfig](typed); err != nil {
@@ -243,8 +241,6 @@ func TestTOMLInitWritesPlainDurationsAsStrings(t *testing.T) {
 	}
 }
 
-// A template holds T's defaults: loading it over zero defaults yields them,
-// in every format, with and without a schema header, also under WithStrict.
 func TestInitTemplatesLoadBackToTheDefaults(t *testing.T) {
 	t.Parallel()
 

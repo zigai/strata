@@ -15,9 +15,6 @@ import (
 	"github.com/zigai/strata/internal/edit"
 )
 
-// requireYAMLEdit checks an edit against yaml.v3 as the reference: output
-// decodes, with aliases and merge keys resolved, to input's document with only
-// the value at path replaced by value.
 func requireYAMLEdit(t *testing.T, input, output []byte, path []string, value any) {
 	t.Helper()
 
@@ -38,8 +35,6 @@ func requireYAMLEdit(t *testing.T, input, output []byte, path []string, value an
 	}
 }
 
-// decodeYAMLDocument decodes data into nested maps, reporting false unless
-// every mapping has only string keys.
 func decodeYAMLDocument(data []byte) (map[string]any, bool) {
 	var doc any
 	if err := yaml.Unmarshal(data, &doc); err != nil {
@@ -83,9 +78,7 @@ func stringKeyed(v any) bool {
 	return true
 }
 
-// decodedYAMLValue is value as a YAML reader should see it: a string stays
-// that string, and an integer decodes to int. It is derived by hand rather
-// than through yaml.v3, whose own round trip drops a leading newline.
+// Values are derived by hand: yaml.v3 drops a leading newline on its own round trip.
 func decodedYAMLValue(t *testing.T, value any) any {
 	t.Helper()
 
@@ -103,8 +96,6 @@ func decodedYAMLValue(t *testing.T, value any) any {
 	}
 }
 
-// setYAMLDecoded returns a copy of doc with value at path, creating mappings
-// where none exist and replacing values on the path that are not mappings.
 func setYAMLDecoded(doc map[string]any, path []string, value any) map[string]any {
 	out := make(map[string]any, len(doc)+1)
 	maps.Copy(out, doc)
@@ -121,8 +112,6 @@ func setYAMLDecoded(doc map[string]any, path []string, value any) map[string]any
 	return out
 }
 
-// The YAML regression documents, checked with the reference oracle so an edit
-// that also changed a sibling, an alias source, or a merged value fails here.
 func TestUpdateYAMLChangesOnlyTheNamedKey(t *testing.T) {
 	t.Parallel()
 
@@ -159,9 +148,6 @@ func TestUpdateYAMLChangesOnlyTheNamedKey(t *testing.T) {
 	}
 }
 
-// Replacing an anchored scalar with a mapping keeps the anchor on the mapping,
-// as replacing an anchored leaf does, so its aliases still name a node and
-// follow the edit rather than dangling.
 func TestUpdateYAMLReplacedAnchorKeepsItsAliases(t *testing.T) {
 	t.Parallel()
 
@@ -183,10 +169,8 @@ func TestUpdateYAMLReplacedAnchorKeepsItsAliases(t *testing.T) {
 
 var bareYAMLKey = regexp.MustCompile(`^[A-Za-z_][A-Za-z0-9_-]*(\.[A-Za-z_][A-Za-z0-9_-]*)*$`)
 
-// For any single YAML document with a string-keyed mapping root and any bare
-// dotted key, UpdateYAML changes nothing but that key. A value on the path that
-// is not a mapping is replaced by one, as UpdateYAML documents. Editing a node that other keys alias through its anchor changes
-// those aliases too, since the author linked them, so such cases are skipped.
+// Editing an anchored node changes its aliases too, so shared-node cases
+// are excluded from the property that only the requested key changes.
 func FuzzUpdateYAML(f *testing.F) {
 	for _, seed := range []struct {
 		doc, key string

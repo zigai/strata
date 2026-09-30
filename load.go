@@ -45,19 +45,19 @@ func LoadWithMetadata[T any](opts ...Option) (T, *Metadata, error) {
 	return target, meta, nil
 }
 
-// LoadInto merges every configured tier into the struct that target points at,
+// LoadInto merges every configured layer into the struct that target points at,
 // and returns the provenance of each resolved key.
 //
 // Unlike [Load], the starting point is the value target already holds, so a
-// caller can seed state before loading. A key that no tier mentions keeps the
+// caller can seed state before loading. A key that no layer mentions keeps the
 // value it started with, which is what lets a documented default survive a
 // sparse file.
 //
 // target MUST be a non-nil pointer to a struct; anything else returns
-// [ErrTargetNotPointer]. Validation runs at the end of the merge.
+// [ErrInvalidTarget]. Validation runs at the end of the merge.
 func LoadInto[T any](target *T, opts ...Option) (*Metadata, error) {
-	if !structTarget(target) {
-		return nil, ErrTargetNotPointer
+	if !isStructTarget(target) {
+		return nil, ErrInvalidTarget
 	}
 
 	options := defaultLoadOptions()
@@ -114,15 +114,13 @@ func LoadInto[T any](target *T, opts ...Option) (*Metadata, error) {
 
 	meta.orderBy(options.keys.names)
 
-	if vErr := runValidation(target, meta); vErr != nil {
-		return nil, vErr
+	if err := runValidation(target, meta); err != nil {
+		return nil, err
 	}
 
 	return meta, nil
 }
 
-// applyDefaults runs the struct's SetDefaults, then the value given to
-// WithDefaults, and records the result as the default layer.
 func applyDefaults(target any, opts *loadOptions, meta *Metadata) error {
 	recordDefault := func(key, rawVal string) {
 		meta.Record(Origin{
@@ -190,9 +188,9 @@ func readLayerData(layer cascade.Layer, maxFileSize int64) ([]byte, error) {
 		return layer.Data, nil
 	}
 
-	f, oErr := os.Open(layer.Path)
-	if oErr != nil {
-		return nil, fmt.Errorf("open file %s: %w", layer.Path, oErr)
+	f, openErr := os.Open(layer.Path)
+	if openErr != nil {
+		return nil, fmt.Errorf("open file %s: %w", layer.Path, openErr)
 	}
 
 	var closed bool
@@ -203,15 +201,15 @@ func readLayerData(layer cascade.Layer, maxFileSize int64) ([]byte, error) {
 		}
 	}()
 
-	data, rErr := stream.ReadBounded(f, maxFileSize)
-	if rErr != nil {
-		return nil, fmt.Errorf("read file %s: %w", layer.Path, rErr)
+	data, readErr := stream.ReadBounded(f, maxFileSize)
+	if readErr != nil {
+		return nil, fmt.Errorf("read file %s: %w", layer.Path, readErr)
 	}
 
 	closed = true
 
-	if cErr := f.Close(); cErr != nil {
-		return nil, fmt.Errorf("close file %s: %w", layer.Path, cErr)
+	if closeErr := f.Close(); closeErr != nil {
+		return nil, fmt.Errorf("close file %s: %w", layer.Path, closeErr)
 	}
 
 	return data, nil
@@ -223,7 +221,7 @@ func resolveLayerCodec(layer cascade.Layer, opts *loadOptions) (Codec, string, e
 		ext = opts.stdinExt
 	}
 
-	codecInstance, ok := opts.codecReg.Get(ext)
+	codecInstance, ok := opts.codecs.Get(ext)
 	if !ok {
 		return nil, "", fmt.Errorf("%w for layer %s", ErrUnsupportedFormat, layer.Path)
 	}
@@ -246,7 +244,7 @@ func applyLayer(target any, layer cascade.Layer, opts *loadOptions, meta *Metada
 		return fmt.Errorf("decode layer %s: %w", layer.Path, err)
 	}
 
-	meta.AddActiveFile(layer.Path)
+	meta.RecordActiveFile(layer.Path)
 
 	if aliasTarget, ok := opts.formatAliases[syntaxExt]; ok {
 		syntaxExt = aliasTarget
@@ -257,7 +255,7 @@ func applyLayer(target any, layer cascade.Layer, opts *loadOptions, meta *Metada
 	return nil
 }
 
-func applyFormats(formats []string, reg *codec.Registry) ([]string, error) {
+func resolveFormats(formats []string, reg *codec.Registry) ([]string, error) {
 	var resolved []string
 
 	seen := make(map[string]struct{}, len(formats))
@@ -312,12 +310,12 @@ func resolveFormatAliases(opts *loadOptions) error {
 			}
 		}
 
-		targetCodec, ok := opts.codecReg.Get(resolvedTarget)
+		targetCodec, ok := opts.codecs.Get(resolvedTarget)
 		if !ok {
 			return fmt.Errorf("%w for format alias target %q", ErrUnsupportedFormat, target)
 		}
 
-		opts.codecReg.Register(alias, targetCodec)
+		opts.codecs.Register(alias, targetCodec)
 	}
 
 	return nil
@@ -330,20 +328,20 @@ func prepareLoadOptions(opts *loadOptions) error {
 		}
 	}
 
-	resolvedExts, err := applyFormats(opts.formats, opts.codecReg)
+	resolvedExts, err := resolveFormats(opts.formats, opts.codecs)
 	if err != nil {
 		return err
 	}
 
-	readsFiles := opts.explicitPath != "" || (opts.appName != "" && !opts.withoutFiles)
+	readsFiles := opts.explicitPath != "" || (opts.appName != "" && !opts.withoutFileDiscovery)
 	if readsFiles && len(resolvedExts) == 0 {
 		return ErrNoFormats
 	}
 
-	opts.codecReg.Restrict(resolvedExts...)
+	opts.codecs.Restrict(resolvedExts...)
 
 	if opts.explicitPath != "" && opts.explicitPath != "-" {
-		if _, ok := opts.codecReg.Get(filepath.Ext(opts.explicitPath)); !ok {
+		if _, ok := opts.codecs.Get(filepath.Ext(opts.explicitPath)); !ok {
 			return fmt.Errorf("%w for path %s", ErrUnsupportedFormat, opts.explicitPath)
 		}
 	}
@@ -356,14 +354,14 @@ func prepareLoadOptions(opts *loadOptions) error {
 }
 
 func discoverAndApplyLayers(target any, opts *loadOptions, meta *Metadata) error {
-	layers, err := cascade.Discover(cascade.Params{
-		AppName:      opts.appName,
-		ExplicitPath: opts.explicitPath,
-		OptionalPath: opts.optionalPath,
-		WithoutFiles: opts.withoutFiles,
-		StdinReader:  opts.stdinReader,
-		MaxFileSize:  opts.maxFileSize,
-		Extensions:   opts.codecReg.Extensions(),
+	layers, err := cascade.Discover(cascade.DiscoverOptions{
+		AppName:       opts.appName,
+		ExplicitPath:  opts.explicitPath,
+		OptionalPath:  opts.optionalPath,
+		SkipDiscovery: opts.withoutFileDiscovery,
+		StdinReader:   opts.stdinReader,
+		MaxFileSize:   opts.maxFileSize,
+		Extensions:    opts.codecs.Extensions(),
 	})
 	if err != nil {
 		return fmt.Errorf("discover configuration layers: %w", err)
@@ -395,7 +393,7 @@ func recordLayerOrigins(data []byte, layer cascade.Layer, ext string, keys *keyT
 
 		// A key under a reused YAML anchor is a template that other keys merge
 		// or alias; it sets nothing by itself, so it is not a typo either.
-		if record.Template {
+		if record.IsTemplate {
 			return
 		}
 
@@ -410,8 +408,6 @@ func recordLayerOrigins(data []byte, layer cascade.Layer, ext string, keys *keyT
 	})
 }
 
-// unknownKeysError reports every unknown key as a [ConfigError] wrapping
-// [ErrUnknownKey], or nil when there are none.
 func unknownKeysError(meta *Metadata) error {
 	unknown := meta.UnknownKeys()
 	if len(unknown) == 0 {
@@ -506,8 +502,6 @@ func walkRegisterSecrets(typ reflect.Type, prefix string, inheritedSecret bool, 
 	}
 }
 
-// structTarget reports whether target is a non-nil pointer to a struct, the
-// only target [LoadInto] accepts.
-func structTarget[T any](target *T) bool {
+func isStructTarget[T any](target *T) bool {
 	return target != nil && reflect.TypeFor[T]().Kind() == reflect.Struct
 }
