@@ -136,16 +136,16 @@ func isBuiltIn(cmd *cobra.Command) bool {
 	}
 }
 
-// Flag adds a flag for key to fs, using the field's type and SetDefaults value.
+// Flag adds a flag for key to flagSet, using the field's type and SetDefaults value.
 // A dotted key uses hyphens in its flag name. Invalid, unsupported, or secret
 // keys panic, as do duplicate flag names in the same flag set.
-func (b *Binding[T]) Flag(fs *pflag.FlagSet, key, usage string) {
-	b.FlagP(fs, key, "", usage)
+func (b *Binding[T]) Flag(flagSet *pflag.FlagSet, key, usage string) {
+	b.FlagP(flagSet, key, "", usage)
 }
 
 // FlagP is Flag with a shorthand flag name.
-func (b *Binding[T]) FlagP(fs *pflag.FlagSet, key, shorthand, usage string) {
-	if fs == nil {
+func (b *Binding[T]) FlagP(flagSet *pflag.FlagSet, key, shorthand, usage string) {
+	if flagSet == nil {
 		panic("stratacobra.Flag requires a flag set")
 	}
 
@@ -166,11 +166,11 @@ func (b *Binding[T]) FlagP(fs *pflag.FlagSet, key, shorthand, usage string) {
 		panic(err)
 	}
 
-	if err := bindFlag(fs, &pendingFlag{target: target, storage: storage}); err != nil {
+	if err := bindFlag(flagSet, &pendingFlag{target: target, storage: storage}); err != nil {
 		panic(err)
 	}
 
-	b.flags = append(b.flags, boundFlag{target: target, flag: fs.Lookup(target.FlagName)})
+	b.flags = append(b.flags, boundFlag{target: target, flag: flagSet.Lookup(target.FlagName)})
 }
 
 // Load merges defaults, files, environment, and changed flags into the bound
