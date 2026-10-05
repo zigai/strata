@@ -87,7 +87,7 @@ build:
     cd examples/cli && go build -o /dev/null ./...
 
 # Run all non-mutating quality checks
-check: mod-check test lint build fmt-check
+check: mod-check test-race lint build fmt-check
 
 # Remove build and coverage artifacts
 clean:
