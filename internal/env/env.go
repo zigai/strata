@@ -516,7 +516,7 @@ func unmarshalFloat(field reflect.Value, raw string) error {
 }
 
 func unmarshalSlice(field reflect.Value, raw string, parseDuration func(string) (time.Duration, error)) error {
-	if field.Type() == reflect.TypeFor[[]byte]() {
+	if field.Type().Elem() == reflect.TypeFor[byte]() {
 		field.SetBytes([]byte(raw))
 		return nil
 	}

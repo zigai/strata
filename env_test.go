@@ -11,6 +11,76 @@ import (
 	"github.com/zigai/strata"
 )
 
+type envPayload []byte
+
+func TestNamedByteSliceEnvironmentBinding(t *testing.T) {
+	type config struct {
+		Payload envPayload `strata:"payload" env:"BINDING_PAYLOAD"`
+	}
+
+	for _, value := range []string{"plain text", "a,b", "", "café"} {
+		t.Run(value, func(t *testing.T) {
+			t.Setenv("BINDING_PAYLOAD", value)
+
+			cfg, meta, err := strata.LoadWithMetadata[config]()
+			if err != nil {
+				t.Fatal(err)
+			}
+
+			if string(cfg.Payload) != value {
+				t.Fatalf("payload = %q, want %q", cfg.Payload, value)
+			}
+
+			origin, found := meta.Where("payload")
+			if !found || origin.Source != strata.SourceEnv || origin.Path != "BINDING_PAYLOAD" || origin.RawValue != value {
+				t.Fatalf("origin = %+v, found = %t", origin, found)
+			}
+		})
+	}
+}
+
+type envCount uint8
+
+type envLevel uint8
+
+func (level *envLevel) UnmarshalText(raw []byte) error {
+	switch string(raw) {
+	case "low":
+		*level = 1
+	case "high":
+		*level = 2
+	default:
+		return errors.New("invalid level")
+	}
+
+	return nil
+}
+
+func TestDefinedUint8SliceEnvironmentBinding(t *testing.T) {
+	type config struct {
+		Counts []envCount `env:"BINDING_COUNTS"`
+		Levels []envLevel `env:"BINDING_LEVELS"`
+	}
+
+	t.Setenv("BINDING_COUNTS", "1,2")
+	t.Setenv("BINDING_LEVELS", "high,low")
+
+	got, err := strata.Load[config]()
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	if !slices.Equal(got.Counts, []envCount{1, 2}) || !slices.Equal(got.Levels, []envLevel{2, 1}) {
+		t.Fatalf("config = %+v", got)
+	}
+
+	t.Setenv("BINDING_LEVELS", "invalid")
+
+	if _, err := strata.Load[config](); !errors.Is(err, strata.ErrInvalidEnvValue) {
+		t.Fatalf("invalid level error = %v, want ErrInvalidEnvValue", err)
+	}
+}
+
 type numericConfig struct {
 	MaxAge uint64  `strata:"max_age"`
 	Rate   float64 `strata:"rate"`
