@@ -2,12 +2,17 @@ package codec_test
 
 import (
 	"errors"
+	"os"
+	"os/exec"
 	"reflect"
+	"runtime/debug"
 	"strings"
 	"testing"
 	"time"
 
 	"github.com/zigai/strata/codec"
+
+	"gopkg.in/yaml.v3"
 )
 
 type keyedDatabase struct {
@@ -52,8 +57,10 @@ type keyedConfig struct {
 }
 
 type keyedNode struct {
-	Name     string
-	Children []keyedNode
+	HTTPPort int
+	Timeout  time.Duration
+	Next     *keyedNode
+	Children []keyedNode `json:",omitempty" yaml:",omitempty" toml:",omitempty"`
 }
 
 type mergeDatabase struct {
@@ -72,6 +79,8 @@ func TestYAMLMergeKeepsAliasedConfigurationKeys(t *testing.T) {
 		wantReplica  string
 	}{
 		{data: "base: &base\n  dbHost: merged.example\ndatabase:\n  <<: *base\n", wantDatabase: "merged.example"},
+		{data: "base: &base\n  dbHost: merged.example\ndatabase: *base\n", wantDatabase: "merged.example"},
+		{data: "database: &base\n  dbHost: merged.example\nreplica: *base\n", wantDatabase: "merged.example", wantReplica: "merged.example"},
 		{data: "database: &base\n  dbHost: merged.example\nreplica:\n  <<: *base\n", wantDatabase: "merged.example", wantReplica: "merged.example"},
 	} {
 		var cfg mergeConfig
@@ -83,6 +92,25 @@ func TestYAMLMergeKeepsAliasedConfigurationKeys(t *testing.T) {
 		if cfg.Database.Host != tc.wantDatabase || cfg.Replica.Host != tc.wantReplica {
 			t.Fatalf("merge lost database host: %+v", cfg)
 		}
+	}
+}
+
+func TestYAMLRecursiveConfigurationResolvesAliases(t *testing.T) {
+	t.Parallel()
+
+	var got struct {
+		Database *keyedNode
+		Replica  *keyedNode
+	}
+
+	data := "base: &base\n  http_port: 9000\n  timeout: 1s\n  next: &next {http_port: 7000, timeout: 2s}\ndatabase: *base\nreplica: {<<: *base}\n"
+	if err := codec.NewYAML().Decode([]byte(data), &got); err != nil {
+		t.Fatal(err)
+	}
+
+	want := &keyedNode{HTTPPort: 9000, Timeout: time.Second, Next: &keyedNode{HTTPPort: 7000, Timeout: 2 * time.Second}}
+	if !reflect.DeepEqual(got.Database, want) || !reflect.DeepEqual(got.Replica, want) {
+		t.Fatalf("aliases = %+v, want both nodes %+v", got, want)
 	}
 }
 
@@ -162,15 +190,185 @@ func TestEncodersWriteConfigurationKeys(t *testing.T) {
 func TestEncodersKeepRecursiveTypes(t *testing.T) {
 	t.Parallel()
 
-	value := keyedNode{Name: "root", Children: []keyedNode{{Name: "leaf"}}}
+	value := keyedNode{HTTPPort: 8080, Timeout: 2 * time.Second, Next: &keyedNode{HTTPPort: 9000, Timeout: time.Second}, Children: []keyedNode{{HTTPPort: 7000, Timeout: 3 * time.Second}}}
 
-	encoded, err := codec.NewYAML().Encode(value)
-	if err != nil {
-		t.Fatalf("Encode: %v", err)
+	for _, tc := range []struct {
+		name  string
+		codec codec.Codec
+	}{
+		{name: "json", codec: codec.NewJSON()},
+		{name: "toml", codec: codec.NewTOML()},
+		{name: "yaml", codec: codec.NewYAML()},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			encoded, err := tc.codec.Encode(value)
+			if err != nil {
+				t.Fatalf("Encode: %v", err)
+			}
+
+			var got keyedNode
+			if err := tc.codec.Decode(encoded, &got); err != nil {
+				t.Fatalf("Decode: %v", err)
+			}
+
+			if !reflect.DeepEqual(got, value) {
+				t.Fatalf("roundtrip = %+v, want %+v; document:\n%s", got, value, encoded)
+			}
+		})
+	}
+}
+
+type recursiveEmbeddedNode struct {
+	*recursiveEmbeddedNode
+
+	HTTPPort int
+}
+
+func TestEncodersHandleRecursiveAnonymousPointers(t *testing.T) {
+	if format := os.Getenv("STRATA_TEST_RECURSIVE_EMBED"); format != "" {
+		debug.SetMaxStack(128 << 10)
+
+		encoder := map[string]codec.Codec{"json": codec.NewJSON(), "toml": codec.NewTOML(), "yaml": codec.NewYAML()}[format]
+		for _, value := range []recursiveEmbeddedNode{
+			{HTTPPort: 8080},
+			{recursiveEmbeddedNode: &recursiveEmbeddedNode{HTTPPort: 9000}, HTTPPort: 8080},
+		} {
+			data, err := encoder.Encode(value)
+			if err != nil {
+				t.Fatalf("Encode: %v", err)
+			}
+
+			var got map[string]int
+			if err := encoder.Decode(data, &got); err != nil {
+				t.Fatalf("Decode: %v", err)
+			}
+
+			if !reflect.DeepEqual(got, map[string]int{"http_port": 8080}) {
+				t.Fatalf("document = %s, want only http_port=8080", data)
+			}
+		}
+
+		return
 	}
 
-	if !strings.Contains(string(encoded), "leaf") {
-		t.Fatalf("encoded document lacks nested value:\n%s", encoded)
+	for _, format := range []string{"json", "toml", "yaml"} {
+		t.Run(format, func(t *testing.T) {
+			command := exec.CommandContext(t.Context(), os.Args[0], "-test.run=^TestEncodersHandleRecursiveAnonymousPointers$")
+
+			command.Env = append(os.Environ(), "STRATA_TEST_RECURSIVE_EMBED="+format)
+
+			output, err := command.CombinedOutput()
+			if err != nil {
+				t.Fatalf("recursive embedding subprocess: %v\n%s", err, output)
+			}
+		})
+	}
+}
+
+type zeroKeyedNode struct {
+	Value    string
+	HTTPPort int
+	Next     *zeroKeyedNode `json:",omitzero" yaml:",omitempty"`
+}
+
+func (node *zeroKeyedNode) IsZero() bool { return node.Value == "" }
+
+type zeroKeyedValue struct {
+	HTTPPort int
+	Next     *zeroKeyedValue
+}
+
+func (node zeroKeyedValue) IsZero() bool { return node.HTTPPort < 0 }
+
+func TestRecursiveEncodersHonorCustomIsZero(t *testing.T) {
+	t.Parallel()
+
+	omitted := &zeroKeyedNode{HTTPPort: 9000}
+	omitted.Next = omitted
+
+	for _, encoder := range []struct {
+		name  string
+		codec codec.Codec
+	}{
+		{name: "json", codec: codec.NewJSON()},
+		{name: "yaml", codec: codec.NewYAML()},
+	} {
+		t.Run(encoder.name, func(t *testing.T) {
+			for _, test := range []struct {
+				name  string
+				value any
+				want  map[string]any
+			}{
+				{
+					name:  "omit custom zero pointer",
+					value: zeroKeyedNode{Value: "root", HTTPPort: 8080, Next: &zeroKeyedNode{HTTPPort: 9000}},
+					want:  map[string]any{"value": "root", "http_port": 8080},
+				},
+				{
+					name:  "omit cyclic custom zero pointer",
+					value: zeroKeyedNode{Value: "root", HTTPPort: 8080, Next: omitted},
+					want:  map[string]any{"value": "root", "http_port": 8080},
+				},
+				{
+					name:  "keep custom nonzero pointer",
+					value: zeroKeyedNode{Value: "root", HTTPPort: 8080, Next: &zeroKeyedNode{Value: "child", HTTPPort: 9000}},
+					want:  map[string]any{"value": "root", "http_port": 8080, "next": map[string]any{"value": "child", "http_port": 9000}},
+				},
+				{
+					name: "keep custom nonzero value",
+					value: struct {
+						Node zeroKeyedValue `json:",omitzero" yaml:",omitempty"`
+					}{},
+					want: map[string]any{"node": map[string]any{"http_port": 0, "next": nil}},
+				},
+				{
+					name: "omit custom zero value",
+					value: struct {
+						Node zeroKeyedValue `json:",omitzero" yaml:",omitempty"`
+					}{Node: zeroKeyedValue{HTTPPort: -1}},
+					want: map[string]any{},
+				},
+			} {
+				t.Run(test.name, func(t *testing.T) {
+					data, err := encoder.codec.Encode(test.value)
+					if err != nil {
+						t.Fatalf("Encode: %v", err)
+					}
+
+					var got map[string]any
+					if err := yaml.Unmarshal(data, &got); err != nil {
+						t.Fatalf("read encoded document: %v", err)
+					}
+
+					if !reflect.DeepEqual(got, test.want) {
+						t.Fatalf("document = %s; decoded = %#v, want %#v", data, got, test.want)
+					}
+				})
+			}
+		})
+	}
+}
+
+func TestEncodersRejectCyclicRecursiveValues(t *testing.T) {
+	t.Parallel()
+
+	value := &keyedNode{HTTPPort: 8080}
+	value.Next = value
+
+	for _, tc := range []struct {
+		name  string
+		codec codec.Codec
+	}{
+		{name: "json", codec: codec.NewJSON()},
+		{name: "toml", codec: codec.NewTOML()},
+		{name: "yaml", codec: codec.NewYAML()},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			data, err := tc.codec.Encode(value)
+			if err == nil || data != nil {
+				t.Fatalf("Encode = %q, %v; want no document and a cycle error", data, err)
+			}
+		})
 	}
 }
 
@@ -245,6 +443,142 @@ func TestFormatTagDashExcludesFieldFromThatFormat(t *testing.T) {
 			}
 		})
 	}
+}
+
+type textDecodedStruct struct {
+	Address string
+}
+
+func (value *textDecodedStruct) UnmarshalText(data []byte) error {
+	value.Address = "text:" + string(data)
+	return nil
+}
+
+type yamlDecodedStruct struct {
+	Address string
+}
+
+func (value *yamlDecodedStruct) UnmarshalYAML(node *yaml.Node) error {
+	value.Address = "yaml:" + node.Value
+	return nil
+}
+
+func TestYAMLKeepsStructDecoderMethods(t *testing.T) {
+	t.Parallel()
+
+	var got struct {
+		Text    textDecodedStruct
+		YAML    yamlDecodedStruct
+		Pointer *textDecodedStruct
+		Items   []textDecodedStruct
+		Named   map[string]yamlDecodedStruct
+	}
+	if err := codec.NewYAML().Decode([]byte("text: one\nyaml: two\npointer: three\nitems: [four]\nnamed: {entry: five}\n"), &got); err != nil {
+		t.Fatal(err)
+	}
+
+	if got.Text.Address != "text:one" || got.YAML.Address != "yaml:two" || got.Pointer == nil || got.Pointer.Address != "text:three" || !reflect.DeepEqual(got.Items, []textDecodedStruct{{Address: "text:four"}}) || !reflect.DeepEqual(got.Named, map[string]yamlDecodedStruct{"entry": {Address: "yaml:five"}}) {
+		t.Fatalf("custom decoders were not honored: %+v", got)
+	}
+}
+
+func TestYAMLIgnoresCompoundKeysInUnknownSubtrees(t *testing.T) {
+	t.Parallel()
+
+	for _, document := range []string{
+		"http_port: 80\nignored: {? [x, y]: value}\n",
+		"http_port: 80\nignored: &ignored {? [x, y]: value}\nother: *ignored\n",
+	} {
+		t.Run(document, func(t *testing.T) {
+			var mirrored struct{ HTTPPort int }
+			if err := codec.NewYAML().Decode([]byte(document), &mirrored); err != nil {
+				t.Fatalf("Decode mirrored struct: %v", err)
+			}
+
+			if mirrored.HTTPPort != 80 {
+				t.Fatalf("http_port = %d, want 80", mirrored.HTTPPort)
+			}
+
+			var recursive keyedNode
+			if err := codec.NewYAML().Decode([]byte(document), &recursive); err != nil {
+				t.Fatalf("Decode recursive struct: %v", err)
+			}
+
+			if recursive.HTTPPort != 80 {
+				t.Fatalf("recursive http_port = %d, want 80", recursive.HTTPPort)
+			}
+		})
+	}
+}
+
+type compoundYAMLMapping struct {
+	Node yaml.Node
+}
+
+func (value *compoundYAMLMapping) UnmarshalYAML(node *yaml.Node) error {
+	value.Node = *node
+	return nil
+}
+
+func TestYAMLPassesCompoundKeysToCustomDecoders(t *testing.T) {
+	t.Parallel()
+
+	root := new(compoundYAMLMapping)
+	nested := new(struct{ Custom compoundYAMLMapping })
+
+	for _, test := range []struct {
+		name     string
+		document string
+		target   any
+		node     *yaml.Node
+	}{
+		{name: "root", document: "? [x, y]\n: value\n", target: root, node: &root.Node},
+		{name: "field alias", document: "ignored: &raw {? [x, y]: value}\ncustom: *raw\n", target: nested, node: &nested.Custom.Node},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			if err := codec.NewYAML().Decode([]byte(test.document), test.target); err != nil {
+				t.Fatalf("Decode: %v", err)
+			}
+
+			if test.node.Kind != yaml.MappingNode || len(test.node.Content) != 2 {
+				t.Fatalf("custom decoder node = %+v, want one mapping entry", test.node)
+			}
+
+			key, value := test.node.Content[0], test.node.Content[1]
+			if key.Kind != yaml.SequenceNode || len(key.Content) != 2 || key.Content[0].Value != "x" || key.Content[1].Value != "y" || value.Value != "value" {
+				t.Fatalf("custom decoder mapping = %+v: %+v, want [x, y]: value", key, value)
+			}
+		})
+	}
+}
+
+func TestYAMLRejectsCompoundMergeKeysWithoutPanic(t *testing.T) {
+	t.Parallel()
+
+	for _, data := range []string{
+		"database: {<<, [x]}\n",
+		"base: &base {<<, [x]}\ndatabase: *base\n",
+		"database: {<<: {dbHost: example}, ? [x]: value}\n",
+	} {
+		t.Run(data, func(t *testing.T) {
+			var got mergeConfig
+			if err := codec.NewYAML().Decode([]byte(data), &got); !errors.Is(err, codec.ErrMalformed) {
+				t.Fatalf("Decode error = %v, want ErrMalformed", err)
+			}
+		})
+	}
+}
+
+func FuzzYAMLDecode(f *testing.F) {
+	for _, data := range []string{"", "database: {dbHost: example}", "database: {<<, [x]}", "base: &base {dbHost: example}\ndatabase: *base", "database: &base {<<: *base}"} {
+		f.Add(data)
+	}
+
+	f.Fuzz(func(t *testing.T, data string) {
+		var got mergeConfig
+
+		_ = codec.NewYAML().Decode([]byte(data), &got)
+	})
 }
 
 type restoreItem struct {

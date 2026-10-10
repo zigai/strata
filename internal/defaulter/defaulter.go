@@ -152,7 +152,14 @@ func ToSnakeCase(s string) string {
 
 func IsSecret(f reflect.StructField) bool {
 	typ := f.Type
-	for typ.Kind() == reflect.Pointer {
+
+	var visited []reflect.Type
+	for typ.Kind() == reflect.Pointer || typ.Kind() == reflect.Map || typ.Kind() == reflect.Slice || typ.Kind() == reflect.Array {
+		if slices.Contains(visited, typ) {
+			break
+		}
+
+		visited = append(visited, typ)
 		typ = typ.Elem()
 	}
 

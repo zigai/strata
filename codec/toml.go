@@ -175,7 +175,12 @@ func rewriteTOMLValue(val any, targetType reflect.Type) (any, error) {
 // It returns an error wrapping the go-toml/v2 failure if value cannot be
 // represented in TOML.
 func (c *TOML) Encode(value any) ([]byte, error) {
-	data, err := toml.Marshal(keyedTOMLValue(value))
+	keyed, err := keyedTOMLValue(value)
+	if err != nil {
+		return nil, fmt.Errorf("toml marshal: %w", err)
+	}
+
+	data, err := toml.Marshal(keyed)
 	if err != nil {
 		return nil, fmt.Errorf("toml marshal: %w", err)
 	}

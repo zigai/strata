@@ -28,7 +28,7 @@ func decodeYAMLMirror(doc *yaml.Node, dst reflect.Value, mirror *keyedMirror) er
 // base is the source value before decoding and orig its original mirror;
 // either is invalid when absent. When src still equals orig, base is unchanged.
 func restoreKeyed(src, orig reflect.Value, typ reflect.Type, base reflect.Value) reflect.Value {
-	mirror := mirrorOfMode(typ, mirrorMode{OmitSecrets: false, StringifyDurations: false})
+	mirror := mirrorOfMode(typ, mirrorMode{Format: "", OmitSecrets: false, StringifyDurations: false, PreserveDecoders: true})
 	if mirror.typ == nil {
 		return src
 	}

@@ -81,7 +81,12 @@ func Init[T any](targetPath string, opts ...InitOption) error {
 		return fmt.Errorf("apply defaults for template: %w", err)
 	}
 
-	data, err := formatInitData(codec.OmitSecrets(target), filepath.Ext(targetPath), options.schemaURL)
+	template, err := codec.OmitSecrets(target)
+	if err != nil {
+		return fmt.Errorf("prepare configuration template: %w", err)
+	}
+
+	data, err := formatInitData(template, filepath.Ext(targetPath), options.schemaURL)
 	if err != nil {
 		return err
 	}

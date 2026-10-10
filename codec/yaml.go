@@ -11,12 +11,20 @@ import (
 	"gopkg.in/yaml.v3"
 )
 
-var errCyclicYAMLAlias = errors.New("cyclic YAML alias")
+var (
+	errCyclicYAMLAlias       = errors.New("cyclic YAML alias")
+	errInvalidYAMLMappingKey = errors.New("invalid compound mapping key")
+)
 
 // YAML implements [Codec] for YAML documents using yaml.v3.
 //
 // YAML is stateless and safe for concurrent use.
 type YAML struct{}
+
+type yamlMappingVisit struct {
+	node *yaml.Node
+	typ  reflect.Type
+}
 
 // NewYAML returns a codec that decodes and encodes YAML documents.
 func NewYAML() *YAML {
@@ -43,16 +51,20 @@ func (c *YAML) Decode(data []byte, target any) error {
 		return err
 	}
 
+	if hasYAMLAliasCycle(doc, make(map[*yaml.Node]bool), make(map[*yaml.Node]bool)) {
+		return fmt.Errorf("%w: %w", ErrMalformed, errCyclicYAMLAlias)
+	}
+
+	if err := validateYAMLMappingKeys(doc, reflect.TypeOf(target), make(map[yamlMappingVisit]bool)); err != nil {
+		return fmt.Errorf("%w: yaml unmarshal: %w", ErrMalformed, err)
+	}
+
 	val := reflect.ValueOf(target)
 	if val.Kind() == reflect.Pointer && val.Elem().Kind() == reflect.Struct {
-		if hasYAMLAliasCycle(doc, make(map[*yaml.Node]bool), make(map[*yaml.Node]bool)) {
-			return fmt.Errorf("%w: %w", ErrMalformed, errCyclicYAMLAlias)
-		}
-
 		// NB: yaml.v3 fills an embedded struct only when it is tagged inline, and
 		// panics on an unexported one. The mirror flattens promoted fields and
 		// names every field by its key, so the document decodes into it as is.
-		if mirror := mirrorOfMode(val.Elem().Type(), mirrorMode{OmitSecrets: false, StringifyDurations: false}); mirror.typ != nil {
+		if mirror := mirrorOfMode(val.Elem().Type(), mirrorMode{Format: "", OmitSecrets: false, StringifyDurations: false, PreserveDecoders: true}); mirror.typ != nil {
 			return decodeYAMLMirror(doc, val.Elem(), mirror)
 		}
 
@@ -68,6 +80,90 @@ func (c *YAML) Decode(data []byte, target any) error {
 	}
 
 	return nil
+}
+
+func validateYAMLMappingKeys(node *yaml.Node, targetType reflect.Type, seen map[yamlMappingVisit]bool) error {
+	targetType = derefType(targetType)
+	if node == nil || targetType == nil || decodesItself(targetType) {
+		return nil
+	}
+
+	visit := yamlMappingVisit{node: node, typ: targetType}
+	if seen[visit] {
+		return nil
+	}
+
+	seen[visit] = true
+
+	switch node.Kind {
+	case yaml.DocumentNode:
+		return validateYAMLMappingChildren(node.Content, targetType, seen)
+	case yaml.AliasNode:
+		return validateYAMLMappingKeys(node.Alias, targetType, seen)
+	case yaml.SequenceNode:
+		if targetType.Kind() == reflect.Slice || targetType.Kind() == reflect.Array {
+			targetType = targetType.Elem()
+		}
+
+		return validateYAMLMappingChildren(node.Content, targetType, seen)
+	case yaml.MappingNode:
+		return validateYAMLMappingEntries(node, targetType, seen)
+	case yaml.ScalarNode:
+		return nil
+	}
+
+	return nil
+}
+
+func validateYAMLMappingChildren(children []*yaml.Node, targetType reflect.Type, seen map[yamlMappingVisit]bool) error {
+	for _, child := range children {
+		if err := validateYAMLMappingKeys(child, targetType, seen); err != nil {
+			return err
+		}
+	}
+
+	return nil
+}
+
+func validateYAMLMappingEntries(node *yaml.Node, targetType reflect.Type, seen map[yamlMappingVisit]bool) error {
+	var bindings map[string]fieldBinding
+	if targetType.Kind() == reflect.Struct {
+		bindings = yamlBindings(targetType)
+	}
+
+	for index := 0; index+1 < len(node.Content); index += 2 {
+		key := node.Content[index]
+		for key.Kind == yaml.AliasNode && key.Alias != nil {
+			key = key.Alias
+		}
+
+		if key.Kind != yaml.ScalarNode {
+			return fmt.Errorf("line %d: %w", key.Line, errInvalidYAMLMappingKey)
+		}
+
+		valueType := yamlMappingValueType(key, targetType, bindings)
+		if err := validateYAMLMappingKeys(node.Content[index+1], valueType, seen); err != nil {
+			return err
+		}
+	}
+
+	return nil
+}
+
+func yamlMappingValueType(key *yaml.Node, targetType reflect.Type, bindings map[string]fieldBinding) reflect.Type {
+	if key.Value == "<<" && key.Tag == "!!merge" {
+		return targetType
+	}
+
+	if targetType.Kind() == reflect.Struct {
+		return bindings[key.Value].Type
+	}
+
+	if targetType.Kind() == reflect.Map {
+		return targetType.Elem()
+	}
+
+	return targetType
 }
 
 func readOneYAMLDocument(data []byte) (*yaml.Node, bool, error) {
@@ -249,7 +345,7 @@ func rewriteYAMLNode(node *yaml.Node, targetType reflect.Type) error {
 	}
 
 	targetType = derefType(targetType)
-	if targetType == nil {
+	if targetType == nil || decodesItself(targetType) {
 		return nil
 	}
 
@@ -264,7 +360,9 @@ func rewriteYAMLNode(node *yaml.Node, targetType reflect.Type) error {
 		return rewriteYAMLMapping(node, targetType)
 	case yaml.SequenceNode:
 		return rewriteYAMLSequence(node, targetType)
-	case yaml.ScalarNode, yaml.AliasNode:
+	case yaml.AliasNode:
+		return rewriteYAMLNode(node.Alias, targetType)
+	case yaml.ScalarNode:
 	}
 
 	return nil
@@ -287,7 +385,12 @@ func derefType(typ reflect.Type) reflect.Type {
 // It returns an error wrapping the yaml.v3 failure if value cannot be
 // represented in YAML.
 func (c *YAML) Encode(value any) ([]byte, error) {
-	data, err := yaml.Marshal(keyedValue(value))
+	keyed, err := keyedValue(value, "yaml")
+	if err != nil {
+		return nil, fmt.Errorf("yaml marshal: %w", err)
+	}
+
+	data, err := yaml.Marshal(keyed)
 	if err != nil {
 		return nil, fmt.Errorf("yaml marshal: %w", err)
 	}

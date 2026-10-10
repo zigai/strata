@@ -68,7 +68,12 @@ func (c *JSON) Decode(data []byte, target any) error {
 // Encode writes value as indented JSON without a trailing newline. Map keys are
 // sorted for deterministic output, and struct fields use configuration keys.
 func (c *JSON) Encode(value any) ([]byte, error) {
-	data, err := json.Marshal(keyedValue(value), jsontext.WithIndent("  "), json.Deterministic(true), json.WithMarshalers(json.MarshalFunc(func(value time.Duration) ([]byte, error) {
+	keyed, err := keyedValue(value, "json")
+	if err != nil {
+		return nil, fmt.Errorf("json marshal: %w", err)
+	}
+
+	data, err := json.Marshal(keyed, jsontext.WithIndent("  "), json.Deterministic(true), json.WithMarshalers(json.MarshalFunc(func(value time.Duration) ([]byte, error) {
 		return json.Marshal(value.String())
 	})))
 	if err != nil {

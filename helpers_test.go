@@ -9,7 +9,12 @@ import (
 	"github.com/zigai/strata"
 )
 
-const portKey = "port"
+const (
+	portKey    = "port"
+	jsonFormat = "json"
+	yamlFormat = "yaml"
+	tomlFormat = "toml"
+)
 
 type primitiveConfig struct {
 	Port    int

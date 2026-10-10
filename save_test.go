@@ -4,7 +4,9 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"reflect"
 	"testing"
+	"time"
 
 	"github.com/zigai/strata"
 )
@@ -32,6 +34,36 @@ func TestSave(t *testing.T) {
 
 	if loaded.ServerHost != "192.168.1.100" || loaded.ServerPort != 9090 || loaded.Debug != false {
 		t.Fatalf("Loaded saved mismatch: %+v", loaded)
+	}
+}
+
+type savedNode struct {
+	HTTPPort int
+	Timeout  time.Duration
+	Next     *savedNode
+}
+
+func TestSaveReloadsRecursiveConfigurationKeys(t *testing.T) {
+	t.Parallel()
+
+	want := savedNode{HTTPPort: 8080, Timeout: 2 * time.Second, Next: &savedNode{HTTPPort: 9000, Timeout: time.Second}}
+
+	for _, format := range []string{jsonFormat, yamlFormat, tomlFormat} {
+		t.Run(format, func(t *testing.T) {
+			path := filepath.Join(t.TempDir(), "config."+format)
+			if err := strata.Save(path, want); err != nil {
+				t.Fatalf("Save: %v", err)
+			}
+
+			got, err := strata.Load[savedNode](strata.WithPath(path), strata.WithFormats(format))
+			if err != nil {
+				t.Fatalf("Load: %v", err)
+			}
+
+			if !reflect.DeepEqual(got, want) {
+				t.Fatalf("saved configuration = %+v, want %+v", got, want)
+			}
+		})
 	}
 }
 

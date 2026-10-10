@@ -3,6 +3,7 @@ package codec
 import (
 	"encoding"
 	"encoding/json/v2"
+	"errors"
 	"reflect"
 	"slices"
 	"strconv"
@@ -16,16 +17,20 @@ import (
 )
 
 var (
+	errCyclicConfigurationValue = errors.New("cannot encode cyclic configuration value")
+
 	keyedFormatTags = []string{"toml", "yaml", "json"}
 
 	keyedPassthroughTags = []string{"comment", "commented", "multiline"}
 
 	keyedMirrors sync.Map
 
-	textMarshalerType = reflect.TypeFor[encoding.TextMarshaler]()
-	jsonMarshalerType = reflect.TypeFor[json.Marshaler]()
-	yamlMarshalerType = reflect.TypeFor[yaml.Marshaler]()
-	timeType          = reflect.TypeFor[time.Time]()
+	textUnmarshalerType = reflect.TypeFor[encoding.TextUnmarshaler]()
+	yamlUnmarshalerType = reflect.TypeFor[yaml.Unmarshaler]()
+	textMarshalerType   = reflect.TypeFor[encoding.TextMarshaler]()
+	jsonMarshalerType   = reflect.TypeFor[json.Marshaler]()
+	yamlMarshalerType   = reflect.TypeFor[yaml.Marshaler]()
+	timeType            = reflect.TypeFor[time.Time]()
 )
 
 // A nil typ means the source type encodes correctly as it is.
@@ -37,8 +42,10 @@ type keyedMirror struct {
 }
 
 type mirrorMode struct {
+	Format             string
 	OmitSecrets        bool
 	StringifyDurations bool
+	PreserveDecoders   bool
 }
 
 type structMirrorBuilder struct {
@@ -53,31 +60,45 @@ type mirrorKey struct {
 	mode mirrorMode
 }
 
-func OmitSecrets(value any) any {
-	return keyedValueMode(value, mirrorMode{OmitSecrets: true, StringifyDurations: false})
+type keyedVisit struct {
+	typ     reflect.Type
+	pointer uintptr
+	length  int
 }
 
-func keyedValue(value any) any {
-	return keyedValueMode(value, mirrorMode{OmitSecrets: false, StringifyDurations: false})
+func OmitSecrets(value any) (any, error) {
+	return keyedValueMode(value, mirrorMode{Format: "", OmitSecrets: true, StringifyDurations: false, PreserveDecoders: false})
 }
 
-func keyedTOMLValue(value any) any {
-	return keyedValueMode(value, mirrorMode{OmitSecrets: false, StringifyDurations: true})
+func keyedValue(value any, format string) (any, error) {
+	return keyedValueMode(value, mirrorMode{Format: format, OmitSecrets: false, StringifyDurations: false, PreserveDecoders: false})
 }
 
-func keyedValueMode(value any, mode mirrorMode) any {
+func keyedTOMLValue(value any) (any, error) {
+	return keyedValueMode(value, mirrorMode{Format: "toml", OmitSecrets: false, StringifyDurations: true, PreserveDecoders: false})
+}
+
+func keyedValueMode(value any, mode mirrorMode) (any, error) {
 	if value == nil {
-		return nil
+		return value, nil
 	}
 
 	src := reflect.ValueOf(value)
+	if isRecursive(src.Type(), nil) && !describesItself(src.Type()) {
+		converted, err := convertRecursiveKeyed(src, mode, make(map[keyedVisit]bool))
+		if err != nil {
+			return nil, err
+		}
+
+		return converted.Interface(), nil
+	}
 
 	mirror := mirrorOfMode(src.Type(), mode)
 	if mirror.typ == nil {
-		return value
+		return value, nil
 	}
 
-	return convertKeyed(src, mirror).Interface()
+	return convertKeyed(src, mirror).Interface(), nil
 }
 
 func mirrorOfMode(typ reflect.Type, mode mirrorMode) *keyedMirror {
@@ -92,7 +113,7 @@ func mirrorOfMode(typ reflect.Type, mode mirrorMode) *keyedMirror {
 	switch {
 	case mode.StringifyDurations && typ == reflect.TypeFor[time.Duration]():
 		mirror = &keyedMirror{typ: reflect.TypeFor[string](), paths: nil, mode: mode}
-	case describesItself(typ) || isRecursive(typ, nil):
+	case describesItself(typ) || mode.PreserveDecoders && decodesItself(typ) || isRecursive(typ, nil):
 		mirror = &keyedMirror{typ: nil, paths: nil, mode: mode}
 	default:
 		mirror = buildMirror(typ, mode)
@@ -127,7 +148,7 @@ func buildMirror(typ reflect.Type, mode mirrorMode) *keyedMirror {
 	case reflect.Struct:
 		builder := structMirrorBuilder{mode: mode, fields: nil, paths: nil, seen: nil}
 
-		builder.collect(typ, nil)
+		builder.collect(typ, nil, nil)
 
 		return &keyedMirror{typ: reflect.StructOf(builder.fields), paths: builder.paths, mode: mode}
 	}
@@ -135,7 +156,13 @@ func buildMirror(typ reflect.Type, mode mirrorMode) *keyedMirror {
 	return &keyedMirror{typ: mirrored, paths: nil, mode: mode}
 }
 
-func (b *structMirrorBuilder) collect(typ reflect.Type, prefix []int) {
+func (b *structMirrorBuilder) collect(typ reflect.Type, prefix []int, types []reflect.Type) {
+	if slices.Contains(types, typ) {
+		return
+	}
+
+	types = append(types, typ)
+
 	if b.seen == nil {
 		b.seen = make(map[string]bool)
 	}
@@ -157,7 +184,7 @@ func (b *structMirrorBuilder) collect(typ reflect.Type, prefix []int) {
 
 	// Promoted fields rank below the enclosing struct's own fields, as in Go.
 	for _, embed := range embeds {
-		b.collect(derefType(embed.Type), appendIndex(prefix, embed.Index))
+		b.collect(derefType(embed.Type), appendIndex(prefix, embed.Index), types)
 	}
 }
 
@@ -309,6 +336,238 @@ func convertElements(src, dst reflect.Value, mode mirrorMode) {
 	for i := range src.Len() {
 		dst.Index(i).Set(convertKeyed(src.Index(i), elemMirror))
 	}
+}
+
+func convertRecursiveKeyed(src reflect.Value, mode mirrorMode, active map[keyedVisit]bool) (reflect.Value, error) {
+	if !isRecursive(src.Type(), nil) || describesItself(src.Type()) {
+		return convertKeyed(src, mirrorOfMode(src.Type(), mode)), nil
+	}
+
+	if src.Kind() == reflect.Pointer || src.Kind() == reflect.Map || src.Kind() == reflect.Slice {
+		if src.IsNil() {
+			return src, nil
+		}
+
+		visit := keyedVisit{typ: src.Type(), pointer: uintptr(src.UnsafePointer()), length: 0}
+		if src.Kind() == reflect.Slice {
+			visit.length = src.Len()
+		}
+
+		if active[visit] {
+			return reflect.Value{}, errCyclicConfigurationValue
+		}
+
+		active[visit] = true
+		defer delete(active, visit)
+	}
+
+	return convertRecursiveContainer(src, mode, active)
+}
+
+func convertRecursiveContainer(src reflect.Value, mode mirrorMode, active map[keyedVisit]bool) (reflect.Value, error) {
+	switch src.Kind() {
+	case reflect.Pointer:
+		value, err := convertRecursiveKeyed(src.Elem(), mode, active)
+		if err != nil {
+			return reflect.Value{}, err
+		}
+
+		out := reflect.New(value.Type())
+		out.Elem().Set(value)
+
+		return out, nil
+	case reflect.Struct:
+		return convertRecursiveStruct(src, mode, active)
+	case reflect.Slice, reflect.Array:
+		return convertRecursiveElements(src, mode, active)
+	case reflect.Map:
+		return convertRecursiveMap(src, mode, active)
+	case reflect.Invalid, reflect.Bool, reflect.Int, reflect.Int8, reflect.Int16, reflect.Int32, reflect.Int64,
+		reflect.Uint, reflect.Uint8, reflect.Uint16, reflect.Uint32, reflect.Uint64, reflect.Uintptr,
+		reflect.Float32, reflect.Float64, reflect.Complex64, reflect.Complex128, reflect.Chan, reflect.Func,
+		reflect.Interface, reflect.String, reflect.UnsafePointer:
+		return src, nil
+	}
+
+	return src, nil
+}
+
+func convertRecursiveStruct(src reflect.Value, mode mirrorMode, active map[keyedVisit]bool) (reflect.Value, error) {
+	builder := structMirrorBuilder{mode: mode, fields: nil, paths: nil, seen: nil}
+	builder.collect(src.Type(), nil, nil)
+
+	values := make([]reflect.Value, len(builder.paths))
+	for index, path := range builder.paths {
+		field, err := src.FieldByIndexErr(path)
+		if err != nil {
+			values[index] = reflect.Zero(builder.fields[index].Type)
+			continue
+		}
+
+		tag, omitted := recursiveFieldTag(builder.fields[index].Tag, field, mode)
+		if omitted {
+			builder.fields[index].Tag = tag
+			values[index] = reflect.Zero(builder.fields[index].Type)
+
+			continue
+		}
+
+		value, err := convertRecursiveKeyed(field, mode, active)
+		if err != nil {
+			return reflect.Value{}, err
+		}
+
+		values[index] = value
+		if value.Type() != field.Type() {
+			builder.fields[index].Tag = tag
+			builder.fields[index].Type = value.Type()
+
+			if field.Kind() == reflect.Pointer && isRecursive(field.Type(), nil) && !describesItself(field.Type()) {
+				builder.fields[index].Type = reflect.TypeFor[any]()
+			}
+		}
+	}
+
+	out := reflect.New(reflect.StructOf(builder.fields)).Elem()
+	for index, value := range values {
+		out.Field(index).Set(value)
+	}
+
+	return out, nil
+}
+
+func recursiveFieldTag(tag reflect.StructTag, value reflect.Value, mode mirrorMode) (reflect.StructTag, bool) {
+	if mirrorOfMode(value.Type(), mode).typ != nil || isRecursive(value.Type(), nil) && !describesItself(value.Type()) {
+		tag = recursiveOmissionTag(tag, value, mode.Format)
+	}
+
+	name, _, _ := strings.Cut(tag.Get(mode.Format), ",")
+
+	return tag, mode.Format != "" && name == "-"
+}
+
+func recursiveOmissionTag(tag reflect.StructTag, value reflect.Value, selectedFormat string) reflect.StructTag {
+	var out strings.Builder
+
+	for _, format := range keyedFormatTags {
+		fieldTag := tag.Get(format)
+		if selectedFormat == "" || selectedFormat == format {
+			fieldTag = keyedOmissionTag(fieldTag, value, format)
+		}
+
+		writeTag(&out, format, fieldTag)
+	}
+
+	for _, name := range keyedPassthroughTags {
+		if value, ok := tag.Lookup(name); ok {
+			writeTag(&out, name, value)
+		}
+	}
+
+	return reflect.StructTag(out.String())
+}
+
+func keyedOmissionTag(tag string, value reflect.Value, format string) string {
+	name, options, _ := strings.Cut(tag, ",")
+	if format == "toml" || name == "-" {
+		return tag
+	}
+
+	option := "omitzero"
+	if format == "yaml" {
+		option = "omitempty"
+	}
+
+	parts := strings.Split(options, ",")
+	if !slices.Contains(parts, option) {
+		return tag
+	}
+
+	zero, custom := customKeyedZero(value, format == "json")
+	if !custom {
+		return tag
+	}
+
+	if zero {
+		return "-"
+	}
+
+	parts = slices.DeleteFunc(parts, func(part string) bool { return part == option })
+	if options := strings.Join(parts, ","); options != "" {
+		name += "," + options
+	}
+
+	return name
+}
+
+func customKeyedZero(value reflect.Value, addressable bool) (bool, bool) {
+	if zero, ok := reflect.TypeAssert[interface{ IsZero() bool }](value); ok {
+		if value.Kind() == reflect.Pointer && value.IsNil() {
+			return true, true
+		}
+
+		return zero.IsZero(), true
+	}
+
+	if addressable {
+		if !value.CanAddr() {
+			addressableValue := reflect.New(value.Type()).Elem()
+			addressableValue.Set(value)
+			value = addressableValue
+		}
+
+		if zero, ok := reflect.TypeAssert[interface{ IsZero() bool }](value.Addr()); ok {
+			return zero.IsZero(), true
+		}
+	}
+
+	return false, false
+}
+
+func convertRecursiveElements(src reflect.Value, mode mirrorMode, active map[keyedVisit]bool) (reflect.Value, error) {
+	var out reflect.Value
+	if src.Kind() == reflect.Slice {
+		out = reflect.MakeSlice(reflect.TypeFor[[]any](), src.Len(), src.Len())
+	} else {
+		out = reflect.New(reflect.ArrayOf(src.Len(), reflect.TypeFor[any]())).Elem()
+	}
+
+	for index := range src.Len() {
+		value, err := convertRecursiveKeyed(src.Index(index), mode, active)
+		if err != nil {
+			return reflect.Value{}, err
+		}
+
+		out.Index(index).Set(value)
+	}
+
+	return out, nil
+}
+
+func convertRecursiveMap(src reflect.Value, mode mirrorMode, active map[keyedVisit]bool) (reflect.Value, error) {
+	typ := reflect.MapOf(src.Type().Key(), reflect.TypeFor[any]())
+
+	out := reflect.MakeMapWithSize(typ, src.Len())
+	for iter := src.MapRange(); iter.Next(); {
+		value, err := convertRecursiveKeyed(iter.Value(), mode, active)
+		if err != nil {
+			return reflect.Value{}, err
+		}
+
+		out.SetMapIndex(iter.Key(), value)
+	}
+
+	return out, nil
+}
+
+func decodesItself(typ reflect.Type) bool {
+	for _, iface := range []reflect.Type{textUnmarshalerType, yamlUnmarshalerType} {
+		if typ.Implements(iface) || reflect.PointerTo(typ).Implements(iface) {
+			return true
+		}
+	}
+
+	return false
 }
 
 func describesItself(typ reflect.Type) bool {
