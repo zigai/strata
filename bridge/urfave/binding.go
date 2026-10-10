@@ -116,9 +116,13 @@ func (b *Binding[T]) Before(ctx context.Context, cmd *cli.Command) (context.Cont
 	b.appName = cmd.Root().Name
 
 	selected := cmd.Root()
-	for _, name := range selected.Args().Slice() {
-		next := selected.Command(name)
-		if next == nil {
+	for {
+		next := selected.Command(selected.Args().First())
+		if next == nil && selected.DefaultCommand != "" {
+			next = selected.Command(selected.DefaultCommand)
+		}
+
+		if next == nil || next == selected {
 			break
 		}
 
