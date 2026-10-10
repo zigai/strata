@@ -2,6 +2,7 @@ package strata
 
 import (
 	"encoding"
+	"encoding/json/v2"
 	"errors"
 	"fmt"
 	"os"
@@ -10,6 +11,8 @@ import (
 	"strconv"
 	"strings"
 	"time"
+
+	"gopkg.in/yaml.v3"
 
 	"github.com/zigai/strata/internal/atomicfile"
 	"github.com/zigai/strata/internal/edit"
@@ -221,9 +224,18 @@ func isScalarKind(kind reflect.Kind) bool {
 }
 
 func typedEditString(typ reflect.Type, raw string) (any, error) {
+	return parseTypedEditString(typ, raw, false)
+}
+
+func parseTypedEditString(typ reflect.Type, raw string, preserveType bool) (any, error) {
 	if typ == reflect.TypeFor[time.Duration]() {
-		if _, err := time.ParseDuration(raw); err != nil {
+		parsed, err := time.ParseDuration(raw)
+		if err != nil {
 			return nil, fmt.Errorf("%q %w", raw, errNotDuration)
+		}
+
+		if preserveType {
+			return parsed, nil
 		}
 
 		return raw, nil
@@ -239,6 +251,10 @@ func typedEditString(typ reflect.Type, raw string) (any, error) {
 
 		if err := unmarshaler.UnmarshalText([]byte(raw)); err != nil {
 			return nil, fmt.Errorf("decode text: %w", err)
+		}
+
+		if preserveType {
+			return v.Elem().Interface(), nil
 		}
 
 		return raw, nil
@@ -260,24 +276,41 @@ func parseTypedSlice(typ reflect.Type, raw string) (any, error) {
 		return reflect.MakeSlice(typ, 0, 0).Interface(), nil
 	}
 
-	parts := strings.Split(raw, ",")
-	result := reflect.MakeSlice(typ, len(parts), len(parts))
+	preserveElements := false
 
-	for i, part := range parts {
-		value, err := typedEditString(typ.Elem(), strings.TrimSpace(part))
-		if err != nil {
-			return nil, fmt.Errorf("item %d: %w", i+1, err)
+	for _, marshaler := range []reflect.Type{reflect.TypeFor[encoding.TextMarshaler](), reflect.TypeFor[json.Marshaler](), reflect.TypeFor[yaml.Marshaler]()} {
+		if typ.Implements(marshaler) || reflect.PointerTo(typ).Implements(marshaler) {
+			preserveElements = true
+			break
 		}
-
-		parsed := reflect.ValueOf(value)
-		if !parsed.Type().ConvertibleTo(typ.Elem()) {
-			return nil, fmt.Errorf("%w: item %d cannot decode as %s", errInvalidEditValue, i+1, typ.Elem())
-		}
-
-		result.Index(i).Set(parsed.Convert(typ.Elem()))
 	}
 
-	return result.Interface(), nil
+	parts := strings.Split(raw, ",")
+	result := reflect.MakeSlice(typ, len(parts), len(parts))
+	encoded := make([]any, len(parts))
+	typedResult := preserveElements || typ.Elem() != reflect.TypeFor[time.Duration]() && !reflect.PointerTo(typ.Elem()).Implements(reflect.TypeFor[encoding.TextUnmarshaler]())
+
+	for index, part := range parts {
+		value, err := parseTypedEditString(typ.Elem(), strings.TrimSpace(part), preserveElements)
+		if err != nil {
+			return nil, fmt.Errorf("item %d: %w", index+1, err)
+		}
+
+		encoded[index] = value
+
+		parsed := reflect.ValueOf(value)
+		if parsed.Type().ConvertibleTo(typ.Elem()) {
+			result.Index(index).Set(parsed.Convert(typ.Elem()))
+		} else {
+			typedResult = false
+		}
+	}
+
+	if typedResult {
+		return result.Interface(), nil
+	}
+
+	return encoded, nil
 }
 
 func parseTypedScalar(typ reflect.Type, raw string) (any, error) {

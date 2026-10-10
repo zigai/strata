@@ -4,9 +4,12 @@ import (
 	"encoding/json/jsontext"
 	"encoding/json/v2"
 	"errors"
+	"fmt"
 	"os"
 	"path/filepath"
 	"reflect"
+	"slices"
+	"strconv"
 	"strings"
 	"testing"
 	"time"
@@ -369,6 +372,464 @@ func TestSetRejectsNumericOverflow(t *testing.T) {
 
 	if string(data) != "narrow = 1\nunsigned = 1\n" {
 		t.Fatalf("file changed: %s", data)
+	}
+}
+
+type numericEditLevel int
+
+func (level *numericEditLevel) UnmarshalText(data []byte) error {
+	switch string(data) {
+	case "info":
+		*level = 1
+	case "debug":
+		*level = 2
+	default:
+		return errors.New("unknown level")
+	}
+
+	return nil
+}
+
+type stringEditLevel string
+
+func (level *stringEditLevel) UnmarshalText(data []byte) error {
+	if string(data) != "info" && string(data) != "debug" {
+		return errors.New("unknown level")
+	}
+
+	*level = stringEditLevel("level:" + string(data))
+
+	return nil
+}
+
+func (level stringEditLevel) MarshalText() ([]byte, error) {
+	if !strings.HasPrefix(string(level), "level:") {
+		return nil, errors.New("undecoded level")
+	}
+
+	return []byte(strings.TrimPrefix(string(level), "level:")), nil
+}
+
+func TestSetTextDecodedSlicesRoundTrip(t *testing.T) {
+	t.Parallel()
+
+	type config struct {
+		Delays []time.Duration
+		Levels []numericEditLevel
+	}
+
+	for format, initial := range map[string]string{
+		"toml": "delays = ['1s']\nlevels = ['info']\n",
+		"yaml": "delays: [1s]\nlevels: [info]\n",
+		"json": `{"delays":["1s"],"levels":["info"]}`,
+	} {
+		t.Run(format, func(t *testing.T) {
+			t.Parallel()
+
+			path := writeFile(t, "config."+format, initial)
+			for _, change := range []struct{ key, value string }{{"delays", "3s, 4s"}, {"levels", "debug, info"}} {
+				if err := strata.Set[config](path, change.key, change.value); err != nil {
+					t.Fatalf("Set(%s): %v", change.key, err)
+				}
+			}
+
+			got, err := strata.Load[config](strata.WithPath(path), strata.WithFormats(format))
+			if err != nil {
+				t.Fatal(err)
+			}
+
+			want := config{Delays: []time.Duration{3 * time.Second, 4 * time.Second}, Levels: []numericEditLevel{2, 1}}
+			if !reflect.DeepEqual(got, want) {
+				t.Fatalf("config = %+v, want %+v", got, want)
+			}
+
+			if err := strata.Set[config](path, "delays", []time.Duration{5 * time.Second, 6 * time.Second}); err != nil {
+				t.Fatalf("Set typed durations: %v", err)
+			}
+
+			got, err = strata.Load[config](strata.WithPath(path), strata.WithFormats(format))
+			if err != nil {
+				t.Fatal(err)
+			}
+
+			want.Delays = []time.Duration{5 * time.Second, 6 * time.Second}
+			if !reflect.DeepEqual(got, want) {
+				t.Fatalf("typed durations = %+v, want %+v", got, want)
+			}
+
+			before, err := os.ReadFile(path)
+			if err != nil {
+				t.Fatal(err)
+			}
+
+			for _, change := range []struct{ key, value string }{{"delays", "3s, invalid"}, {"levels", "debug, invalid"}} {
+				if err := strata.Set[config](path, change.key, change.value); err == nil {
+					t.Fatalf("Set(%s) accepted invalid item", change.key)
+				}
+
+				requireFileContent(t, path, string(before))
+			}
+		})
+	}
+}
+
+func TestSetStringTextDecodedSlicesRoundTrip(t *testing.T) {
+	t.Parallel()
+
+	type config struct {
+		Levels []stringEditLevel
+	}
+
+	for _, test := range []struct{ format, initial string }{
+		{"json", `{"levels":["info"]}`},
+		{"yaml", "levels: [info]\n"},
+	} {
+		t.Run(test.format, func(t *testing.T) {
+			t.Parallel()
+
+			path := writeFile(t, "config."+test.format, test.initial)
+			if err := strata.Set[config](path, "levels", "debug,info"); err != nil {
+				t.Fatal(err)
+			}
+
+			got, err := strata.Load[config](strata.WithPath(path), strata.WithFormats(test.format))
+			if err != nil {
+				t.Fatal(err)
+			}
+
+			if !slices.Equal(got.Levels, []stringEditLevel{"level:debug", "level:info"}) {
+				t.Fatalf("levels = %v", got.Levels)
+			}
+		})
+	}
+}
+
+type csvEditValues []int
+
+func (values csvEditValues) MarshalJSON() ([]byte, error) {
+	text, err := values.MarshalYAML()
+	if err != nil {
+		return nil, err
+	}
+
+	data, err := json.Marshal(text)
+	if err != nil {
+		return nil, fmt.Errorf("encode CSV values: %w", err)
+	}
+
+	return data, nil
+}
+
+func (values *csvEditValues) UnmarshalJSON(data []byte) error {
+	var text string
+	if err := json.Unmarshal(data, &text); err != nil {
+		return fmt.Errorf("decode CSV values: %w", err)
+	}
+
+	parsed, err := parseCSVEditValues(text)
+	if err != nil {
+		return err
+	}
+
+	*values = parsed
+
+	return nil
+}
+
+func (values csvEditValues) MarshalYAML() (any, error) {
+	parts := make([]string, len(values))
+	for index, value := range values {
+		parts[index] = strconv.Itoa(value)
+	}
+
+	return strings.Join(parts, ","), nil
+}
+
+func (values *csvEditValues) UnmarshalYAML(node *yaml.Node) error {
+	var text string
+	if err := node.Decode(&text); err != nil {
+		return fmt.Errorf("decode CSV values: %w", err)
+	}
+
+	parsed, err := parseCSVEditValues(text)
+	if err != nil {
+		return err
+	}
+
+	*values = parsed
+
+	return nil
+}
+
+func parseCSVEditValues(text string) (csvEditValues, error) {
+	if text == "" {
+		return csvEditValues{}, nil
+	}
+
+	var parsed csvEditValues
+
+	for part := range strings.SplitSeq(text, ",") {
+		value, err := strconv.Atoi(part)
+		if err != nil {
+			return nil, fmt.Errorf("parse CSV value: %w", err)
+		}
+
+		parsed = append(parsed, value)
+	}
+
+	return parsed, nil
+}
+
+func TestSetPreservesNamedSliceSerialization(t *testing.T) {
+	t.Parallel()
+
+	type config struct {
+		Values csvEditValues
+		Keep   int
+	}
+
+	for format, initial := range map[string]string{
+		"json": `{"values":"1,2","keep":7}`,
+		"yaml": "values: 1,2\nkeep: 7\n",
+	} {
+		for _, test := range []struct {
+			name, raw string
+			want      csvEditValues
+		}{
+			{name: "values", raw: "3,4", want: csvEditValues{3, 4}},
+			{name: "empty", raw: "", want: csvEditValues{}},
+		} {
+			t.Run(format+"/"+test.name, func(t *testing.T) {
+				t.Parallel()
+
+				path := writeFile(t, "config."+format, initial)
+				if err := strata.Set[config](path, "values", test.raw); err != nil {
+					t.Fatal(err)
+				}
+
+				data, err := os.ReadFile(path)
+				if err != nil {
+					t.Fatal(err)
+				}
+
+				var persisted struct {
+					Values string
+					Keep   int
+				}
+
+				decoder := codec.Codec(codec.NewJSON())
+				if format == "yaml" {
+					decoder = codec.NewYAML()
+				}
+
+				if err := decoder.Decode(data, &persisted); err != nil {
+					t.Fatalf("persisted slice lost its CSV representation: %v\n%s", err, data)
+				}
+
+				if persisted.Values != test.raw || persisted.Keep != 7 {
+					t.Fatalf("persisted = %+v", persisted)
+				}
+
+				got, err := strata.Load[config](strata.WithPath(path), strata.WithFormats(format))
+				if err != nil {
+					t.Fatal(err)
+				}
+
+				if !reflect.DeepEqual(got.Values, test.want) || got.Keep != 7 {
+					t.Fatalf("config = %+v, want values %v and keep 7", got, test.want)
+				}
+			})
+		}
+	}
+}
+
+type csvEditLevels []numericEditLevel
+
+func (levels csvEditLevels) MarshalJSON() ([]byte, error) {
+	values := make(csvEditValues, len(levels))
+	for index, level := range levels {
+		values[index] = int(level)
+	}
+
+	return values.MarshalJSON()
+}
+
+func (levels *csvEditLevels) UnmarshalJSON(data []byte) error {
+	var values csvEditValues
+	if err := values.UnmarshalJSON(data); err != nil {
+		return err
+	}
+
+	*levels = make(csvEditLevels, len(values))
+	for index, value := range values {
+		(*levels)[index] = numericEditLevel(value)
+	}
+
+	return nil
+}
+
+type csvEditDurations []time.Duration
+
+func (delays csvEditDurations) MarshalJSON() ([]byte, error) {
+	values := make(csvEditValues, len(delays))
+	for index, delay := range delays {
+		values[index] = int(delay / time.Second)
+	}
+
+	return values.MarshalJSON()
+}
+
+func (delays *csvEditDurations) UnmarshalJSON(data []byte) error {
+	var values csvEditValues
+	if err := values.UnmarshalJSON(data); err != nil {
+		return err
+	}
+
+	*delays = make(csvEditDurations, len(values))
+	for index, value := range values {
+		(*delays)[index] = time.Duration(value) * time.Second
+	}
+
+	return nil
+}
+
+func TestSetNamedSliceSerializationUsesDecodedElements(t *testing.T) {
+	t.Parallel()
+
+	type config struct {
+		Levels csvEditLevels
+		Delays csvEditDurations
+	}
+
+	path := writeFile(t, "config.json", `{"levels":"1","delays":"1"}`)
+	for _, change := range []struct{ key, raw string }{{"levels", "debug,info"}, {"delays", "3s,4s"}} {
+		if err := strata.Set[config](path, change.key, change.raw); err != nil {
+			t.Fatalf("Set(%s): %v", change.key, err)
+		}
+	}
+
+	data, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	var persisted map[string]string
+	if err := json.Unmarshal(data, &persisted); err != nil {
+		t.Fatal(err)
+	}
+
+	wantPersisted := map[string]string{"levels": "2,1", "delays": "3,4"}
+	if !reflect.DeepEqual(persisted, wantPersisted) {
+		t.Fatalf("persisted = %v, want %v", persisted, wantPersisted)
+	}
+
+	got, err := strata.Load[config](strata.WithPath(path), strata.WithFormats("json"))
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	want := config{Levels: csvEditLevels{2, 1}, Delays: csvEditDurations{3 * time.Second, 4 * time.Second}}
+	if !reflect.DeepEqual(got, want) {
+		t.Fatalf("config = %+v, want %+v", got, want)
+	}
+
+	for _, change := range []struct{ key, raw string }{{"levels", "debug,invalid"}, {"delays", "3s,invalid"}} {
+		if err := strata.Set[config](path, change.key, change.raw); err == nil {
+			t.Fatalf("Set(%s) accepted invalid item", change.key)
+		}
+
+		requireFileContent(t, path, string(data))
+	}
+}
+
+func TestSetBytesTOMLPreservesLiteralDottedSibling(t *testing.T) {
+	t.Parallel()
+
+	updated, err := strata.SetBytes("toml", []byte("[a.\"b.c\"]\nx=1\n[a]\nkeep=2\n"), "a.b", 3)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	var got map[string]map[string]any
+	if err := toml.Unmarshal(updated, &got); err != nil {
+		t.Fatal(err)
+	}
+
+	want := map[string]map[string]any{"a": {"b": int64(3), "b.c": map[string]any{"x": int64(1)}, "keep": int64(2)}}
+	if !reflect.DeepEqual(got, want) {
+		t.Fatalf("document = %#v, want %#v\n%s", got, want, updated)
+	}
+}
+
+func TestSetCompositeValuesRoundTrip(t *testing.T) {
+	t.Parallel()
+
+	type item struct {
+		HTTPPort int `strata:"listen_port"`
+		Timeout  time.Duration
+	}
+
+	type config struct {
+		Keep   int
+		Items  []item
+		Labels map[string]item
+	}
+
+	for name, initial := range map[string]struct{ format, data string }{
+		"json":        {"json", `{"keep":7,"items":[],"labels":{}}`},
+		"yaml":        {"yaml", "keep: 7\nitems: []\nlabels: {}\n"},
+		"toml inline": {"toml", "keep = 7\nitems = []\nlabels = {}\n"},
+		"toml tables": {"toml", "keep = 7\n[[items]]\nlisten_port = 1\ntimeout = '1s'\n[labels.old]\nlisten_port = 2\ntimeout = '2s'\n"},
+	} {
+		t.Run(name, func(t *testing.T) {
+			t.Parallel()
+
+			path := writeFile(t, "config."+initial.format, initial.data)
+			for _, change := range []struct {
+				key   string
+				value any
+			}{
+				{"items", []item{{HTTPPort: 8080, Timeout: 3 * time.Second}}},
+				{"labels", map[string]item{"first": {HTTPPort: 9000, Timeout: 4 * time.Second}}},
+			} {
+				if err := strata.Set[config](path, change.key, change.value); err != nil {
+					t.Fatalf("Set(%s): %v", change.key, err)
+				}
+			}
+
+			got, err := strata.Load[config](strata.WithPath(path), strata.WithFormats(initial.format))
+			if err != nil {
+				t.Fatal(err)
+			}
+
+			want := config{Keep: 7, Items: []item{{HTTPPort: 8080, Timeout: 3 * time.Second}}, Labels: map[string]item{"first": {HTTPPort: 9000, Timeout: 4 * time.Second}}}
+			if !reflect.DeepEqual(got, want) {
+				t.Fatalf("config = %+v, want %+v", got, want)
+			}
+		})
+	}
+}
+
+func TestSetRejectsRemovingReferencedYAMLAnchor(t *testing.T) {
+	t.Parallel()
+
+	type config struct {
+		Base map[string]int
+		Copy int
+	}
+
+	const initial = "base:\n  x: &value 1\ncopy: *value\n"
+
+	path := writeFile(t, "config.yaml", initial)
+	if err := strata.Set[config](path, "base", map[string]int{"y": 2}); !errors.Is(err, strata.ErrMalformed) {
+		t.Fatalf("Set = %v, want ErrMalformed", err)
+	}
+
+	requireFileContent(t, path, initial)
+
+	got, err := strata.Load[config](strata.WithPath(path), strata.WithFormats("yaml"))
+	if err != nil || got.Copy != 1 || !reflect.DeepEqual(got.Base, map[string]int{"x": 1}) {
+		t.Fatalf("reload = %+v, %v", got, err)
 	}
 }
 
