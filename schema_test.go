@@ -5,12 +5,162 @@ import (
 	"encoding/json/v2"
 	"errors"
 	"maps"
+	"net/http"
+	"path/filepath"
+	"runtime"
 	"slices"
 	"strings"
 	"testing"
 
 	"github.com/zigai/strata"
 )
+
+type DescribedSchemaConfig struct {
+	// ListenPort controls the public listener port.
+	ListenPort int
+	// DisplayName is displayed by the service.
+	DisplayName string `jsonschema:"description=Explicit display description"`
+	// Nested contains connection settings.
+	Nested DescribedSchemaNested
+}
+
+type describedUnexportedSchemaConfig struct {
+	// ListenPort controls the public listener port.
+	ListenPort int
+}
+
+func TestSchemaIncludesCommentsOnUnexportedConfigTypes(t *testing.T) {
+	t.Parallel()
+
+	data, err := strata.Schema[describedUnexportedSchemaConfig]()
+	if err != nil {
+		t.Fatalf("Schema: %v", err)
+	}
+
+	port := schemaObject(t, schemaProperties(t, data), "listen_port")
+	if port["description"] != "ListenPort controls the public listener port." {
+		t.Fatalf("listen_port description = %v", port["description"])
+	}
+}
+
+type DescribedSchemaNested struct {
+	// MaxConnections limits simultaneous connections.
+	MaxConnections int
+}
+
+func TestSchemaIncludesFieldDocComments(t *testing.T) {
+	t.Parallel()
+
+	data, err := strata.Schema[DescribedSchemaConfig]()
+	if err != nil {
+		t.Fatalf("Schema: %v", err)
+	}
+
+	properties := schemaProperties(t, data)
+
+	port := schemaObject(t, properties, "listen_port")
+	if port["description"] != "ListenPort controls the public listener port." {
+		t.Errorf("listen_port description = %v", port["description"])
+	}
+
+	name := schemaObject(t, properties, "display_name")
+	if name["description"] != "Explicit display description" {
+		t.Errorf("display_name description = %v", name["description"])
+	}
+
+	var parsed map[string]any
+	if err := json.Unmarshal(data, &parsed); err != nil {
+		t.Fatal(err)
+	}
+
+	definitions := schemaObject(t, parsed, "$defs")
+	nested := schemaObject(t, definitions, "DescribedSchemaNested")
+	nestedProperties := schemaObject(t, nested, "properties")
+
+	maxConnections := schemaObject(t, nestedProperties, "max_connections")
+	if maxConnections["description"] != "MaxConnections limits simultaneous connections." {
+		t.Errorf("max_connections description = %v", maxConnections["description"])
+	}
+}
+
+func TestSchemaCommentsDoNotDependOnWorkingDirectory(t *testing.T) {
+	t.Chdir(t.TempDir())
+
+	data, err := strata.Schema[DescribedSchemaConfig]()
+	if err != nil {
+		t.Fatalf("Schema: %v", err)
+	}
+
+	port := schemaObject(t, schemaProperties(t, data), "listen_port")
+	if port["description"] != "ListenPort controls the public listener port." {
+		t.Fatalf("listen_port description = %v", port["description"])
+	}
+}
+
+func TestSchemaCommentsFromExplicitSourceDirectory(t *testing.T) {
+	t.Parallel()
+
+	_, sourceFile, _, ok := runtime.Caller(0)
+	if !ok {
+		t.Fatal("cannot locate test source")
+	}
+
+	data, err := strata.Schema[DescribedSchemaConfig](strata.WithSchemaComments("github.com/zigai/strata_test", filepath.Dir(sourceFile)))
+	if err != nil {
+		t.Fatalf("Schema: %v", err)
+	}
+
+	port := schemaObject(t, schemaProperties(t, data), "listen_port")
+	if port["description"] != "ListenPort controls the public listener port." {
+		t.Fatalf("listen_port description = %v", port["description"])
+	}
+}
+
+func TestSchemaPrimitiveDoesNotRequireSource(t *testing.T) {
+	t.Parallel()
+
+	data, err := strata.Schema[int]()
+	if err != nil {
+		t.Fatalf("Schema[int]: %v", err)
+	}
+
+	var parsed map[string]any
+	if err := json.Unmarshal(data, &parsed); err != nil {
+		t.Fatal(err)
+	}
+
+	if parsed["type"] != "integer" {
+		t.Fatalf("type = %v, want integer", parsed["type"])
+	}
+}
+
+func TestSchemaIgnoredFieldsDoNotRequireCommentSources(t *testing.T) {
+	t.Parallel()
+
+	type config struct {
+		Port       int
+		JSONHidden *http.Server `json:"-"`
+		Hidden     *http.Server `jsonschema:"-"`
+	}
+
+	data, err := strata.Schema[config]()
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	if properties := schemaProperties(t, data); len(properties) != 1 || schemaObject(t, properties, "port")["type"] != "integer" {
+		t.Fatalf("properties = %v, want only integer port", properties)
+	}
+}
+
+func TestSchemaReportsUnavailableCommentSource(t *testing.T) {
+	t.Parallel()
+
+	_, err := strata.Schema[DescribedSchemaConfig](strata.WithSchemaComments("github.com/zigai/strata_test", filepath.Join(t.TempDir(), "missing")))
+	if !errors.Is(err, strata.ErrReflectSchema) {
+		t.Fatalf("Schema error = %v, want ErrReflectSchema", err)
+	}
+}
 
 type chanConfig struct {
 	Ch chan int `strata:"ch"`
@@ -89,6 +239,17 @@ type schemaKeysConfig struct {
 	Nested     struct {
 		MaxConns int
 	}
+}
+
+func schemaObject(t *testing.T, document map[string]any, key string) map[string]any {
+	t.Helper()
+
+	object, ok := document[key].(map[string]any)
+	if !ok {
+		t.Fatalf("%s = %v, want a schema object", key, document[key])
+	}
+
+	return object
 }
 
 func schemaProperties(t *testing.T, data []byte) map[string]any {
