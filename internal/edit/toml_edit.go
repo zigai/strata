@@ -90,6 +90,10 @@ func UpdateTOMLFormatted(data []byte, dottedKey string, value any, formattedVal 
 		cand := candidates[matchIdx]
 		lines = updateMatchingLine(lines, cand, formattedVal)
 		keyUpdated = true
+	} else if trimmed, replaced := removeTOMLSubtree(lines, scanned, candidates, targetParts); replaced {
+		lines = trimmed
+		scanned = scanTOMLLines(lines)
+		candidates = collectAssignments(lines, scanned)
 	} else {
 		lines, keyUpdated, err = handleInlineTableUpdate(lines, candidates, targetParts, value)
 		if err != nil {
@@ -276,6 +280,41 @@ func collectAssignments(lines []string, scanned []tomlLine) []tomlAssignment {
 	return candidates
 }
 
+func removeTOMLSubtree(lines []string, scanned []tomlLine, candidates []tomlAssignment, targetParts []string) ([]string, bool) {
+	removed := make([]bool, len(lines))
+	replaced := false
+
+	for index, line := range scanned {
+		if line.header != nil && len(line.header) >= len(targetParts) && partsEqual(line.header[:len(targetParts)], targetParts) {
+			removed[index] = true
+			replaced = true
+		}
+	}
+
+	for _, candidate := range candidates {
+		if len(candidate.fullKey) > len(targetParts) && partsEqual(candidate.fullKey[:len(targetParts)], targetParts) {
+			for index := candidate.lineIdx; index <= candidate.endIdx; index++ {
+				removed[index] = true
+			}
+
+			replaced = true
+		}
+	}
+
+	if !replaced {
+		return lines, false
+	}
+
+	kept := make([]string, 0, len(lines))
+	for index, line := range lines {
+		if !removed[index] {
+			kept = append(kept, line)
+		}
+	}
+
+	return kept, true
+}
+
 func findMatchingCandidate(candidates []tomlAssignment, targetParts []string) int {
 	for idx, cand := range candidates {
 		if partsEqual(cand.fullKey, targetParts) {
@@ -342,7 +381,7 @@ func parseTableHeader(trimmed string) ([]string, bool) {
 		return nil, false
 	}
 
-	return canonicalHeaderParts(inner), true
+	return splitDottedKey(inner), true
 }
 
 // An array such as [1, 2] or a nested array line such as ["a"]] is not a key.
@@ -395,69 +434,47 @@ func consumeTOMLKeySegment(s string) (string, bool) {
 	return s[n:], n > 0
 }
 
-// [table."sub.key"] and [table.sub.key] address the same table. A quoted
-// segment containing a dot cannot be addressed as one segment.
-func canonicalHeaderParts(raw string) []string {
-	segments := splitDottedKey(strings.TrimSpace(raw))
-	canonical := make([]string, 0, len(segments))
-
-	// NB: splitting each segment on its own dots, rather than re-splitting the
-	// joined header, keeps an empty quoted segment such as [a.""].
-	for _, part := range segments {
-		canonical = append(canonical, strings.Split(part, ".")...)
+func splitDottedKey(raw string) []string {
+	if strings.TrimSpace(raw) == "" {
+		return nil
 	}
 
-	return canonical
-}
+	var parts []string
 
-func splitDottedKey(s string) []string {
-	var (
-		parts     []string
-		curr      []rune
-		quoted    bool
-		inQuote   bool
-		quoteChar rune
-		// pending holds unquoted whitespace that belongs to the segment only if
-		// more of the segment follows it.
-		pending []rune
-	)
-
-	for _, r := range s {
-		if inQuote {
-			if r == quoteChar {
-				inQuote = false
-			} else {
-				curr = append(curr, r)
-			}
+	start := 0
+	for index := 0; index < len(raw); {
+		if (raw[index] == '"' || raw[index] == '\'') && strings.TrimSpace(raw[start:index]) == "" {
+			lexer := tomlLexer{quote: raw[index : index+1], depth: 0}
+			index = lexer.skipString(raw, index+1)
 
 			continue
 		}
 
-		switch r {
-		case '.':
-			parts = append(parts, string(curr))
-			curr, pending, quoted = nil, nil, false
-		case ' ', '\t':
-			// Whitespace around a segment surrounds a dot; whitespace between its
-			// characters is part of the key, as in "my key".
-			if len(curr) > 0 || quoted {
-				pending = append(pending, r)
-			}
-		case '"', '\'':
-			curr, pending = append(curr, pending...), nil
-			inQuote, quoted, quoteChar = true, true, r
-		default:
-			curr, pending = append(curr, pending...), nil
-			curr = append(curr, r)
+		if raw[index] == '.' {
+			parts = append(parts, decodeTOMLKeySegment(raw[start:index]))
+			start = index + 1
+		}
+
+		index++
+	}
+
+	return append(parts, decodeTOMLKeySegment(raw[start:]))
+}
+
+func decodeTOMLKeySegment(raw string) string {
+	raw = strings.TrimSpace(raw)
+	if len(raw) < 2 || (raw[0] != '"' && raw[0] != '\'') {
+		return raw
+	}
+
+	var decoded map[string]any
+	if toml.Unmarshal([]byte(raw+" = 0"), &decoded) == nil {
+		for key := range decoded {
+			return key
 		}
 	}
 
-	// NB: a quoted segment may be empty, as in "" = 1; it is still a key.
-	if len(curr) > 0 || quoted {
-		parts = append(parts, string(curr))
-	}
-
-	return parts
+	return raw
 }
 
 func findAssignmentEquals(line string) int {
@@ -496,36 +513,75 @@ func partsEqual(a, b []string) bool {
 }
 
 func updateMatchingLine(lines []string, cand tomlAssignment, formattedVal string) []string {
+	closingComment := ""
+
+	if cand.endIdx > cand.lineIdx {
+		var lexer tomlLexer
+		lexer.scan(lines[cand.lineIdx][cand.eqIdx+1:], '#')
+
+		for index := cand.lineIdx + 1; index <= cand.endIdx; index++ {
+			comment := lexer.scan(lines[index], '#')
+			if index == cand.endIdx && comment >= 0 {
+				closingComment = lines[index][comment:]
+			}
+		}
+	}
+
 	lines[cand.lineIdx] = replaceLineValue(lines[cand.lineIdx], cand.eqIdx, formattedVal)
+	if closingComment != "" {
+		lines[cand.lineIdx] += " " + closingComment
+	}
 
 	return slices.Delete(lines, cand.lineIdx+1, cand.endIdx+1)
 }
 
 func formatTOMLValue(value any) (string, error) {
-	if m, ok := value.(map[string]any); ok {
-		return formatInlineTable(m)
+	reflected := reflect.ValueOf(value)
+	if !reflected.IsValid() {
+		return "", fmt.Errorf("%w: nil has no toml value", codec.ErrMalformed)
 	}
 
-	rv := reflect.ValueOf(value)
-	if rv.IsValid() && (rv.Kind() == reflect.Map || rv.Kind() == reflect.Slice || rv.Kind() == reflect.Array) {
-		return formatCompositeTOML(rv)
+	if reflected.Kind() == reflect.Map || reflected.Kind() == reflect.Slice || reflected.Kind() == reflect.Array {
+		return formatCompositeTOML(reflected)
 	}
 
-	dummy := map[string]any{"_k": value}
+	wrapper := reflect.MakeMap(reflect.MapOf(reflect.TypeFor[string](), reflected.Type()))
+	wrapper.SetMapIndex(reflect.ValueOf("_k"), reflected)
 
-	encoded, err := toml.Marshal(dummy)
+	encoded, err := codec.NewTOML().Encode(wrapper.Interface())
 	if err != nil {
 		return "", fmt.Errorf("marshal toml value: %w", err)
 	}
 
-	str := strings.TrimSpace(string(encoded))
+	var document map[string]any
+	if err := toml.Unmarshal(encoded, &document); err != nil {
+		return "", fmt.Errorf("parse encoded toml value: %w", err)
+	}
 
-	prefix := "_k = "
-	if _, after, ok := strings.Cut(str, prefix); ok {
+	return formatDecodedTOMLValue(document["_k"])
+}
+
+func formatDecodedTOMLValue(value any) (string, error) {
+	if mapping, ok := value.(map[string]any); ok {
+		return formatInlineTable(mapping)
+	}
+
+	reflected := reflect.ValueOf(value)
+	if reflected.IsValid() && (reflected.Kind() == reflect.Map || reflected.Kind() == reflect.Slice || reflected.Kind() == reflect.Array) {
+		return formatCompositeTOML(reflected)
+	}
+
+	encoded, err := toml.Marshal(map[string]any{"_k": value})
+	if err != nil {
+		return "", fmt.Errorf("marshal toml value: %w", err)
+	}
+
+	text := strings.TrimSpace(string(encoded))
+	if _, after, ok := strings.Cut(text, "_k = "); ok {
 		return strings.TrimSpace(after), nil
 	}
 
-	return str, nil
+	return "", fmt.Errorf("%w: cannot encode %T as a toml value", codec.ErrMalformed, value)
 }
 
 func formatCompositeTOML(rv reflect.Value) (string, error) {

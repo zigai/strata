@@ -83,7 +83,7 @@ func TestUpdateTOMLChangesOnlyTheNamedKey(t *testing.T) {
 		{"append root key after tables", "# c\n[server]\nport = 8080\n", "version", []string{"version"}, 2},
 		{"header with inline comment", "[server] # settings\nport = 8080\nhost = \"h\"\n", "server.port", []string{"server", portKey}, 9000},
 		{"multi-line string replaced", "val = \"\"\"\nline 1\nline 2\n\"\"\"\nother = \"keep\"\n", "val", []string{"val"}, "single line"},
-		{"quoted table header", "[table.\"sub.key\"]\nfoo = \"bar\"\nkeep = 1\n", "table.sub.key.foo", []string{"table", "sub.key", "foo"}, "updated"},
+		{"quoted table header", "[table.\"sub.key\"]\nfoo = \"bar\"\nkeep = 1\n", `table."sub.key".foo`, []string{"table", "sub.key", "foo"}, "updated"},
 		{"array of tables after the table", "[server]\nport = 8080\n\n[[items]]\nname = \"first\"\n\n[[items]]\nname = \"second\"\n", "server.port", []string{"server", portKey}, 9000},
 		{"inline table", "server = { port = 8080, host = \"localhost\" }\nother = 1\n", "server.port", []string{"server", portKey}, 9090},
 		{"multi-line array in table", "[server]\nmatrix = [\n  [1, 2],\n  [3, 4]\n]\n", "server.port", []string{"server", portKey}, 8080},
@@ -114,10 +114,6 @@ var (
 	// multilineInlineTable matches an inline table that spans lines, which TOML
 	// 1.0 forbids and go-toml accepts; the editor handles one-line tables only.
 	multilineInlineTable = regexp.MustCompile(`=\s*\{[^}]*\n`)
-
-	// quotedDottedKey matches a quoted key or header segment holding a dot, which
-	// the editor merges with dotted keys on purpose (see canonicalHeaderParts).
-	quotedDottedKey = regexp.MustCompile(`(?m)^\s*(\[+[^\]\n]*|[^=\n]*)["'][^"'\n]*\.[^"'\n]*["'][^=\n]*(\]|=)`)
 )
 
 func FuzzUpdateTOML(f *testing.F) {
@@ -136,6 +132,7 @@ func FuzzUpdateTOML(f *testing.F) {
 		{"banner = \"\"\"hello\"\"\" # keep comment\nport = 8080\n", "banner"},
 		{"ports = [\n  80,\n  443,\n]\nkeep = true\n", "ports"},
 		{"a.b = 1\na.c = 2\n", "a.b"},
+		{"[a.\"b.c\"]\nx = 1\n[a]\nkeep = 2\n", "a.b"},
 		{"Port = 1\nport = 2\n", portKey},
 		{"a = 1\n", "a.b"},
 		{"x = \"# not a comment\" # real\n", "x"},
@@ -162,7 +159,7 @@ func FuzzUpdateTOML(f *testing.F) {
 	f.Fuzz(func(t *testing.T, doc, key string, n int64, s string, useInt bool) {
 		var before map[string]any
 		if toml.Unmarshal([]byte(doc), &before) != nil || !bareTOMLKey.MatchString(key) || !utf8.ValidString(s) ||
-			multilineInlineTable.MatchString(doc) || mixedLineEndings(doc) || quotedDottedKey.MatchString(doc) {
+			multilineInlineTable.MatchString(doc) || mixedLineEndings(doc) {
 			t.Skip()
 		}
 

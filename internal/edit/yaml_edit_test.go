@@ -1,9 +1,14 @@
 package edit_test
 
 import (
+	"errors"
+	"reflect"
 	"strings"
 	"testing"
 
+	"gopkg.in/yaml.v3"
+
+	"github.com/zigai/strata/codec"
 	"github.com/zigai/strata/internal/edit"
 )
 
@@ -81,6 +86,46 @@ production: *default
 
 	if !strings.Contains(result, "retries: 5") {
 		t.Errorf("expected production.retries to be 5, got:\n%s", result)
+	}
+}
+
+func TestUpdateYAMLRetainsAliasComment(t *testing.T) {
+	t.Parallel()
+
+	input := "base: &base\n  x: 1\n  y: 2\ncopy: *base # keep alias comment\n"
+
+	updated, err := edit.UpdateYAML([]byte(input), "copy.x", 3)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	if strings.Count(string(updated), "# keep alias comment") != 1 {
+		t.Fatalf("alias comment lost or duplicated:\n%s", updated)
+	}
+
+	var got map[string]map[string]int
+	if err := yaml.Unmarshal(updated, &got); err != nil {
+		t.Fatal(err)
+	}
+
+	want := map[string]map[string]int{"base": {"x": 1, "y": 2}, "copy": {"x": 3, "y": 2}}
+	if !reflect.DeepEqual(got, want) {
+		t.Fatalf("document = %v, want %v", got, want)
+	}
+}
+
+func TestUpdateYAMLRejectsDanglingAliases(t *testing.T) {
+	t.Parallel()
+
+	input := []byte("base:\n  x: &value 1\ncopy: *value\n")
+
+	updated, err := edit.UpdateYAML(input, "base", map[string]int{"y": 2})
+	if !errors.Is(err, codec.ErrMalformed) || updated != nil {
+		t.Fatalf("UpdateYAML = %q, %v, want nil and ErrMalformed", updated, err)
+	}
+
+	if string(input) != "base:\n  x: &value 1\ncopy: *value\n" {
+		t.Fatalf("input changed: %s", input)
 	}
 }
 

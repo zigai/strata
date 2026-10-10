@@ -7,6 +7,8 @@ import (
 	"errors"
 	"fmt"
 	"strings"
+
+	"github.com/zigai/strata/codec"
 )
 
 const defaultJSONIndent = "  "
@@ -24,7 +26,7 @@ func UpdateJSON(data []byte, dottedKey string, value any) ([]byte, error) {
 		root = make(map[string]jsontext.Value)
 	}
 
-	encoded, err := json.Marshal(value)
+	encoded, err := codec.NewJSON().Encode(value)
 	if err != nil {
 		return nil, fmt.Errorf("marshal value: %w", err)
 	}

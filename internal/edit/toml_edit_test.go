@@ -5,6 +5,8 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/pelletier/go-toml/v2"
+
 	"github.com/zigai/strata/internal/edit"
 )
 
@@ -56,6 +58,50 @@ port = 5432 # pg port
 	}
 }
 
+func TestUpdateTOMLCompositeSubtreesPreserveSiblings(t *testing.T) {
+	t.Parallel()
+
+	type item struct {
+		HTTPPort int `strata:"listen_port"`
+	}
+
+	for _, test := range []struct{ name, input string }{
+		{"inline", "service = { ports = { old = { listen_port = 1 } }, keep = 7 } # service comment\n[other]\nkeep = 8 # other comment\n"},
+		{"tables", "[service.ports.old]\nlisten_port = 1\n[service]\nkeep = 7 # service comment\n[other]\nkeep = 8 # other comment\n"},
+		{"dotted", "service.ports.old.listen_port = 1\nservice.keep = 7 # service comment\n[other]\nkeep = 8 # other comment\n"},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			t.Parallel()
+
+			updated, err := edit.UpdateTOML([]byte(test.input), "service.ports", map[string]item{"first": {HTTPPort: 9090}})
+			if err != nil {
+				t.Fatal(err)
+			}
+
+			var got struct {
+				Service struct {
+					Ports map[string]struct {
+						ListenPort int `toml:"listen_port"`
+					}
+					Keep int
+				}
+				Other struct{ Keep int }
+			}
+			if err := toml.Unmarshal(updated, &got); err != nil {
+				t.Fatal(err)
+			}
+
+			if len(got.Service.Ports) != 1 || got.Service.Ports["first"].ListenPort != 9090 || got.Service.Keep != 7 || got.Other.Keep != 8 {
+				t.Fatalf("document = %+v\n%s", got, updated)
+			}
+
+			if !strings.Contains(string(updated), "# service comment") || !strings.Contains(string(updated), "keep = 8 # other comment") {
+				t.Fatalf("sibling comments changed:\n%s", updated)
+			}
+		})
+	}
+}
+
 func TestUpdateTOMLInlineCommentHeader(t *testing.T) {
 	t.Parallel()
 
@@ -95,6 +141,74 @@ other = "keep"
 
 	if !strings.Contains(res, "val = 'single line'") && !strings.Contains(res, "val = \"single line\"") {
 		t.Errorf("missing new value in result:\n%s", res)
+	}
+}
+
+func TestUpdateTOMLDecodesEscapedKeys(t *testing.T) {
+	t.Parallel()
+
+	for _, test := range []struct{ name, input, key string }{
+		{"assignment", "\"\\u0061\" = 1\nkeep = 2\n", "a"},
+		{"table", "[\"\\u0061\"]\nx = 1\nkeep = 2\n", "a.x"},
+		{"long escape", "\"\\U00000061\" = 1\nkeep = 2\n", "a"},
+		{"escaped quote", "\"a\\\"b\" = 1\nkeep = 2\n", `a"b`},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			t.Parallel()
+
+			updated, err := edit.UpdateTOML([]byte(test.input), test.key, 3)
+			if err != nil {
+				t.Fatal(err)
+			}
+
+			var got map[string]any
+			if err := toml.Unmarshal(updated, &got); err != nil {
+				t.Fatal(err)
+			}
+
+			if test.name == "table" {
+				nested, ok := got["a"].(map[string]any)
+				if !ok || nested["x"] != int64(3) || nested["keep"] != int64(2) {
+					t.Fatalf("table = %#v", got)
+				}
+			} else if got[test.key] != int64(3) || got["keep"] != int64(2) {
+				t.Fatalf("document = %#v", got)
+			}
+
+			if !strings.Contains(string(updated), "keep = 2") {
+				t.Fatalf("untouched assignment changed:\n%s", updated)
+			}
+		})
+	}
+}
+
+func TestUpdateTOMLRetainsMultilineClosingComment(t *testing.T) {
+	t.Parallel()
+
+	for _, delimiter := range []string{`"""`, "'''"} {
+		t.Run(delimiter, func(t *testing.T) {
+			t.Parallel()
+
+			input := "message = " + delimiter + "\nold # text, not a comment\n" + delimiter + " # keep closing comment\nkeep = 2\n"
+
+			updated, err := edit.UpdateTOML([]byte(input), "message", "new")
+			if err != nil {
+				t.Fatal(err)
+			}
+
+			if strings.Count(string(updated), "# keep closing comment") != 1 {
+				t.Fatalf("closing comment lost or duplicated:\n%s", updated)
+			}
+
+			var got map[string]any
+			if err := toml.Unmarshal(updated, &got); err != nil {
+				t.Fatal(err)
+			}
+
+			if got["message"] != "new" || got["keep"] != int64(2) || strings.Contains(string(updated), "# text") {
+				t.Fatalf("document = %#v\n%s", got, updated)
+			}
+		})
 	}
 }
 
@@ -154,6 +268,45 @@ port = 8080
 	}
 }
 
+func TestUpdateTOMLPreservesLiteralDottedSibling(t *testing.T) {
+	t.Parallel()
+
+	for _, input := range []string{
+		"[a.\"b.c\"]\nx = 1\n[a]\nkeep = 2\n",
+		"[a.'b.c']\nx = 1\n[a]\nkeep = 2\n",
+		"[a.\"b\\u002ec\"]\nx = 1\n[a]\nkeep = 2\n",
+		"[a.\"b.c\"]\nx = 1\n[a.b.old]\nx = 4\n[a]\nkeep = 2\n",
+	} {
+		t.Run(input, func(t *testing.T) {
+			t.Parallel()
+
+			updated, err := edit.UpdateTOML([]byte(input), "a.b", 3)
+			if err != nil {
+				t.Fatal(err)
+			}
+
+			var got struct {
+				A struct {
+					B       int
+					Literal struct{ X int } `toml:"b.c"`
+					Keep    int
+				}
+			}
+			if err := toml.Unmarshal(updated, &got); err != nil {
+				t.Fatal(err)
+			}
+
+			if got.A.B != 3 || got.A.Literal.X != 1 || got.A.Keep != 2 {
+				t.Fatalf("document = %+v\n%s", got, updated)
+			}
+
+			if !strings.Contains(string(updated), "x = 1") || !strings.Contains(string(updated), "keep = 2") {
+				t.Fatalf("untouched assignments changed:\n%s", updated)
+			}
+		})
+	}
+}
+
 func TestTOMLQuotedTableHeader(t *testing.T) {
 	t.Parallel()
 
@@ -161,7 +314,7 @@ func TestTOMLQuotedTableHeader(t *testing.T) {
 foo = "bar"
 `
 
-	updated, err := edit.UpdateTOML([]byte(input), "table.sub.key.foo", "updated")
+	updated, err := edit.UpdateTOML([]byte(input), `table."sub.key".foo`, "updated")
 	if err != nil {
 		t.Fatalf("UpdateTOML error: %v", err)
 	}

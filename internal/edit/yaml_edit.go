@@ -77,6 +77,11 @@ func UpdateYAML(data []byte, dottedKey string, value any) ([]byte, error) {
 		return nil, fmt.Errorf("encode updated yaml: %w", err)
 	}
 
+	var checked yaml.Node
+	if err := yaml.Unmarshal(buf.Bytes(), &checked); err != nil {
+		return nil, fmt.Errorf("%w: updated yaml: %w", codec.ErrMalformed, err)
+	}
+
 	return buf.Bytes(), nil
 }
 
@@ -192,6 +197,11 @@ func updateMappingNode(mapping *yaml.Node, parts []string, newVal *yaml.Node) er
 		// aliased mapping keeps its fields.
 		if vNode.Kind == yaml.AliasNode && vNode.Alias != nil && vNode.Alias.Kind == yaml.MappingNode {
 			newMap := copyAliasedMapping(vNode.Alias)
+			newMap.HeadComment = vNode.HeadComment
+			newMap.LineComment = ""
+			newMap.FootComment = vNode.FootComment
+			keyNode := mapping.Content[matchIdx]
+			keyNode.LineComment = strings.TrimSpace(keyNode.LineComment + "\n" + vNode.LineComment)
 			mapping.Content[matchIdx+1] = newMap
 
 			return updateMappingNode(newMap, parts[1:], newVal)
@@ -353,7 +363,7 @@ func yamlValueNode(value any) (*yaml.Node, error) {
 		return &yaml.Node{Kind: yaml.ScalarNode, Tag: "!!str", Value: s}, nil
 	}
 
-	valBytes, err := yaml.Marshal(value)
+	valBytes, err := codec.NewYAML().Encode(value)
 	if err != nil {
 		return nil, fmt.Errorf("marshal value to yaml: %w", err)
 	}
