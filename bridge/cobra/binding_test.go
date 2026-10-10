@@ -68,6 +68,70 @@ func TestCobraSharedBehavior(t *testing.T) {
 	bridgetest.Run(t, newCobraApp)
 }
 
+type showSecretNode struct {
+	Token strata.Secret
+	Next  *showSecretNode
+}
+
+func TestCobraShowRedactsSecretCollections(t *testing.T) {
+	t.Parallel()
+
+	type config struct {
+		Credentials map[string]string `strata:"credentials,secret"`
+		Tokens      []strata.Secret
+		Node        *showSecretNode
+	}
+
+	path := filepath.Join(t.TempDir(), "config.toml")
+	if err := os.WriteFile(path, []byte("tokens = ['private-value']\n[credentials]\nservice = 'private-value'\n[node.next]\ntoken = 'private-value'\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+
+	var (
+		cfg    config
+		output bytes.Buffer
+	)
+
+	root := &cobra.Command{Use: bridgetest.AppName, SilenceErrors: true, SilenceUsage: true}
+	binding := stratacobra.Bind(root, &cfg, strata.WithPath(path), strata.WithFormats("toml"))
+	root.AddCommand(binding.ConfigCommand())
+	root.SetOut(&output)
+	root.SetErr(io.Discard)
+	root.SetArgs([]string{"config", "show"})
+
+	if err := root.Execute(); err != nil {
+		t.Fatal(err)
+	}
+
+	if cfg.Node == nil || cfg.Node.Next == nil || cfg.Node.Next.Token.Value() != "private-value" {
+		t.Fatalf("secret did not load: %+v", cfg)
+	}
+
+	if text := output.String(); strings.Contains(text, "private-value") || !strings.Contains(text, "credentials.service") || !strings.Contains(text, "node.next.token") || !strings.Contains(text, "[REDACTED]") {
+		t.Fatalf("show output = %q", text)
+	}
+}
+
+func TestCobraSecretCollectionFlagPanics(t *testing.T) {
+	t.Parallel()
+
+	type config struct {
+		Tokens []strata.Secret `strata:"tokens"`
+	}
+
+	cfg := config{Tokens: []strata.Secret{"private-value"}}
+	root := &cobra.Command{Use: bridgetest.AppName}
+	binding := stratacobra.Bind(root, &cfg, strata.WithFormats("toml"))
+
+	defer func() {
+		if recover() == nil {
+			t.Fatal("binding a secret collection flag did not panic")
+		}
+	}()
+
+	binding.Flag(root.Flags(), "tokens", "Tokens")
+}
+
 func TestCobraRequiresFormatsOnExecute(t *testing.T) {
 	var cfg bridgetest.Config
 

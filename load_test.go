@@ -34,6 +34,44 @@ type nestedPanicky struct {
 	Inner panickyConfig `strata:"inner"`
 }
 
+func FuzzLoadConfiguration(f *testing.F) {
+	for _, seed := range []struct{ format, body string }{
+		{yamlFormat, "connection: {<<, [x]}\n"},
+		{yamlFormat, "connection: {host: localhost, port: 9001}\n"},
+		{yamlFormat, "base: &base {port: 9001}\nconnection: *base\n"},
+		{yamlFormat, "nodes: [{token: private-value}]\n"},
+		{jsonFormat, `{"connection":{"host":"localhost","port":9001}}`},
+		{jsonFormat, `{"connection.port":9001,"unknown":{}}`},
+		{tomlFormat, "[connection]\nhost = 'localhost'\nport = 9001\n"},
+		{tomlFormat, "[[endpoints]]\nprot = 9001\n"},
+	} {
+		f.Add(seed.format, []byte(seed.body))
+	}
+
+	f.Fuzz(func(t *testing.T, format string, data []byte) {
+		type endpoint struct {
+			Host string
+			Port int
+		}
+
+		type config struct {
+			Connection endpoint
+			Endpoints  []endpoint
+			Services   map[string]endpoint
+			Nodes      []struct{ Token strata.Secret }
+		}
+
+		_, metadata, err := strata.LoadWithMetadata[config](strata.WithPath("-"), strata.WithStdin(bytes.NewReader(data)), strata.WithFormats(format))
+		if err == nil {
+			for _, unknown := range metadata.UnknownKeys() {
+				if unknown.RawValue != "" {
+					t.Fatalf("unknown key retained a value: %+v", unknown)
+				}
+			}
+		}
+	})
+}
+
 func TestLoadInto(t *testing.T) {
 	t.Parallel()
 

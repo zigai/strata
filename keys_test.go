@@ -99,6 +99,81 @@ func TestStrictRejectsUnknownKeys(t *testing.T) {
 	}
 }
 
+func TestStrictRejectsUnknownStructuredKeys(t *testing.T) {
+	t.Parallel()
+
+	type endpoint struct {
+		Port int `strata:"port"`
+	}
+
+	type config struct {
+		Database  endpoint            `strata:"database"`
+		Endpoints []endpoint          `strata:"endpoints"`
+		Services  map[string]endpoint `strata:"services"`
+	}
+
+	for _, test := range []struct {
+		name, format, body string
+	}{
+		{"empty JSON", jsonFormat, `{"typo":{}}`},
+		{"empty TOML", tomlFormat, "[typo]\n"},
+		{"empty YAML", yamlFormat, "typo: {}\n"},
+		{"dotted JSON", jsonFormat, `{"database.port":9001}`},
+		{"dotted TOML", tomlFormat, "\"database.port\" = 9001\n"},
+		{"dotted YAML", yamlFormat, "\"database.port\": 9001\n"},
+		{"slice JSON", jsonFormat, `{"endpoints":[{"prot":9001}]}`},
+		{"slice TOML", tomlFormat, "[[endpoints]]\nprot = 9001\n"},
+		{"slice YAML", yamlFormat, "endpoints:\n  - prot: 9001\n"},
+		{"map JSON", jsonFormat, `{"services":{"public":{"prot":9001}}}`},
+		{"map TOML", tomlFormat, "[services.public]\nprot = 9001\n"},
+		{"map YAML", yamlFormat, "services:\n  public:\n    prot: 9001\n"},
+		{"alias YAML", yamlFormat, "base: &base\n  prot: 9001\ndatabase: *base\n"},
+		{"merge YAML", yamlFormat, "base: &base\n  prot: 9001\ndatabase:\n  <<: *base\n"},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			t.Parallel()
+
+			_, err := strata.Load[config](strata.WithPath("-"), strata.WithStdin(strings.NewReader(test.body)), strata.WithFormats(test.format), strata.WithStrict())
+			if !errors.Is(err, strata.ErrUnknownKey) {
+				t.Fatalf("Load error = %v, want ErrUnknownKey", err)
+			}
+		})
+	}
+}
+
+func TestStrictAcceptsStructuredCollectionValues(t *testing.T) {
+	t.Parallel()
+
+	type endpoint struct {
+		Port int `strata:"port"`
+	}
+
+	type config struct {
+		Endpoints []endpoint          `strata:"endpoints"`
+		Services  map[string]endpoint `strata:"services"`
+		Labels    map[string]string   `strata:"labels"`
+	}
+
+	for format, body := range map[string]string{
+		jsonFormat: `{"endpoints":[{"port":9001}],"services":{"public":{"port":9002}},"labels":{"a.b":"ok"}}`,
+		tomlFormat: "endpoints = [{port = 9001}]\n[services.public]\nport = 9002\n[labels]\n\"a.b\" = 'ok'\n",
+		yamlFormat: "endpoints:\n  - port: 9001\nservices:\n  public:\n    port: 9002\nlabels:\n  a.b: ok\n",
+	} {
+		t.Run(format, func(t *testing.T) {
+			t.Parallel()
+
+			cfg, err := strata.Load[config](strata.WithPath("-"), strata.WithStdin(strings.NewReader(body)), strata.WithFormats(format), strata.WithStrict())
+			if err != nil {
+				t.Fatal(err)
+			}
+
+			if len(cfg.Endpoints) != 1 || cfg.Endpoints[0].Port != 9001 || cfg.Services["public"].Port != 9002 || cfg.Labels["a.b"] != "ok" {
+				t.Fatalf("config = %+v", cfg)
+			}
+		})
+	}
+}
+
 func TestReusedYAMLAnchorsAreNotUnknownKeys(t *testing.T) {
 	t.Parallel()
 

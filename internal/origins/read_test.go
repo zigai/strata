@@ -116,6 +116,14 @@ func TestReadIdentifiesAnUnknownFormat(t *testing.T) {
 	}
 }
 
+func TestReadAutodetectedJSONHasNoLine(t *testing.T) {
+	t.Parallel()
+
+	if record := collect(t, nested, ".custom")["server.port"]; record.Line != 0 || record.RawValue != "8080" {
+		t.Fatalf("JSON origin = %+v, want value 8080 without a line", record)
+	}
+}
+
 func TestReadReportsNothingForUnreadableInput(t *testing.T) {
 	t.Parallel()
 

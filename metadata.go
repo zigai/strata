@@ -10,6 +10,11 @@ import (
 	"github.com/zigai/strata/internal/defaulter"
 )
 
+const (
+	secretValue secretScope = iota + 1
+	secretSubtree
+)
+
 // Metadata records which files were merged, and where each resolved key came
 // from.
 //
@@ -21,21 +26,27 @@ import (
 // Metadata as an empty one without a nil check.
 type Metadata struct {
 	origins     map[string]Origin
+	paths       map[string][]string
 	order       []string
-	secrets     map[string]bool
+	secrets     map[string]secretScope
+	secretKeys  *keyTree
 	canonical   map[string]string
 	activeFiles []string
 	unknown     []UnknownKey
 	mu          sync.RWMutex
 }
 
+type secretScope uint8
+
 // NewMetadata returns an empty Metadata ready to record into. The zero value is
 // equally usable.
 func NewMetadata() *Metadata {
 	return &Metadata{
 		origins:     make(map[string]Origin),
+		paths:       make(map[string][]string),
 		order:       nil,
-		secrets:     make(map[string]bool),
+		secrets:     make(map[string]secretScope),
+		secretKeys:  nil,
 		canonical:   make(map[string]string),
 		activeFiles: make([]string, 0),
 		unknown:     nil,
@@ -79,42 +90,7 @@ func (m *Metadata) Where(key string) (Origin, bool) {
 // always describes the layer whose value won. The key is trimmed and lowercased
 // before storage. A nil receiver is a no-op.
 func (m *Metadata) Record(origin Origin) {
-	if m == nil {
-		return
-	}
-
-	m.mu.Lock()
-	defer m.mu.Unlock()
-
-	m.initMapsLocked()
-
-	normKey := normalizeKey(origin.Key)
-	snakeKey := normalizeKey(toSnakeCaseKey(origin.Key))
-	cleanKey := normalizeKey(strings.ReplaceAll(origin.Key, "_", ""))
-
-	if origin.RawValue == "[REDACTED]" {
-		m.markSecret(normKey, snakeKey, cleanKey)
-	}
-
-	if origin.Source == SourceDefault {
-		m.canonical[normKey] = origin.Key
-		m.canonical[snakeKey] = origin.Key
-		m.canonical[cleanKey] = origin.Key
-	}
-
-	origin.Key = m.resolveCanonical(normKey, snakeKey, cleanKey, origin.Key)
-
-	if m.secrets[normalizeKey(origin.Key)] || m.secrets[snakeKey] || m.secrets[cleanKey] {
-		origin.RawValue = "[REDACTED]"
-		m.markSecret(normalizeKey(origin.Key), snakeKey, cleanKey)
-	}
-
-	resolved := normalizeKey(origin.Key)
-	if _, exists := m.origins[resolved]; !exists {
-		m.order = append(m.order, resolved)
-	}
-
-	m.origins[resolved] = origin
+	m.record(origin, strings.Split(origin.Key, "."))
 }
 
 // RecordSecret marks a configuration key as secret, ensuring any origin recorded
@@ -133,7 +109,14 @@ func (m *Metadata) RecordSecret(key string) {
 	snakeKey := normalizeKey(toSnakeCaseKey(key))
 	cleanKey := normalizeKey(strings.ReplaceAll(key, "_", ""))
 
-	m.markSecret(normKey, snakeKey, cleanKey)
+	m.markSecret(secretSubtree, normKey, snakeKey, cleanKey)
+
+	for recordedKey, origin := range m.origins {
+		if m.isSecretLocked(recordedKey) {
+			origin.RawValue = "[REDACTED]"
+			m.origins[recordedKey] = origin
+		}
+	}
 
 	m.canonical[normKey] = key
 	m.canonical[snakeKey] = key
@@ -237,6 +220,69 @@ func (m *Metadata) NewConfigError(key string, err error) *ConfigError {
 	}
 }
 
+func (m *Metadata) record(origin Origin, segments []string) {
+	if m == nil {
+		return
+	}
+
+	m.mu.Lock()
+	defer m.mu.Unlock()
+
+	m.initMapsLocked()
+
+	normKey := normalizeKey(origin.Key)
+	snakeKey := normalizeKey(toSnakeCaseKey(origin.Key))
+	cleanKey := normalizeKey(strings.ReplaceAll(origin.Key, "_", ""))
+
+	if origin.RawValue == "[REDACTED]" {
+		m.markSecret(secretValue, normKey, snakeKey, cleanKey)
+	}
+
+	if origin.Source == SourceDefault {
+		m.canonical[normKey] = origin.Key
+		m.canonical[snakeKey] = origin.Key
+		m.canonical[cleanKey] = origin.Key
+	}
+
+	origin.Key = m.resolveCanonical(normKey, snakeKey, cleanKey, origin.Key)
+
+	if m.isSecretLocked(normalizeKey(origin.Key)) || m.isSecretLocked(snakeKey) || m.isSecretLocked(cleanKey) {
+		origin.RawValue = "[REDACTED]"
+		m.markSecret(secretValue, normalizeKey(origin.Key), snakeKey, cleanKey)
+	}
+
+	segments = slices.Clone(segments)
+	for index, segment := range segments {
+		segments[index] = normalizeKey(segment)
+	}
+
+	if m.secretKeys.sequenceSegments(segments) {
+		m.removeDescendantsLocked(segments)
+	}
+
+	resolved := normalizeKey(origin.Key)
+	if _, exists := m.origins[resolved]; !exists {
+		m.order = append(m.order, resolved)
+	}
+
+	m.origins[resolved] = origin
+	m.paths[resolved] = segments
+}
+
+func (m *Metadata) removeDescendantsLocked(segments []string) {
+	for key, path := range m.paths {
+		if len(path) > len(segments) && slices.Equal(path[:len(segments)], segments) {
+			delete(m.origins, key)
+			delete(m.paths, key)
+		}
+	}
+
+	m.order = slices.DeleteFunc(m.order, func(key string) bool {
+		_, exists := m.origins[key]
+		return !exists
+	})
+}
+
 func (m *Metadata) orderBy(names []string) {
 	if m == nil {
 		return
@@ -277,8 +323,12 @@ func (m *Metadata) initMapsLocked() {
 		m.origins = make(map[string]Origin)
 	}
 
+	if m.paths == nil {
+		m.paths = make(map[string][]string)
+	}
+
 	if m.secrets == nil {
-		m.secrets = make(map[string]bool)
+		m.secrets = make(map[string]secretScope)
 	}
 
 	if m.canonical == nil {
@@ -286,9 +336,31 @@ func (m *Metadata) initMapsLocked() {
 	}
 }
 
-func (m *Metadata) markSecret(keys ...string) {
-	for _, k := range keys {
-		m.secrets[k] = true
+func (m *Metadata) isSecretLocked(key string) bool {
+	if m.secretKeys.secret(key) {
+		return true
+	}
+
+	if m.secrets[key] != 0 {
+		return true
+	}
+
+	for {
+		separator := strings.LastIndexByte(key, '.')
+		if separator < 0 {
+			return false
+		}
+
+		key = key[:separator]
+		if m.secrets[key] == secretSubtree {
+			return true
+		}
+	}
+}
+
+func (m *Metadata) markSecret(scope secretScope, keys ...string) {
+	for _, key := range keys {
+		m.secrets[key] = max(m.secrets[key], scope)
 	}
 }
 
@@ -317,7 +389,7 @@ func normalizeKey(s string) string {
 	hasUpper := false
 
 	for _, r := range trimmed {
-		if unicode.IsUpper(r) {
+		if unicode.IsUpper(r) || unicode.IsTitle(r) {
 			hasUpper = true
 			break
 		}

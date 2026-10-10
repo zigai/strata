@@ -98,6 +98,155 @@ func TestMetadataUnicodeKeyNormalization(t *testing.T) {
 	}
 }
 
+func TestMetadataTitlecaseLookup(t *testing.T) {
+	t.Parallel()
+
+	meta := strata.NewMetadata()
+	meta.Record(strata.Origin{Key: "ǅelta", Source: strata.SourceEnv, RawValue: "visible"})
+
+	if origin, found := meta.Where("ǆelta"); !found || origin.RawValue != "visible" {
+		t.Fatalf("Where = %+v, %t", origin, found)
+	}
+}
+
+func TestChainedJSONAliasPreservesSchemaAndProvenance(t *testing.T) {
+	t.Parallel()
+
+	cfg, meta, err := strata.LoadWithMetadata[stdinFormatConfig](
+		strata.WithPath("-"), strata.WithStdin(strings.NewReader(`{"$schema":"https://example.invalid/config.json","alpha":17}`)),
+		strata.WithFormats("settings"), strata.WithFormatAlias("settings", "intermediate"), strata.WithFormatAlias("intermediate", "json"), strata.WithStrict(),
+	)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	origin, found := meta.Where("alpha")
+	if cfg.Alpha != 17 || !found || origin.Source != strata.SourceStdin || origin.Line != 0 || origin.RawValue != "17" {
+		t.Fatalf("config = %+v, origin = %+v, found = %t", cfg, origin, found)
+	}
+}
+
+func TestArrayReplacementRemovesDescendantOrigins(t *testing.T) {
+	type endpoint struct {
+		Port int
+	}
+
+	type config struct {
+		Endpoints []endpoint
+		Label     string
+	}
+
+	for _, test := range []struct{ format, lower, empty, shorter string }{
+		{"json", `{"label":"retained","endpoints":[{"port":9000},{"port":9001}]}`, `{"endpoints":[]}`, `{"endpoints":[{"port":8000}]}`},
+		{"yaml", "label: retained\nendpoints: [{port: 9000}, {port: 9001}]\n", "endpoints: []\n", "endpoints: [{port: 8000}]\n"},
+		{"toml", "label = 'retained'\nendpoints = [{port = 9000}, {port = 9001}]\n", "endpoints = []\n", "endpoints = [{port = 8000}]\n"},
+	} {
+		t.Run(test.format, func(t *testing.T) {
+			systemBase, userBase := isolateLayers(t)
+			t.Setenv("APPDATA", userBase)
+			t.Setenv("ProgramData", systemBase)
+
+			directory := filepath.Join(userBase, "sample")
+			if err := os.MkdirAll(directory, 0o700); err != nil {
+				t.Fatal(err)
+			}
+
+			lowerPath := filepath.Join(directory, "config."+test.format)
+			if err := os.WriteFile(lowerPath, []byte(test.lower), 0o600); err != nil {
+				t.Fatal(err)
+			}
+
+			for _, replacement := range []struct {
+				name, body string
+				ports      []int
+			}{
+				{"empty", test.empty, nil},
+				{"shorter", test.shorter, []int{8000}},
+			} {
+				t.Run(replacement.name, func(t *testing.T) {
+					upperPath := writeFile(t, "override."+test.format, replacement.body)
+
+					got, meta, err := strata.LoadWithMetadata[config](strata.WithAppName("sample"), strata.WithFormats(test.format), strata.WithPath(upperPath))
+					if err != nil {
+						t.Fatal(err)
+					}
+
+					if len(got.Endpoints) != len(replacement.ports) || got.Label != "retained" {
+						t.Fatalf("config = %+v", got)
+					}
+
+					if origin, found := meta.Where("endpoints.1.port"); found {
+						t.Errorf("removed endpoint retained origin: %+v", origin)
+					}
+
+					if len(replacement.ports) == 0 {
+						if origin, found := meta.Where("endpoints.0.port"); found {
+							t.Errorf("empty array retained origin: %+v", origin)
+						}
+					} else if origin, found := meta.Where("endpoints.0.port"); got.Endpoints[0].Port != 8000 || !found || origin.Path != upperPath || origin.RawValue != "8000" {
+						t.Errorf("replacement origin = %+v, %t; config = %+v", origin, found, got)
+					}
+
+					for _, origin := range meta.Origins() {
+						if strings.HasPrefix(origin.Key, "endpoints.") && (len(replacement.ports) == 0 || origin.Key != "endpoints.0.port") {
+							t.Errorf("Origins retained removed endpoint: %+v", origin)
+						}
+					}
+
+					if origin, found := meta.Where("label"); !found || origin.Path != lowerPath || origin.RawValue != "retained" {
+						t.Errorf("unrelated origin = %+v, %t", origin, found)
+					}
+				})
+			}
+		})
+	}
+}
+
+func TestYAMLExplicitArrayOverridesMergedOrigins(t *testing.T) {
+	t.Parallel()
+
+	type config struct {
+		Endpoints []struct{ Port int }
+	}
+
+	got, meta, err := strata.LoadWithMetadata[config](strata.WithPath("-"), strata.WithFormats("yaml"), strata.WithStdin(strings.NewReader("base: &base\n  endpoints: [{port: 9000}]\n<<: *base\nendpoints: []\n")))
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	if len(got.Endpoints) != 0 {
+		t.Fatalf("endpoints = %+v, want empty", got.Endpoints)
+	}
+
+	if origin, found := meta.Where("endpoints.0.port"); found {
+		t.Fatalf("overridden endpoint retained origin: %+v", origin)
+	}
+}
+
+func TestYAMLAliasAndSequenceProvenance(t *testing.T) {
+	t.Parallel()
+
+	type config struct {
+		Database struct{ Port int } `strata:"database"`
+		Ports    []int              `strata:"ports"`
+	}
+
+	cfg, meta, err := strata.LoadWithMetadata[config](strata.WithPath("-"), strata.WithStdin(strings.NewReader("base: &base\n  port: 9001\ndatabase: *base\nports: [81, 444]\n")), strata.WithFormats("yaml"), strata.WithStrict())
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	origin, found := meta.Where("database.port")
+	if cfg.Database.Port != 9001 || !found || origin.Source != strata.SourceStdin || origin.RawValue != "9001" {
+		t.Fatalf("config = %+v, alias origin = %+v, %t", cfg, origin, found)
+	}
+
+	ports, found := meta.Where("ports")
+	if !found || !strings.Contains(ports.RawValue, "444") {
+		t.Fatalf("ports origin = %+v, %t", ports, found)
+	}
+}
+
 func TestConfigErrorDiagnostics(t *testing.T) {
 	t.Parallel()
 

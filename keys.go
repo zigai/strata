@@ -29,6 +29,9 @@ type UnknownKey struct {
 // A nil children map accepts any key below this node.
 type keyNode struct {
 	children map[string]*keyNode
+	element  *keyNode
+	kind     reflect.Kind
+	secret   bool
 }
 
 type keyTree struct {
@@ -62,17 +65,79 @@ func keyTreeFor(typ reflect.Type) *keyTree {
 		return tree
 	}
 
-	tree := &keyTree{root: &keyNode{children: make(map[string]*keyNode)}, names: nil}
-	tree.collect(tree.root, typ, "", nil)
+	tree := &keyTree{root: keyNodeFor(typ, make(map[reflect.Type]*keyNode)), names: nil}
+	tree.collectNames(typ, "", nil)
 	keyTrees.Store(typ, tree)
 
 	return tree
 }
 
-func (t *keyTree) collect(node *keyNode, typ reflect.Type, prefix string, active []reflect.Type) {
+func keyNodeFor(typ reflect.Type, nodes map[reflect.Type]*keyNode) *keyNode {
+	typ = derefFieldType(typ)
+	if node, exists := nodes[typ]; exists {
+		return node
+	}
+
+	node := &keyNode{children: nil, element: nil, kind: typ.Kind(), secret: false}
+	nodes[typ] = node
+
+	if typ.Kind() == reflect.Map || typ.Kind() == reflect.Slice || typ.Kind() == reflect.Array {
+		node.element = keyNodeFor(typ.Elem(), nodes)
+	} else if defaulter.IsNestedStructType(typ) {
+		collectKeyNodes(node, typ, nodes)
+	}
+
+	return node
+}
+
+func collectKeyNodes(node *keyNode, typ reflect.Type, nodes map[reflect.Type]*keyNode) {
+	node.children = make(map[string]*keyNode)
+
+	var embeddedFields []reflect.StructField
+
+	for field := range typ.Fields() {
+		if field.Anonymous && defaulter.IsNestedStructType(derefFieldType(field.Type)) {
+			embeddedFields = append(embeddedFields, field)
+			continue
+		}
+
+		if !field.IsExported() {
+			continue
+		}
+
+		key := defaulter.FieldKey(field)
+		if key != "-" {
+			node.children[key] = keyNodeForField(field, nodes)
+		}
+	}
+
+	for _, field := range embeddedFields {
+		child := keyNodeForField(field, nodes)
+		for key, embedded := range child.children {
+			if _, taken := node.children[key]; taken {
+				continue
+			}
+
+			if child.secret {
+				embedded = &keyNode{children: embedded.children, element: embedded.element, kind: embedded.kind, secret: true}
+			}
+
+			node.children[key] = embedded
+		}
+	}
+}
+
+func keyNodeForField(field reflect.StructField, nodes map[reflect.Type]*keyNode) *keyNode {
+	child := keyNodeFor(field.Type, nodes)
+	if defaulter.IsSecret(field) {
+		return &keyNode{children: child.children, element: child.element, kind: child.kind, secret: true}
+	}
+
+	return child
+}
+
+func (t *keyTree) collectNames(typ reflect.Type, prefix string, active []reflect.Type) {
 	if slices.Contains(active, typ) {
-		// A recursive type accepts anything below the repetition.
-		node.children = nil
 		return
 	}
 
@@ -82,7 +147,7 @@ func (t *keyTree) collect(node *keyNode, typ reflect.Type, prefix string, active
 		fieldType := derefFieldType(field.Type)
 
 		if field.Anonymous && fieldType.Kind() == reflect.Struct && defaulter.IsNestedStructType(fieldType) {
-			t.collect(node, fieldType, prefix, active)
+			t.collectNames(fieldType, prefix, active)
 			continue
 		}
 
@@ -102,14 +167,8 @@ func (t *keyTree) collect(node *keyNode, typ reflect.Type, prefix string, active
 
 		t.names = append(t.names, dotted)
 
-		child := &keyNode{children: nil}
 		if defaulter.IsNestedStructType(fieldType) {
-			child.children = make(map[string]*keyNode)
-			t.collect(child, fieldType, dotted, active)
-		}
-
-		if _, taken := node.children[key]; !taken {
-			node.children[key] = child
+			t.collectNames(fieldType, dotted, active)
 		}
 	}
 }
@@ -123,9 +182,18 @@ func derefFieldType(typ reflect.Type) reflect.Type {
 }
 
 func (t *keyTree) known(dotted string) bool {
+	return t.knownSegments(strings.Split(dotted, "."))
+}
+
+func (t *keyTree) knownSegments(segments []string) bool {
 	node := t.root
 
-	for segment := range strings.SplitSeq(dotted, ".") {
+	for _, segment := range segments {
+		if node.element != nil {
+			node = node.element
+			continue
+		}
+
 		if node.children == nil {
 			return true
 		}
@@ -139,6 +207,93 @@ func (t *keyTree) known(dotted string) bool {
 	}
 
 	return true
+}
+
+func (t *keyTree) secret(dotted string) bool {
+	return t.secretSegments(strings.Split(dotted, "."))
+}
+
+func (t *keyTree) secretSegments(segments []string) bool {
+	if t == nil {
+		return false
+	}
+
+	node := t.root
+	for _, segment := range segments {
+		if node.secret {
+			return true
+		}
+
+		if node.element != nil {
+			node = node.element
+			continue
+		}
+
+		node = node.child(segment)
+		if node == nil {
+			return false
+		}
+	}
+
+	return node.containsSecret(make(map[*keyNode]bool))
+}
+
+func (t *keyTree) sequenceSegments(segments []string) bool {
+	if t == nil {
+		return false
+	}
+
+	node := t.root
+	for _, segment := range segments {
+		if node.element != nil {
+			node = node.element
+			continue
+		}
+
+		node = node.child(segment)
+		if node == nil {
+			return false
+		}
+	}
+
+	return node.kind == reflect.Slice || node.kind == reflect.Array
+}
+
+func (node *keyNode) child(segment string) *keyNode {
+	if child, found := node.children[segment]; found {
+		return child
+	}
+
+	for name, child := range node.children {
+		if normalizeKey(name) == normalizeKey(segment) || normalizeKey(toSnakeCaseKey(name)) == normalizeKey(segment) || normalizeKey(strings.ReplaceAll(name, "_", "")) == normalizeKey(segment) {
+			return child
+		}
+	}
+
+	return nil
+}
+
+func (node *keyNode) containsSecret(visited map[*keyNode]bool) bool {
+	if node == nil || visited[node] {
+		return false
+	}
+
+	if node.secret {
+		return true
+	}
+
+	visited[node] = true
+	if node.element.containsSecret(visited) {
+		return true
+	}
+
+	for _, child := range node.children {
+		if child.containsSecret(visited) {
+			return true
+		}
+	}
+
+	return false
 }
 
 func (t *keyTree) suggest(dotted string) string {

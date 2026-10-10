@@ -3,7 +3,8 @@ package origins
 import "strings"
 
 type Record struct {
-	Key string
+	Key      string
+	Segments []string
 
 	// Only the YAML reader populates Line; TOML and JSON report zero.
 	Line int
@@ -32,8 +33,8 @@ func Read(data []byte, ext string, emit func(Record)) {
 	case ".json":
 		readJSON(data, emit)
 	default:
-		if !readTOML(data, emit) && !readYAML(data, emit) {
-			readJSON(data, emit)
+		if !readTOML(data, emit) && !readJSON(data, emit) {
+			readYAML(data, emit)
 		}
 	}
 }

@@ -78,6 +78,122 @@ func TestSecretAndDurationRoundTripEveryFormat(t *testing.T) {
 	}
 }
 
+type secretNode struct {
+	Token strata.Secret `strata:"token"`
+	Next  *secretNode   `strata:"next"`
+}
+
+func TestSecretCollectionsAndRecursiveOriginsAreRedacted(t *testing.T) {
+	t.Parallel()
+
+	type config struct {
+		Credentials map[string]string        `strata:"credentials,secret"`
+		Typed       map[string]strata.Secret `strata:"typed"`
+		Tokens      []strata.Secret          `strata:"tokens"`
+		Nodes       []secretNode             `strata:"nodes"`
+		Node        *secretNode              `strata:"node"`
+	}
+
+	for format, body := range map[string]string{
+		"json": `{"credentials":{"service":"private-value"},"typed":{"service":"private-value"},"tokens":["private-value"],"nodes":[{"token":"private-value"}],"node":{"next":{"token":"private-value"}}}`,
+		"toml": "tokens = ['private-value']\nnodes = [{token = 'private-value'}]\n[credentials]\nservice = 'private-value'\n[typed]\nservice = 'private-value'\n[node.next]\ntoken = 'private-value'\n",
+		"yaml": "credentials:\n  service: private-value\ntyped:\n  service: private-value\ntokens: [private-value]\nnodes:\n  - token: private-value\nnode:\n  next:\n    token: private-value\n",
+	} {
+		t.Run(format, func(t *testing.T) {
+			t.Parallel()
+
+			cfg, meta, err := strata.LoadWithMetadata[config](strata.WithPath("-"), strata.WithStdin(strings.NewReader(body)), strata.WithFormats(format))
+			if err != nil {
+				t.Fatal(err)
+			}
+
+			if cfg.Credentials["service"] != "private-value" || cfg.Typed["service"].Value() != "private-value" || len(cfg.Tokens) != 1 || cfg.Tokens[0].Value() != "private-value" || len(cfg.Nodes) != 1 || cfg.Nodes[0].Token.Value() != "private-value" || cfg.Node == nil || cfg.Node.Next == nil || cfg.Node.Next.Token.Value() != "private-value" {
+				t.Fatalf("config did not load secrets: %+v", cfg)
+			}
+
+			for _, key := range []string{"credentials.service", "typed.service", "tokens", "node.next.token"} {
+				origin, found := meta.Where(key)
+				if !found || origin.RawValue != "[REDACTED]" {
+					t.Errorf("Where(%s) = %+v, %t", key, origin, found)
+				}
+
+				if message := meta.NewConfigError(key, errors.New("invalid credential")).Error(); strings.Contains(message, "private-value") {
+					t.Errorf("diagnostic leaked secret: %s", message)
+				}
+			}
+
+			for _, origin := range meta.Origins() {
+				if strings.Contains(origin.RawValue, "private-value") {
+					t.Errorf("origin leaked secret: %+v", origin)
+				}
+			}
+		})
+	}
+}
+
+func TestMixedSecretCollectionsKeepPublicOrigins(t *testing.T) {
+	t.Parallel()
+
+	type item struct {
+		Token strata.Secret
+		Port  int
+	}
+
+	type config struct {
+		Services map[string]item
+		Nodes    []item
+	}
+
+	for _, test := range []struct{ format, body string }{
+		{"json", `{"services":{"primary":{"token":"private-value","port":9001}},"nodes":[{"token":"private-value","port":9002}]}`},
+		{"yaml", "services:\n  primary: {token: private-value, port: 9001}\nnodes: [{token: private-value, port: 9002}]\n"},
+		{"toml", "nodes = [{token = 'private-value', port = 9002}]\n[services.primary]\ntoken = 'private-value'\nport = 9001\n"},
+	} {
+		t.Run(test.format, func(t *testing.T) {
+			t.Parallel()
+
+			_, meta, err := strata.LoadWithMetadata[config](strata.WithPath("-"), strata.WithFormats(test.format), strata.WithStdin(strings.NewReader(test.body)))
+			if err != nil {
+				t.Fatal(err)
+			}
+
+			for key, want := range map[string]string{
+				"services.primary.port":  "9001",
+				"nodes.0.port":           "9002",
+				"services.primary.token": "[REDACTED]",
+				"nodes.0.token":          "[REDACTED]",
+				"nodes":                  "[REDACTED]",
+			} {
+				if origin, found := meta.Where(key); !found || origin.RawValue != want {
+					t.Errorf("Where(%s) = %+v, %t; want %q", key, origin, found, want)
+				}
+			}
+		})
+	}
+}
+
+func TestRecordSecretRedactsExistingAndDescendantOrigins(t *testing.T) {
+	t.Parallel()
+
+	meta := strata.NewMetadata()
+	meta.Record(strata.Origin{Key: "credentials", Source: strata.SourceDefault, RawValue: "private-value"})
+	meta.Record(strata.Origin{Key: "credentials.service", Source: strata.SourceEnv, RawValue: "private-value"})
+	meta.RecordSecret("credentials")
+	meta.Record(strata.Origin{Key: "credentials.other", Source: strata.SourceFile, RawValue: "private-value"})
+	meta.Record(strata.Origin{Key: "credentials_public", Source: strata.SourceDefault, RawValue: "public-value"})
+
+	for _, key := range []string{"credentials", "credentials.service", "credentials.other"} {
+		origin, found := meta.Where(key)
+		if !found || origin.RawValue != "[REDACTED]" {
+			t.Errorf("Where(%s) = %+v, %t", key, origin, found)
+		}
+	}
+
+	if origin, _ := meta.Where("credentials_public"); origin.RawValue != "public-value" {
+		t.Errorf("unrelated value was redacted: %+v", origin)
+	}
+}
+
 func TestSecretTagMasking(t *testing.T) {
 	t.Setenv("SECRET_TOKEN", "super-secret-api-key")
 

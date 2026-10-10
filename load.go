@@ -72,7 +72,7 @@ func LoadInto[T any](target *T, opts ...Option) (*Metadata, error) {
 	options.keys = keyTreeFor(reflect.TypeFor[T]())
 
 	meta := NewMetadata()
-	registerSecretsFromTarget(target, meta)
+	meta.secretKeys = options.keys
 
 	if err := applyDefaults(target, options, meta); err != nil {
 		return nil, err
@@ -316,6 +316,7 @@ func resolveFormatAliases(opts *loadOptions) error {
 		}
 
 		opts.codecs.Register(alias, targetCodec)
+		opts.formatAliases[alias] = resolvedTarget
 	}
 
 	return nil
@@ -386,8 +387,13 @@ func recordLayerOrigins(data []byte, layer cascade.Layer, ext string, keys *keyT
 			RawValue: record.RawValue,
 		}
 
-		if keys.known(record.Key) {
-			meta.Record(origin)
+		if keys.knownSegments(record.Segments) {
+			if keys.secretSegments(record.Segments) {
+				origin.RawValue = "[REDACTED]"
+			}
+
+			meta.record(origin, record.Segments)
+
 			return
 		}
 
@@ -426,80 +432,6 @@ func unknownKeysError(meta *Metadata) error {
 	}
 
 	return errors.Join(errs...)
-}
-
-func registerSecretsFromTarget(target any, meta *Metadata) {
-	if target == nil || meta == nil {
-		return
-	}
-
-	val := reflect.ValueOf(target)
-	if val.Kind() == reflect.Pointer {
-		if val.IsNil() {
-			return
-		}
-
-		val = val.Elem()
-	}
-
-	if val.Kind() != reflect.Struct {
-		return
-	}
-
-	walkRegisterSecrets(val.Type(), "", false, meta, make(map[reflect.Type]bool))
-}
-
-func fullSecretFieldKey(prefix, key string, anonymous bool) string {
-	if anonymous {
-		return prefix
-	}
-
-	if prefix != "" {
-		return prefix + "." + key
-	}
-
-	return key
-}
-
-func registerFieldSecret(f reflect.StructField, prefix string, inheritedSecret bool, meta *Metadata, visited map[reflect.Type]bool) {
-	if !f.IsExported() && !f.Anonymous {
-		return
-	}
-
-	key := defaulter.FieldKey(f)
-	if key == "-" {
-		return
-	}
-
-	fieldSecret := inheritedSecret || defaulter.IsSecret(f)
-	fullKey := fullSecretFieldKey(prefix, key, f.Anonymous)
-
-	ft := f.Type
-	if ft.Kind() == reflect.Pointer {
-		ft = ft.Elem()
-	}
-
-	if defaulter.IsNestedStructType(ft) {
-		walkRegisterSecrets(ft, fullKey, fieldSecret, meta, visited)
-		return
-	}
-
-	if fieldSecret && fullKey != "" {
-		meta.RecordSecret(fullKey)
-	}
-}
-
-func walkRegisterSecrets(typ reflect.Type, prefix string, inheritedSecret bool, meta *Metadata, visited map[reflect.Type]bool) {
-	if typ == nil || visited[typ] {
-		return
-	}
-
-	visited[typ] = true
-	defer delete(visited, typ)
-
-	for f := range typ.Fields() {
-		registerFieldSecret(f, prefix, inheritedSecret, meta, visited)
-	}
 }
 
 func isStructTarget[T any](target *T) bool {

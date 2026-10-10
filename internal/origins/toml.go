@@ -2,6 +2,10 @@ package origins
 
 import (
 	"fmt"
+	"reflect"
+	"slices"
+	"strconv"
+	"strings"
 
 	"github.com/pelletier/go-toml/v2"
 )
@@ -14,31 +18,33 @@ func readTOML(data []byte, emit func(Record)) bool {
 		return false
 	}
 
-	walkMap(document, "", func(key string, value any) {
-		emit(Record{Key: key, Line: 0, RawValue: fmt.Sprintf("%v", value), IsTemplate: false})
-	})
+	walkTOMLValue(document, nil, emit)
 
 	return true
 }
 
-func walkMap(document map[string]any, prefix string, emit func(key string, value any)) {
-	for key, value := range document {
-		fullKey := joinKey(prefix, key)
-
-		if nested, ok := value.(map[string]any); ok {
-			walkMap(nested, fullKey, emit)
-
-			continue
+func walkTOMLValue(value any, segments []string, emit func(Record)) {
+	if document, ok := value.(map[string]any); ok && len(document) > 0 {
+		for key, child := range document {
+			walkTOMLValue(child, append(slices.Clone(segments), key), emit)
 		}
 
-		emit(fullKey, value)
-	}
-}
-
-func joinKey(prefix, key string) string {
-	if prefix == "" {
-		return key
+		return
 	}
 
-	return prefix + "." + key
+	emit(Record{Key: strings.Join(segments, "."), Segments: segments, Line: 0, RawValue: fmt.Sprintf("%v", value), IsTemplate: false})
+
+	sequence := reflect.ValueOf(value)
+	if sequence.Kind() != reflect.Slice && sequence.Kind() != reflect.Array {
+		return
+	}
+
+	for index := range sequence.Len() {
+		item := sequence.Index(index).Interface()
+
+		kind := reflect.TypeOf(item)
+		if kind != nil && (kind.Kind() == reflect.Map || kind.Kind() == reflect.Slice || kind.Kind() == reflect.Array) {
+			walkTOMLValue(item, append(slices.Clone(segments), strconv.Itoa(index)), emit)
+		}
+	}
 }
