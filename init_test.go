@@ -134,6 +134,53 @@ func TestInitDirectives(t *testing.T) {
 	})
 }
 
+type schemaCollisionConfig struct {
+	Schema string `json:"$schema"`
+	Port   int    `json:"port"`
+	Large  uint64 `json:"large"`
+	Nested struct {
+		Schema string `json:"$schema"`
+	} `json:"nested"`
+}
+
+func (config *schemaCollisionConfig) SetDefaults() {
+	config.Schema = "https://example.test/original.schema.json"
+	config.Port = 8080
+	config.Large = 9007199254740993
+	config.Nested.Schema = "nested-value"
+}
+
+func TestInitReplacesExistingJSONSchemaAndReloads(t *testing.T) {
+	t.Parallel()
+
+	for _, schemaURL := range []string{"", "https://example.test/replacement.schema.json"} {
+		t.Run("schema="+schemaURL, func(t *testing.T) {
+			t.Parallel()
+
+			path := filepath.Join(t.TempDir(), "config.json")
+			if err := strata.Init[schemaCollisionConfig](path, strata.WithSchemaURL(schemaURL)); err != nil {
+				t.Fatalf("Init: %v", err)
+			}
+
+			loaded, err := strata.Load[schemaCollisionConfig](strata.WithDefaults(schemaCollisionConfig{}), strata.WithPath(path), strata.WithFormats("json"), strata.WithStrict())
+			if err != nil {
+				t.Fatalf("Load generated template: %v", err)
+			}
+
+			var want schemaCollisionConfig
+			want.SetDefaults()
+
+			if schemaURL != "" {
+				want.Schema = schemaURL
+			}
+
+			if loaded != want {
+				t.Fatalf("loaded = %+v, want %+v", loaded, want)
+			}
+		})
+	}
+}
+
 type concurrentInitConfig struct {
 	Port int `json:"port"`
 }

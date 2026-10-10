@@ -2,6 +2,7 @@ package strata
 
 import (
 	"bytes"
+	"encoding/json/jsontext"
 	"encoding/json/v2"
 	"errors"
 	"fmt"
@@ -153,6 +154,18 @@ func injectJSONSchema(data []byte, schemaURL string) ([]byte, error) {
 		return data, nil
 	}
 
+	var object map[string]jsontext.Value
+	if err := json.Unmarshal(trimmed, &object); err != nil {
+		return nil, fmt.Errorf("decode template object: %w", err)
+	}
+
+	delete(object, jsonSchemaProperty)
+
+	remaining, err := json.Marshal(object, jsontext.WithIndent("  "), json.Deterministic(true))
+	if err != nil {
+		return nil, fmt.Errorf("encode template object: %w", err)
+	}
+
 	// NB: writing the entry first keeps $schema the object's first key, and the
 	// existing content follows it.
 	schemaEntry, err := json.Marshal(schemaURL)
@@ -164,7 +177,7 @@ func injectJSONSchema(data []byte, schemaURL string) ([]byte, error) {
 	b.WriteString("{\n  \"" + jsonSchemaProperty + "\": ")
 	b.Write(schemaEntry)
 
-	rest := bytes.TrimSpace(trimmed[1:])
+	rest := bytes.TrimSpace(remaining[1:])
 	if len(rest) > 1 && rest[0] != '}' {
 		b.WriteString(",\n  ")
 		b.Write(bytes.TrimLeft(rest, "\n "))
