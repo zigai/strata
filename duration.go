@@ -3,15 +3,15 @@ package strata
 import (
 	"errors"
 	"fmt"
+	"math/big"
 	"regexp"
-	"strconv"
 	"strings"
 	"time"
 )
 
 const (
-	hoursInDay  = 24.0
-	hoursInWeek = 168.0
+	durationInDay  = 24 * time.Hour
+	durationInWeek = 7 * durationInDay
 )
 
 var (
@@ -61,23 +61,26 @@ func ParseDuration(s string) (time.Duration, error) {
 		numStr := match[:len(match)-1]
 		unit := strings.ToLower(match[len(match)-1:])
 
-		val, err := strconv.ParseFloat(numStr, 64)
-		if err != nil {
+		value, ok := new(big.Rat).SetString(numStr)
+		if !ok {
 			return match
 		}
 
-		var hours float64
+		var duration time.Duration
 
 		switch unit {
 		case "w":
-			hours = val * hoursInWeek
+			duration = durationInWeek
 		case "d":
-			hours = val * hoursInDay
+			duration = durationInDay
 		default:
 			return match
 		}
 
-		return strconv.FormatFloat(hours, 'f', -1, 64) + "h"
+		value.Mul(value, new(big.Rat).SetInt64(int64(duration)))
+		nanoseconds := new(big.Int).Quo(value.Num(), value.Denom())
+
+		return nanoseconds.String() + "ns"
 	})
 
 	d, err := time.ParseDuration(converted)

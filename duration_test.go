@@ -67,6 +67,11 @@ func TestParseDuration(t *testing.T) {
 			want:  36 * time.Hour,
 		},
 		{
+			name:  "fractional days preserve nanoseconds",
+			input: ".3d",
+			want:  25_920_000_000_000,
+		},
+		{
 			name:  "fractional weeks",
 			input: "0.5w",
 			want:  84 * time.Hour,
