@@ -209,6 +209,47 @@ func TestSecretCollectionsAndRecursiveOriginsAreRedacted(t *testing.T) {
 	}
 }
 
+func TestDefaultMetadataRedactsSecretsHeldThroughInterfaces(t *testing.T) {
+	t.Parallel()
+
+	type config struct{ Value any }
+
+	type credentials struct {
+		Token string `strata:"token,secret"`
+	}
+
+	for _, test := range []struct {
+		name  string
+		value any
+	}{
+		{name: "exported field", value: credentials{Token: "private-value"}},
+		{name: "unexported embedding", value: struct{ credentials }{credentials{Token: "private-value"}}},
+		{name: "unexported pointer embedding", value: struct{ *credentials }{&credentials{Token: "private-value"}}},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			t.Parallel()
+
+			defaults := config{Value: test.value}
+
+			got, meta, err := strata.LoadWithMetadata[config](strata.WithDefaults(defaults), strata.WithoutFileDiscovery())
+			if err != nil {
+				t.Fatal(err)
+			}
+
+			if got != defaults {
+				t.Fatalf("loaded defaults = %+v, want %+v", got, defaults)
+			}
+
+			origin, found := meta.Where("value")
+
+			want := strata.Origin{Key: "value", Source: strata.SourceDefault, Path: "", Line: 0, RawValue: "[REDACTED]"}
+			if !found || origin != want {
+				t.Fatalf("default origin = %+v, found = %t; want %+v", origin, found, want)
+			}
+		})
+	}
+}
+
 func TestMixedSecretCollectionsKeepPublicOrigins(t *testing.T) {
 	t.Parallel()
 

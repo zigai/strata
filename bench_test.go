@@ -43,6 +43,31 @@ func BenchmarkLoadWithoutFileDiscovery(b *testing.B) {
 	}
 }
 
+func BenchmarkLoadMetadataWithSharedDefaults(b *testing.B) {
+	type node struct {
+		Left  *node
+		Right *node
+	}
+
+	type config struct{ Value any }
+
+	var root *node
+	for range 16 {
+		root = &node{Left: root, Right: root}
+	}
+
+	defaults := config{Value: root}
+
+	b.ReportAllocs()
+
+	for b.Loop() {
+		_, _, err := strata.LoadWithMetadata[config](strata.WithDefaults(defaults), strata.WithoutFileDiscovery())
+		if err != nil {
+			b.Fatal(err)
+		}
+	}
+}
+
 func BenchmarkLoadWithEnv(b *testing.B) {
 	b.Setenv("BENCH_APP_NAME", "custom-bench")
 	b.Setenv("BENCH_PORT", "9090")

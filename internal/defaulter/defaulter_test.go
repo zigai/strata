@@ -2,6 +2,7 @@ package defaulter_test
 
 import (
 	"errors"
+	"reflect"
 	"testing"
 	"time"
 
@@ -38,6 +39,29 @@ type appConfig struct {
 func (a *appConfig) SetDefaults() {
 	a.AppName = "default-app"
 	a.Debug = true
+}
+
+func TestContainsSecretsFindsSecretsBeyondCycles(t *testing.T) {
+	t.Parallel()
+
+	type node struct {
+		Next  *node
+		Value any
+	}
+
+	value := &node{}
+	value.Next = value
+
+	if defaulter.ContainsSecrets(reflect.ValueOf(value)) {
+		t.Fatal("public cycle reported a secret")
+	}
+
+	value.Value = struct {
+		Token string `strata:",secret"`
+	}{Token: "private-value"}
+	if !defaulter.ContainsSecrets(reflect.ValueOf(value)) {
+		t.Fatal("secret after cycle was missed")
+	}
 }
 
 func TestApplyDefaults(t *testing.T) {

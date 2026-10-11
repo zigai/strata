@@ -73,7 +73,7 @@ func (mode mirrorMode) needsValues() bool {
 
 func (mode mirrorMode) preservesValue(value reflect.Value) bool {
 	if describesItself(value.Type()) {
-		return !mode.OmitSecrets || !containsSecrets(value, make(map[keyedVisit]bool))
+		return !mode.OmitSecrets || !defaulter.ContainsSecrets(value)
 	}
 
 	return !mode.needsValues() && !isRecursive(value.Type(), nil)
@@ -672,70 +672,6 @@ func convertRecursiveMap(src reflect.Value, mode mirrorMode, active map[keyedVis
 	}
 
 	return out, nil
-}
-
-func containsSecrets(src reflect.Value, active map[keyedVisit]bool) bool {
-	if defaulter.IsSecretType(src.Type()) {
-		return true
-	}
-
-	if src.Kind() == reflect.Pointer || src.Kind() == reflect.Map || src.Kind() == reflect.Slice {
-		if src.IsNil() {
-			return false
-		}
-
-		visit := keyedVisit{typ: src.Type(), pointer: uintptr(src.UnsafePointer()), length: 0}
-		if src.Kind() == reflect.Slice {
-			visit.length = src.Len()
-		}
-
-		if active[visit] {
-			return false
-		}
-
-		active[visit] = true
-		defer delete(active, visit)
-	}
-
-	return containsSecretValues(src, active)
-}
-
-func containsSecretValues(src reflect.Value, active map[keyedVisit]bool) bool {
-	switch src.Kind() {
-	case reflect.Interface, reflect.Pointer:
-		return !src.IsNil() && containsSecrets(src.Elem(), active)
-	case reflect.Struct:
-		return containsSecretFields(src, active)
-	case reflect.Slice, reflect.Array:
-		for index := range src.Len() {
-			if containsSecrets(src.Index(index), active) {
-				return true
-			}
-		}
-	case reflect.Map:
-		for iter := src.MapRange(); iter.Next(); {
-			if containsSecrets(iter.Value(), active) {
-				return true
-			}
-		}
-	case reflect.Invalid, reflect.Bool, reflect.Int, reflect.Int8, reflect.Int16, reflect.Int32, reflect.Int64,
-		reflect.Uint, reflect.Uint8, reflect.Uint16, reflect.Uint32, reflect.Uint64, reflect.Uintptr,
-		reflect.Float32, reflect.Float64, reflect.Complex64, reflect.Complex128, reflect.Chan, reflect.Func,
-		reflect.String, reflect.UnsafePointer:
-		return false
-	}
-
-	return false
-}
-
-func containsSecretFields(src reflect.Value, active map[keyedVisit]bool) bool {
-	for field := range src.Type().Fields() {
-		if field.IsExported() && (defaulter.IsSecret(field) || containsSecrets(src.Field(field.Index[0]), active)) {
-			return true
-		}
-	}
-
-	return false
 }
 
 func multilineYAMLKeys(src reflect.Value) bool {

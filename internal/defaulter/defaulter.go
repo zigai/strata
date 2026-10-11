@@ -32,6 +32,12 @@ type Defaulter interface {
 	SetDefaults()
 }
 
+type secretVisit struct {
+	typ     reflect.Type
+	pointer uintptr
+	length  int
+}
+
 type visitor struct {
 	report func(key, rawVal string)
 	apply  bool
@@ -184,6 +190,73 @@ func IsSecretType(typ reflect.Type) bool {
 	}
 
 	return typ.PkgPath() == "github.com/zigai/strata" && typ.Name() == "Secret"
+}
+
+func ContainsSecrets(src reflect.Value) bool {
+	return containsSecrets(src, make(map[secretVisit]bool))
+}
+
+func containsSecrets(src reflect.Value, seen map[secretVisit]bool) bool {
+	if IsSecretType(src.Type()) {
+		return true
+	}
+
+	if src.Kind() == reflect.Pointer || src.Kind() == reflect.Map || src.Kind() == reflect.Slice {
+		if src.IsNil() {
+			return false
+		}
+
+		visit := secretVisit{typ: src.Type(), pointer: uintptr(src.UnsafePointer()), length: 0}
+		if src.Kind() == reflect.Slice {
+			visit.length = src.Len()
+		}
+
+		if seen[visit] {
+			return false
+		}
+
+		seen[visit] = true
+	}
+
+	return containsSecretValues(src, seen)
+}
+
+func containsSecretValues(src reflect.Value, seen map[secretVisit]bool) bool {
+	switch src.Kind() {
+	case reflect.Interface, reflect.Pointer:
+		return !src.IsNil() && containsSecrets(src.Elem(), seen)
+	case reflect.Struct:
+		return containsSecretFields(src, seen)
+	case reflect.Slice, reflect.Array:
+		for index := range src.Len() {
+			if containsSecrets(src.Index(index), seen) {
+				return true
+			}
+		}
+	case reflect.Map:
+		for iter := src.MapRange(); iter.Next(); {
+			if containsSecrets(iter.Value(), seen) {
+				return true
+			}
+		}
+	case reflect.Invalid, reflect.Bool, reflect.Int, reflect.Int8, reflect.Int16, reflect.Int32, reflect.Int64,
+		reflect.Uint, reflect.Uint8, reflect.Uint16, reflect.Uint32, reflect.Uint64, reflect.Uintptr,
+		reflect.Float32, reflect.Float64, reflect.Complex64, reflect.Complex128, reflect.Chan, reflect.Func,
+		reflect.String, reflect.UnsafePointer:
+		return false
+	}
+
+	return false
+}
+
+func containsSecretFields(src reflect.Value, seen map[secretVisit]bool) bool {
+	for field := range src.Type().Fields() {
+		if (field.IsExported() || field.Anonymous) && (IsSecret(field) || containsSecrets(src.Field(field.Index[0]), seen)) {
+			return true
+		}
+	}
+
+	return false
 }
 
 func shouldInsertUnderscore(s string, i, n int) bool {
@@ -389,7 +462,7 @@ func recordDefaultLeaf(field reflect.Value, sf reflect.StructField, fullKey stri
 		return
 	}
 
-	if isSecret || IsSecret(sf) {
+	if isSecret || IsSecret(sf) || ContainsSecrets(field) {
 		v.report(fullKey, "[REDACTED]")
 		return
 	}
