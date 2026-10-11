@@ -10,6 +10,8 @@ import (
 	"github.com/zigai/strata/internal/edit"
 )
 
+const portKey = "port"
+
 func TestUpdateTOMLPreservesCommentsAndFormatting(t *testing.T) {
 	t.Parallel()
 
@@ -519,5 +521,42 @@ func TestUpdateTOMLCaseSensitiveExactMatchPreference(t *testing.T) {
 
 	if !strings.Contains(string(got), "Port = 1\nport = 3") {
 		t.Errorf("wrong case-sensitive key updated:\n%s", got)
+	}
+}
+
+func TestUpdateTOMLKeepsEverythingButAlignment(t *testing.T) {
+	t.Parallel()
+
+	const document = `[server]
+port = 8080          # port
+host = "0.0.0.0"
+
+  indented = true
+
+multiline = """
+line one
+"""
+
+arr = [
+  "a",
+  "b",
+]
+`
+
+	updated, err := edit.UpdateTOML([]byte(document), "server.port", 9090)
+	if err != nil {
+		t.Fatalf("UpdateTOML: %v", err)
+	}
+
+	got := string(updated)
+
+	for _, want := range []string{`"""`, "line one", "  \"a\",\n  \"b\",", "  indented = true"} {
+		if !strings.Contains(got, want) {
+			t.Errorf("output lost %q:\n%s", want, got)
+		}
+	}
+
+	if !strings.Contains(got, "port = 9090 # port") {
+		t.Errorf("trailing comment padding was not collapsed:\n%s", got)
 	}
 }
