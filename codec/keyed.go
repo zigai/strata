@@ -66,6 +66,18 @@ type keyedVisit struct {
 	length  int
 }
 
+func (mode mirrorMode) needsValues() bool {
+	return mode.OmitSecrets
+}
+
+func (mode mirrorMode) preservesValue(value reflect.Value) bool {
+	if describesItself(value.Type()) {
+		return !mode.OmitSecrets || !containsSecrets(value, make(map[keyedVisit]bool))
+	}
+
+	return !mode.needsValues() && !isRecursive(value.Type(), nil)
+}
+
 func OmitSecrets(value any, format string) (any, error) {
 	return keyedValueMode(value, mirrorMode{Format: format, OmitSecrets: true, StringifyDurations: false, PreserveDecoders: false})
 }
@@ -84,7 +96,7 @@ func keyedValueMode(value any, mode mirrorMode) (any, error) {
 	}
 
 	src := reflect.ValueOf(value)
-	if isRecursive(src.Type(), nil) && !describesItself(src.Type()) {
+	if mode.needsValues() || isRecursive(src.Type(), nil) && !describesItself(src.Type()) {
 		converted, err := convertRecursiveKeyed(src, mode, make(map[keyedVisit]bool))
 		if err != nil {
 			return nil, err
@@ -217,6 +229,38 @@ func (b *structMirrorBuilder) add(field reflect.StructField, prefix []int) {
 	b.paths = append(b.paths, appendIndex(prefix, field.Index))
 }
 
+func (b *structMirrorBuilder) convertField(index int, src reflect.Value, active map[keyedVisit]bool) (reflect.Value, error) {
+	field := &b.fields[index]
+
+	tag, omitted := recursiveFieldTag(field.Tag, src, b.mode)
+	if b.mode.OmitSecrets && secretKeyedValue(src) {
+		tag = keyedTag(*field, "-")
+		omitted = true
+	}
+
+	if omitted {
+		field.Tag = tag
+
+		return reflect.Zero(field.Type), nil
+	}
+
+	value, err := convertRecursiveKeyed(src, b.mode, active)
+	if err != nil {
+		return reflect.Value{}, err
+	}
+
+	field.Type = value.Type()
+	if value.Type() != src.Type() {
+		field.Tag = tag
+
+		if src.Kind() == reflect.Pointer && isRecursive(src.Type(), nil) && !describesItself(src.Type()) {
+			field.Type = reflect.TypeFor[any]()
+		}
+	}
+
+	return value, nil
+}
+
 func embedsStruct(field reflect.StructField, format string) bool {
 	if !field.Anonymous {
 		return false
@@ -344,8 +388,24 @@ func convertElements(src, dst reflect.Value, mode mirrorMode) {
 	}
 }
 
+func secretKeyedValue(value reflect.Value) bool {
+	for value.Kind() == reflect.Interface && !value.IsNil() {
+		value = value.Elem()
+	}
+
+	return defaulter.IsSecretType(value.Type())
+}
+
 func convertRecursiveKeyed(src reflect.Value, mode mirrorMode, active map[keyedVisit]bool) (reflect.Value, error) {
-	if !isRecursive(src.Type(), nil) || describesItself(src.Type()) {
+	if mode.OmitSecrets && defaulter.IsSecretType(src.Type()) {
+		return src, nil
+	}
+
+	if src.Kind() == reflect.Interface {
+		return convertRecursiveInterface(src, mode, active)
+	}
+
+	if mode.preservesValue(src) {
 		return convertKeyed(src, mirrorOfMode(src.Type(), mode)), nil
 	}
 
@@ -368,6 +428,27 @@ func convertRecursiveKeyed(src reflect.Value, mode mirrorMode, active map[keyedV
 	}
 
 	return convertRecursiveContainer(src, mode, active)
+}
+
+func convertRecursiveInterface(src reflect.Value, mode mirrorMode, active map[keyedVisit]bool) (reflect.Value, error) {
+	if src.IsNil() {
+		return src, nil
+	}
+
+	value, err := convertRecursiveKeyed(src.Elem(), mode, active)
+	if err != nil {
+		return reflect.Value{}, err
+	}
+
+	typ := src.Type()
+	if !value.Type().AssignableTo(typ) {
+		typ = reflect.TypeFor[any]()
+	}
+
+	out := reflect.New(typ).Elem()
+	out.Set(value)
+
+	return out, nil
 }
 
 func convertRecursiveContainer(src reflect.Value, mode mirrorMode, active map[keyedVisit]bool) (reflect.Value, error) {
@@ -410,27 +491,9 @@ func convertRecursiveStruct(src reflect.Value, mode mirrorMode, active map[keyed
 			continue
 		}
 
-		tag, omitted := recursiveFieldTag(builder.fields[index].Tag, field, mode)
-		if omitted {
-			builder.fields[index].Tag = tag
-			values[index] = reflect.Zero(builder.fields[index].Type)
-
-			continue
-		}
-
-		value, err := convertRecursiveKeyed(field, mode, active)
+		values[index], err = builder.convertField(index, field, active)
 		if err != nil {
 			return reflect.Value{}, err
-		}
-
-		values[index] = value
-		if value.Type() != field.Type() {
-			builder.fields[index].Tag = tag
-			builder.fields[index].Type = value.Type()
-
-			if field.Kind() == reflect.Pointer && isRecursive(field.Type(), nil) && !describesItself(field.Type()) {
-				builder.fields[index].Type = reflect.TypeFor[any]()
-			}
 		}
 	}
 
@@ -443,7 +506,7 @@ func convertRecursiveStruct(src reflect.Value, mode mirrorMode, active map[keyed
 }
 
 func recursiveFieldTag(tag reflect.StructTag, value reflect.Value, mode mirrorMode) (reflect.StructTag, bool) {
-	if mirrorOfMode(value.Type(), mode).typ != nil || isRecursive(value.Type(), nil) && !describesItself(value.Type()) {
+	if value.Kind() == reflect.Interface || mirrorOfMode(value.Type(), mode).typ != nil || isRecursive(value.Type(), nil) && !describesItself(value.Type()) {
 		tag = recursiveOmissionTag(tag, value, mode.Format)
 	}
 
@@ -489,6 +552,10 @@ func keyedOmissionTag(tag string, value reflect.Value, format string) string {
 		return tag
 	}
 
+	if format == "json" && value.Kind() == reflect.Interface && !value.Type().Implements(reflect.TypeFor[interface{ IsZero() bool }]()) {
+		return tag
+	}
+
 	zero, custom := customKeyedZero(value, format == "json")
 	if !custom {
 		return tag
@@ -508,7 +575,12 @@ func keyedOmissionTag(tag string, value reflect.Value, format string) string {
 
 func customKeyedZero(value reflect.Value, addressable bool) (bool, bool) {
 	if zero, ok := reflect.TypeAssert[interface{ IsZero() bool }](value); ok {
-		if value.Kind() == reflect.Pointer && value.IsNil() {
+		underlying := value
+		for underlying.Kind() == reflect.Interface && !underlying.IsNil() {
+			underlying = underlying.Elem()
+		}
+
+		if underlying.Kind() == reflect.Pointer && underlying.IsNil() {
 			return true, true
 		}
 
@@ -531,19 +603,31 @@ func customKeyedZero(value reflect.Value, addressable bool) (bool, bool) {
 }
 
 func convertRecursiveElements(src reflect.Value, mode mirrorMode, active map[keyedVisit]bool) (reflect.Value, error) {
-	var out reflect.Value
-	if src.Kind() == reflect.Slice {
-		out = reflect.MakeSlice(reflect.TypeFor[[]any](), src.Len(), src.Len())
-	} else {
-		out = reflect.New(reflect.ArrayOf(src.Len(), reflect.TypeFor[any]())).Elem()
-	}
+	values := make([]reflect.Value, src.Len())
 
+	typ := src.Type()
 	for index := range src.Len() {
 		value, err := convertRecursiveKeyed(src.Index(index), mode, active)
 		if err != nil {
 			return reflect.Value{}, err
 		}
 
+		values[index] = value
+		if !value.Type().AssignableTo(src.Type().Elem()) {
+			if src.Kind() == reflect.Slice {
+				typ = reflect.TypeFor[[]any]()
+			} else {
+				typ = reflect.ArrayOf(src.Len(), reflect.TypeFor[any]())
+			}
+		}
+	}
+
+	out := reflect.New(typ).Elem()
+	if src.Kind() == reflect.Slice {
+		out = reflect.MakeSlice(typ, src.Len(), src.Len())
+	}
+
+	for index, value := range values {
 		out.Index(index).Set(value)
 	}
 
@@ -564,6 +648,70 @@ func convertRecursiveMap(src reflect.Value, mode mirrorMode, active map[keyedVis
 	}
 
 	return out, nil
+}
+
+func containsSecrets(src reflect.Value, active map[keyedVisit]bool) bool {
+	if defaulter.IsSecretType(src.Type()) {
+		return true
+	}
+
+	if src.Kind() == reflect.Pointer || src.Kind() == reflect.Map || src.Kind() == reflect.Slice {
+		if src.IsNil() {
+			return false
+		}
+
+		visit := keyedVisit{typ: src.Type(), pointer: uintptr(src.UnsafePointer()), length: 0}
+		if src.Kind() == reflect.Slice {
+			visit.length = src.Len()
+		}
+
+		if active[visit] {
+			return false
+		}
+
+		active[visit] = true
+		defer delete(active, visit)
+	}
+
+	return containsSecretValues(src, active)
+}
+
+func containsSecretValues(src reflect.Value, active map[keyedVisit]bool) bool {
+	switch src.Kind() {
+	case reflect.Interface, reflect.Pointer:
+		return !src.IsNil() && containsSecrets(src.Elem(), active)
+	case reflect.Struct:
+		return containsSecretFields(src, active)
+	case reflect.Slice, reflect.Array:
+		for index := range src.Len() {
+			if containsSecrets(src.Index(index), active) {
+				return true
+			}
+		}
+	case reflect.Map:
+		for iter := src.MapRange(); iter.Next(); {
+			if containsSecrets(iter.Value(), active) {
+				return true
+			}
+		}
+	case reflect.Invalid, reflect.Bool, reflect.Int, reflect.Int8, reflect.Int16, reflect.Int32, reflect.Int64,
+		reflect.Uint, reflect.Uint8, reflect.Uint16, reflect.Uint32, reflect.Uint64, reflect.Uintptr,
+		reflect.Float32, reflect.Float64, reflect.Complex64, reflect.Complex128, reflect.Chan, reflect.Func,
+		reflect.String, reflect.UnsafePointer:
+		return false
+	}
+
+	return false
+}
+
+func containsSecretFields(src reflect.Value, active map[keyedVisit]bool) bool {
+	for field := range src.Type().Fields() {
+		if field.IsExported() && (defaulter.IsSecret(field) || containsSecrets(src.Field(field.Index[0]), active)) {
+			return true
+		}
+	}
+
+	return false
 }
 
 func decodesItself(typ reflect.Type) bool {

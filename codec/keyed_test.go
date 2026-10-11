@@ -349,6 +349,93 @@ func TestRecursiveEncodersHonorCustomIsZero(t *testing.T) {
 	}
 }
 
+func TestYAMLEncoderRetainsInterfaceValues(t *testing.T) {
+	t.Parallel()
+
+	for _, test := range []struct {
+		name  string
+		value any
+		want  map[string]any
+	}{
+		{name: "zero", value: 0, want: map[string]any{"value": 0}},
+		{name: "false", value: false, want: map[string]any{"value": false}},
+		{name: "empty string", value: "", want: map[string]any{"value": ""}},
+		{name: "empty slice", value: []string{}, want: map[string]any{"value": []any{}}},
+		{name: "empty map", value: map[string]int{}, want: map[string]any{"value": map[string]any{}}},
+		{name: "nil pointer", value: (*int)(nil), want: map[string]any{"value": nil}},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			value := struct {
+				Value any `yaml:",omitempty"`
+			}{Value: test.value}
+
+			data, err := codec.NewYAML().Encode(value)
+			if err != nil {
+				t.Fatal(err)
+			}
+
+			var got map[string]any
+			if err := yaml.Unmarshal(data, &got); err != nil {
+				t.Fatal(err)
+			}
+
+			if !reflect.DeepEqual(got, test.want) {
+				t.Fatalf("document = %#v, want %#v", got, test.want)
+			}
+		})
+	}
+}
+
+func TestYAMLEncoderOmitsCustomZeroInterfaceValues(t *testing.T) {
+	t.Parallel()
+
+	for _, value := range []any{zeroKeyedValue{HTTPPort: -1}, (*zeroKeyedNode)(nil)} {
+		data, err := codec.NewYAML().Encode(struct {
+			Node any `yaml:",omitempty"`
+		}{Node: value})
+		if err != nil {
+			t.Fatal(err)
+		}
+
+		var got map[string]any
+		if err := yaml.Unmarshal(data, &got); err != nil {
+			t.Fatal(err)
+		}
+
+		if !reflect.DeepEqual(got, map[string]any{}) {
+			t.Fatalf("document = %#v; want no custom zero value", got)
+		}
+	}
+}
+
+func TestOmitSecretsRetainsCustomZeroInJSONInterface(t *testing.T) {
+	t.Parallel()
+
+	value := struct {
+		Node any `json:",omitzero"`
+	}{Node: zeroKeyedValue{HTTPPort: -1}}
+
+	template, err := codec.OmitSecrets(value, "json")
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	data, err := codec.NewJSON().Encode(template)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	var got map[string]any
+	if err := yaml.Unmarshal(data, &got); err != nil {
+		t.Fatal(err)
+	}
+
+	want := map[string]any{"node": map[string]any{"http_port": -1, "next": nil}}
+	if !reflect.DeepEqual(got, want) {
+		t.Fatalf("document = %#v, want %#v", got, want)
+	}
+}
+
 func TestEncodersRejectCyclicRecursiveValues(t *testing.T) {
 	t.Parallel()
 

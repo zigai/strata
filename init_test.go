@@ -3,6 +3,7 @@ package strata_test
 import (
 	"encoding/json/v2"
 	"errors"
+	"fmt"
 	"os"
 	"path/filepath"
 	"reflect"
@@ -231,6 +232,173 @@ func TestInitNoOverwriteRace(t *testing.T) {
 
 	if !strings.Contains(string(data), "other process") {
 		t.Errorf("concurrent writer's content was overwritten: %s", data)
+	}
+}
+
+type interfaceSecretConfig struct {
+	Value any
+}
+
+func (config *interfaceSecretConfig) SetDefaults() {
+	config.Value = struct {
+		Token string `strata:"token,secret"`
+		Keep  string
+	}{Token: "token_", Keep: "public-value"}
+}
+
+func TestInitOmitsSecretsHeldThroughInterfaces(t *testing.T) {
+	t.Parallel()
+
+	path := filepath.Join(t.TempDir(), "config.json")
+	if err := strata.Init[interfaceSecretConfig](path); err != nil {
+		t.Fatalf("Init: %v", err)
+	}
+
+	data, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	var document map[string]map[string]string
+	if err := json.Unmarshal(data, &document); err != nil {
+		t.Fatal(err)
+	}
+
+	want := map[string]map[string]string{"value": {"keep": "public-value"}}
+	if !reflect.DeepEqual(document, want) {
+		t.Errorf("template = %v, want %v", document, want)
+	}
+}
+
+type runtimeSecretConfig struct {
+	Value any
+}
+
+func (config *runtimeSecretConfig) SetDefaults() {
+	config.Value = strata.Secret("token_")
+}
+
+type marshaledSecretConfig struct {
+	Token string `strata:"token,secret"`
+	Keep  string
+}
+
+func (config *marshaledSecretConfig) SetDefaults() {
+	config.Token = "token_"
+	config.Keep = "public-value"
+}
+
+func (config *marshaledSecretConfig) MarshalJSON() ([]byte, error) {
+	type plain marshaledSecretConfig
+
+	data, err := json.Marshal(plain(*config))
+	if err != nil {
+		return nil, fmt.Errorf("marshal defaults: %w", err)
+	}
+
+	return data, nil
+}
+
+func TestInitOmitsRuntimeAndMarshaledSecrets(t *testing.T) {
+	t.Parallel()
+
+	for _, test := range []struct {
+		name string
+		init func(string) error
+		want map[string]string
+	}{
+		{name: "runtime Secret", init: func(path string) error { return strata.Init[runtimeSecretConfig](path) }, want: map[string]string{}},
+		{name: "custom marshaler", init: func(path string) error { return strata.Init[marshaledSecretConfig](path) }, want: map[string]string{"keep": "public-value"}},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			t.Parallel()
+
+			path := filepath.Join(t.TempDir(), "config.json")
+			if err := test.init(path); err != nil {
+				t.Fatal(err)
+			}
+
+			data, err := os.ReadFile(path)
+			if err != nil {
+				t.Fatal(err)
+			}
+
+			var document map[string]string
+			if err := json.Unmarshal(data, &document); err != nil {
+				t.Fatal(err)
+			}
+
+			if !reflect.DeepEqual(document, test.want) {
+				t.Errorf("template = %v, want %v", document, test.want)
+			}
+		})
+	}
+}
+
+type interfacePresenceDefaults struct {
+	Zero       any `json:",omitzero"`
+	False      any `json:",omitzero"`
+	Empty      any `json:",omitzero"`
+	NilPointer any `json:",omitzero"`
+}
+
+func (config *interfacePresenceDefaults) SetDefaults() {
+	config.Zero = 0
+	config.False = false
+	config.Empty = ""
+	config.NilPointer = (*int)(nil)
+}
+
+func TestInitRetainsInterfaceValues(t *testing.T) {
+	t.Parallel()
+
+	path := filepath.Join(t.TempDir(), "config.json")
+	if err := strata.Init[interfacePresenceDefaults](path); err != nil {
+		t.Fatal(err)
+	}
+
+	data, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	var got map[string]any
+	if err := json.Unmarshal(data, &got); err != nil {
+		t.Fatal(err)
+	}
+
+	want := map[string]any{"zero": float64(0), "false": false, "empty": "", "nil_pointer": nil}
+	if !reflect.DeepEqual(got, want) {
+		t.Fatalf("template = %#v, want %#v", got, want)
+	}
+}
+
+type byteDefaultsConfig struct {
+	Bytes []byte
+}
+
+func (config *byteDefaultsConfig) SetDefaults() {
+	config.Bytes = []byte{1}
+}
+
+func TestInitPreservesByteDefaults(t *testing.T) {
+	t.Parallel()
+
+	path := filepath.Join(t.TempDir(), "config.json")
+	if err := strata.Init[byteDefaultsConfig](path); err != nil {
+		t.Fatal(err)
+	}
+
+	type config struct{ Bytes []byte }
+
+	got, err := strata.Load[config](strata.WithPath(path), strata.WithFormats("json"))
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	want := config{Bytes: []byte{1}}
+	if !reflect.DeepEqual(got, want) {
+		t.Fatalf("loaded defaults = %+v, want %+v", got, want)
 	}
 }
 

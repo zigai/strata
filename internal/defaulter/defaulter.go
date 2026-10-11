@@ -151,19 +151,7 @@ func ToSnakeCase(s string) string {
 }
 
 func IsSecret(f reflect.StructField) bool {
-	typ := f.Type
-
-	var visited []reflect.Type
-	for typ.Kind() == reflect.Pointer || typ.Kind() == reflect.Map || typ.Kind() == reflect.Slice || typ.Kind() == reflect.Array {
-		if slices.Contains(visited, typ) {
-			break
-		}
-
-		visited = append(visited, typ)
-		typ = typ.Elem()
-	}
-
-	if typ.PkgPath() == "github.com/zigai/strata" && typ.Name() == "Secret" {
+	if IsSecretType(f.Type) {
 		return true
 	}
 
@@ -182,6 +170,20 @@ func IsSecret(f reflect.StructField) bool {
 	}
 
 	return false
+}
+
+func IsSecretType(typ reflect.Type) bool {
+	var visited []reflect.Type
+	for typ.Kind() == reflect.Pointer || typ.Kind() == reflect.Map || typ.Kind() == reflect.Slice || typ.Kind() == reflect.Array {
+		if slices.Contains(visited, typ) {
+			break
+		}
+
+		visited = append(visited, typ)
+		typ = typ.Elem()
+	}
+
+	return typ.PkgPath() == "github.com/zigai/strata" && typ.Name() == "Secret"
 }
 
 func shouldInsertUnderscore(s string, i, n int) bool {
