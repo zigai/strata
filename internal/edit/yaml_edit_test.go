@@ -248,7 +248,9 @@ production:
 
 	// Compare decoded content because scalar indentation may change.
 	var before, after struct {
-		Block string `yaml:"block"`
+		Server struct {
+			Block string `yaml:"block"`
+		} `yaml:"server"`
 	}
 
 	if err := yaml.Unmarshal([]byte(document), &before); err != nil {
@@ -259,7 +261,7 @@ production:
 		t.Fatalf("parse the output: %v", err)
 	}
 
-	if before.Block != after.Block {
-		t.Errorf("the block scalar changed: %q became %q", before.Block, after.Block)
+	if before.Server.Block != "text\n" || after.Server.Block != "text\n" {
+		t.Errorf("block scalar before = %q, after = %q; want %q", before.Server.Block, after.Server.Block, "text\n")
 	}
 }
