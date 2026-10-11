@@ -299,6 +299,10 @@ func (config *marshaledSecretConfig) MarshalJSON() ([]byte, error) {
 	return data, nil
 }
 
+type embeddedMarshaledSecretConfig struct {
+	marshaledSecretConfig
+}
+
 func TestInitOmitsRuntimeAndMarshaledSecrets(t *testing.T) {
 	t.Parallel()
 
@@ -330,6 +334,63 @@ func TestInitOmitsRuntimeAndMarshaledSecrets(t *testing.T) {
 
 			if !reflect.DeepEqual(document, test.want) {
 				t.Errorf("template = %v, want %v", document, test.want)
+			}
+		})
+	}
+}
+
+func TestInitRejectsUnexportedMarshaledSecretEmbedding(t *testing.T) {
+	t.Parallel()
+
+	path := writeFile(t, "config.json", "{}\n")
+	if err := strata.Init[embeddedMarshaledSecretConfig](path, strata.WithOverwrite(true)); err == nil || !strings.Contains(err.Error(), "unexported custom-marshaled embedding") {
+		t.Fatalf("Init error = %v; want unsupported embedding", err)
+	}
+
+	data, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	if string(data) != "{}\n" {
+		t.Fatalf("rejected template changed file to %q", data)
+	}
+}
+
+type collectionSecretDefaults struct {
+	Value any
+}
+
+func (config *collectionSecretDefaults) SetDefaults() {
+	config.Value = map[string]any{
+		"token": strata.Secret("private-value"),
+		"keep":  "public",
+		"items": []any{strata.Secret("private-value"), "retained"},
+	}
+}
+
+func TestInitOmitsSecretsInDynamicCollections(t *testing.T) {
+	t.Parallel()
+
+	type config struct{ Value any }
+
+	for _, format := range []string{"json", "yaml", "toml"} {
+		t.Run(format, func(t *testing.T) {
+			t.Parallel()
+
+			path := filepath.Join(t.TempDir(), "config."+format)
+			if err := strata.Init[collectionSecretDefaults](path); err != nil {
+				t.Fatal(err)
+			}
+
+			got, err := strata.Load[config](strata.WithPath(path), strata.WithFormats(format))
+			if err != nil {
+				t.Fatal(err)
+			}
+
+			want := config{Value: map[string]any{"keep": "public", "items": []any{"retained"}}}
+			if !reflect.DeepEqual(got, want) {
+				t.Fatalf("loaded template = %#v, want %#v", got, want)
 			}
 		})
 	}

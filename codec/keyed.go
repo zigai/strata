@@ -19,6 +19,7 @@ import (
 var (
 	errCyclicConfigurationValue = errors.New("cannot encode cyclic configuration value")
 	errMultilineInlineYAMLKey   = errors.New("inline YAML map keys cannot contain newlines")
+	errSecretEmbedding          = errors.New("cannot omit secrets from an unexported custom-marshaled embedding")
 
 	keyedFormatTags = []string{"toml", "yaml", "json"}
 
@@ -492,6 +493,12 @@ func convertRecursiveContainer(src reflect.Value, mode mirrorMode, active map[ke
 }
 
 func convertRecursiveStruct(src reflect.Value, mode mirrorMode, active map[keyedVisit]bool) (reflect.Value, error) {
+	for field := range src.Type().Fields() {
+		if mode.OmitSecrets && field.Anonymous && !field.IsExported() && !defaulter.IsSecret(field) && describesItself(derefType(field.Type)) {
+			return reflect.Value{}, errSecretEmbedding
+		}
+	}
+
 	builder := structMirrorBuilder{mode: mode, fields: nil, paths: nil, seen: nil}
 	builder.collect(src.Type(), nil, nil)
 
@@ -615,16 +622,24 @@ func customKeyedZero(value reflect.Value, addressable bool) (bool, bool) {
 }
 
 func convertRecursiveElements(src reflect.Value, mode mirrorMode, active map[keyedVisit]bool) (reflect.Value, error) {
-	values := make([]reflect.Value, src.Len())
+	values := make([]reflect.Value, 0, src.Len())
 
 	typ := src.Type()
 	for index := range src.Len() {
+		if mode.OmitSecrets && secretKeyedValue(src.Index(index)) {
+			if src.Kind() == reflect.Array {
+				values = append(values, reflect.Zero(src.Type().Elem()))
+			}
+
+			continue
+		}
+
 		value, err := convertRecursiveKeyed(src.Index(index), mode, active)
 		if err != nil {
 			return reflect.Value{}, err
 		}
 
-		values[index] = value
+		values = append(values, value)
 		if !value.Type().AssignableTo(src.Type().Elem()) {
 			if src.Kind() == reflect.Slice {
 				typ = reflect.TypeFor[[]any]()
@@ -636,7 +651,7 @@ func convertRecursiveElements(src reflect.Value, mode mirrorMode, active map[key
 
 	out := reflect.New(typ).Elem()
 	if src.Kind() == reflect.Slice {
-		out = reflect.MakeSlice(typ, src.Len(), src.Len())
+		out = reflect.MakeSlice(typ, len(values), len(values))
 	}
 
 	for index, value := range values {
@@ -658,6 +673,10 @@ func convertRecursiveMap(src reflect.Value, mode mirrorMode, active map[keyedVis
 
 	out := reflect.MakeMapWithSize(typ, src.Len())
 	for iter := src.MapRange(); iter.Next(); {
+		if mode.OmitSecrets && (secretKeyedValue(iter.Key()) || secretKeyedValue(iter.Value())) {
+			continue
+		}
+
 		value, err := convertRecursiveKeyed(iter.Value(), mode, active)
 		if err != nil {
 			return reflect.Value{}, err
