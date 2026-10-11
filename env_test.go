@@ -86,6 +86,24 @@ type numericConfig struct {
 	Rate   float64 `strata:"rate"`
 }
 
+func TestEnvRoundsFloat32ToDeclaredPrecision(t *testing.T) {
+	type config struct {
+		Ratio float32 `env:"PRECISION_RATIO"`
+	}
+
+	t.Setenv("PRECISION_RATIO", "1.0000000596046448")
+
+	got, err := strata.Load[config](strata.WithoutFileDiscovery())
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	want := config{Ratio: 0x1.000002p0}
+	if got != want {
+		t.Fatalf("environment configuration = %+v, want %+v", got, want)
+	}
+}
+
 func TestEnvUnmarshalUintAndFloat(t *testing.T) {
 	t.Setenv("NUM_MAX_AGE", "100")
 	t.Setenv("NUM_RATE", "3.1415")

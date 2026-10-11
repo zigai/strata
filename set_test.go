@@ -977,6 +977,48 @@ func TestSetUsesSymlinkTargetFormat(t *testing.T) {
 	}
 }
 
+func TestSetRoundsFloat32ToDeclaredPrecision(t *testing.T) {
+	t.Parallel()
+
+	type config struct {
+		Ratio  float32
+		Ratios []float32
+	}
+
+	for _, test := range []struct {
+		name     string
+		format   string
+		key      string
+		original string
+		want     config
+	}{
+		{name: "scalar", format: "toml", key: "ratio", original: "ratio = 0\n", want: config{Ratio: 0x1.000002p0, Ratios: nil}},
+		{name: "slice", format: "json", key: "ratios", original: `{"ratios":[]}`, want: config{Ratio: 0, Ratios: []float32{0x1.000002p0}}},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			t.Parallel()
+
+			path := filepath.Join(t.TempDir(), "config."+test.format)
+			if err := os.WriteFile(path, []byte(test.original), 0o600); err != nil {
+				t.Fatal(err)
+			}
+
+			if err := strata.Set[config](path, test.key, "1.0000000596046448"); err != nil {
+				t.Fatal(err)
+			}
+
+			got, err := strata.Load[config](strata.WithPath(path), strata.WithFormats(test.format))
+			if err != nil {
+				t.Fatal(err)
+			}
+
+			if !reflect.DeepEqual(got, test.want) {
+				t.Fatalf("updated configuration = %+v, want %+v", got, test.want)
+			}
+		})
+	}
+}
+
 func TestSetDecodesByFieldType(t *testing.T) {
 	path := filepath.Join(t.TempDir(), "config.toml")
 	if err := os.WriteFile(path, []byte("level = 'info'\nratio = 0\n[labels]\n"), 0o600); err != nil {

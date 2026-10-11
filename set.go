@@ -375,7 +375,7 @@ func parseEditUint(typ reflect.Type, raw string) (any, error) {
 }
 
 func parseEditFloat(typ reflect.Type, raw string) (any, error) {
-	_, err := strconv.ParseFloat(raw, typ.Bits())
+	parsed, err := strconv.ParseFloat(raw, typ.Bits())
 	if err != nil {
 		if errors.Is(err, strconv.ErrRange) {
 			return nil, fmt.Errorf("%q %w %s", raw, errOutOfRange, typ)
@@ -384,9 +384,8 @@ func parseEditFloat(typ reflect.Type, raw string) (any, error) {
 		return nil, fmt.Errorf("%q %w", raw, errNotNumber)
 	}
 
-	parsed, err := strconv.ParseFloat(raw, 64)
-	if err != nil {
-		return nil, fmt.Errorf("%q %w", raw, errNotNumber)
+	if typ.Kind() == reflect.Float32 {
+		return float32(parsed), nil
 	}
 
 	return parsed, nil

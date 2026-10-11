@@ -500,14 +500,9 @@ func unmarshalUint(field reflect.Value, raw string) error {
 }
 
 func unmarshalFloat(field reflect.Value, raw string) error {
-	v, err := strconv.ParseFloat(strings.TrimSpace(raw), 64)
+	v, err := strconv.ParseFloat(strings.TrimSpace(raw), field.Type().Bits())
 	if err != nil {
 		return fmt.Errorf("parse float: %w", err)
-	}
-
-	// NB: without this check a float32 field would saturate: 1e40 becomes +Inf.
-	if field.OverflowFloat(v) {
-		return fmt.Errorf("%w: %v does not fit %s", ErrInvalidValue, v, field.Type())
 	}
 
 	field.SetFloat(v)
