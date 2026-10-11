@@ -485,30 +485,28 @@ func TestWithTypedDecoder(t *testing.T) {
 	}
 }
 
-func TestWithDecoderNilPanics(t *testing.T) {
+func TestNilDecodersPanic(t *testing.T) {
 	t.Parallel()
 
-	defer func() {
-		r := recover()
-		if r == nil {
-			t.Fatal("expected WithDecoder(nil) to panic")
-		}
-	}()
+	for _, test := range []struct {
+		name     string
+		register func()
+	}{
+		{"WithDecoder", func() { strata.WithDecoder(".custom", nil) }},
+		{"WithTypedDecoder", func() { strata.WithTypedDecoder[formatsTestConfig](".custom", nil) }},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			t.Parallel()
 
-	strata.WithDecoder(".custom", nil)
-}
+			defer func() {
+				if recover() == nil {
+					t.Fatalf("expected %s(nil) to panic", test.name)
+				}
+			}()
 
-func TestWithTypedDecoderNilPanics(t *testing.T) {
-	t.Parallel()
-
-	defer func() {
-		r := recover()
-		if r == nil {
-			t.Fatal("expected WithTypedDecoder(nil) to panic")
-		}
-	}()
-
-	strata.WithTypedDecoder[formatsTestConfig](".custom", nil)
+			test.register()
+		})
+	}
 }
 
 func TestWithDecoderMalformed(t *testing.T) {
