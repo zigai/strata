@@ -44,11 +44,13 @@ type leafCorpus struct {
 	Names    []string       `strata:"names"`
 }
 
-func corpus() leafCorpus {
+func TestDefaultRawValuesMatchFormatting(t *testing.T) {
+	t.Parallel()
+
 	ref := 5
 	nap := 90 * time.Second
 
-	return leafCorpus{
+	cfg := leafCorpus{
 		Int:      -7,
 		Small:    -128,
 		Wide:     math.MaxUint64,
@@ -67,12 +69,6 @@ func corpus() leafCorpus {
 		RefNap:   &nap,
 		Names:    []string{"a", "b"},
 	}
-}
-
-func TestDefaultRawValuesMatchFormatting(t *testing.T) {
-	t.Parallel()
-
-	cfg := corpus()
 
 	recorded := make(map[string]string)
 
@@ -119,7 +115,17 @@ func TestDefaultRawValuesMatchFormatting(t *testing.T) {
 func TestInterceptingTypesAreNotFormattedByKind(t *testing.T) {
 	t.Parallel()
 
-	cfg := corpus()
+	cfg := struct {
+		Nap      time.Duration `strata:"nap"`
+		Level    level         `strata:"level"`
+		PtrLevel ptrLevel      `strata:"ptr_level"`
+		Failing  failure       `strata:"failing"`
+	}{
+		Nap:      10 * time.Second,
+		Level:    3,
+		PtrLevel: 9,
+		Failing:  failure(42),
+	}
 	recorded := make(map[string]string)
 
 	if err := defaulter.Apply(&cfg, func(key, rawVal string) {

@@ -323,6 +323,10 @@ func TestMetadataActiveFilesIsACopy(t *testing.T) {
 func TestProvenancePreservesExactIntegers(t *testing.T) {
 	t.Parallel()
 
+	type wideConfig struct {
+		Small int64 `strata:"small" json:"small" toml:"small" yaml:"small"`
+	}
+
 	for _, tc := range []struct {
 		ext  string
 		body string

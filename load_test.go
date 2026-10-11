@@ -163,13 +163,7 @@ func TestPrecedenceCascading(t *testing.T) {
 func TestBooleanFalseOverwriteDefense(t *testing.T) {
 	t.Parallel()
 
-	tmpDir := t.TempDir()
-	filePath := filepath.Join(tmpDir, "sparse.toml")
-	content := []byte("app_name = \"sparse-app\"\nmax_retries = 5\n")
-
-	if err := os.WriteFile(filePath, content, 0o600); err != nil {
-		t.Fatalf("WriteFile: %v", err)
-	}
+	filePath := writeFile(t, "sparse.toml", "app_name = \"sparse-app\"\nmax_retries = 5\n")
 
 	cfg, meta, err := strata.LoadWithMetadata[cascadingConfig](
 		strata.WithPath(filePath),
@@ -203,13 +197,7 @@ func TestBooleanFalseOverwriteDefense(t *testing.T) {
 func TestSliceReplacementSemantics(t *testing.T) {
 	t.Parallel()
 
-	tmpDir := t.TempDir()
-	filePath := filepath.Join(tmpDir, "replace_slice.toml")
-	content := []byte("ignore_paths = [\"/custom/build\"]\n")
-
-	if err := os.WriteFile(filePath, content, 0o600); err != nil {
-		t.Fatalf("WriteFile: %v", err)
-	}
+	filePath := writeFile(t, "replace_slice.toml", "ignore_paths = [\"/custom/build\"]\n")
 
 	cfg, err := strata.Load[cascadingConfig](
 		strata.WithPath(filePath),
@@ -228,10 +216,7 @@ func TestSliceReplacementSemantics(t *testing.T) {
 func TestExplicitPathOutranksWithoutFileDiscovery(t *testing.T) {
 	t.Parallel()
 
-	path := filepath.Join(t.TempDir(), "cfg.toml")
-	if err := os.WriteFile(path, []byte("small = 42\n"), 0o600); err != nil {
-		t.Fatalf("seed: %v", err)
-	}
+	path := writeFile(t, "cfg.toml", "small = 42\n")
 
 	got, err := strata.Load[narrowConfig](strata.WithPath(path), strata.WithoutFileDiscovery(), strata.WithFormats("toml"))
 	if err != nil {
@@ -266,10 +251,7 @@ func TestMaxFileSizeOption(t *testing.T) {
 func TestMaxFileSizeAcceptsMaxInt64(t *testing.T) {
 	t.Parallel()
 
-	path := filepath.Join(t.TempDir(), "cfg.toml")
-	if err := os.WriteFile(path, []byte("small = 7\n"), 0o600); err != nil {
-		t.Fatalf("seed: %v", err)
-	}
+	path := writeFile(t, "cfg.toml", "small = 7\n")
 
 	got, err := strata.Load[narrowConfig](strata.WithPath(path), strata.WithMaxFileSize(math.MaxInt64), strata.WithFormats("toml"))
 	if err != nil {
@@ -284,10 +266,7 @@ func TestMaxFileSizeAcceptsMaxInt64(t *testing.T) {
 func TestFileTooLargeIsClassifiable(t *testing.T) {
 	t.Parallel()
 
-	path := filepath.Join(t.TempDir(), "cfg.toml")
-	if err := os.WriteFile(path, []byte("small = 7\n"), 0o600); err != nil {
-		t.Fatalf("seed: %v", err)
-	}
+	path := writeFile(t, "cfg.toml", "small = 7\n")
 
 	_, err := strata.Load[narrowConfig](strata.WithPath(path), strata.WithMaxFileSize(4), strata.WithFormats("toml"))
 	if !errors.Is(err, strata.ErrFileTooLarge) {

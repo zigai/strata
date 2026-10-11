@@ -77,10 +77,6 @@ type narrowConfig struct {
 	Float float32 `strata:"float" env:"NARROW_FLOAT"`
 }
 
-type wideConfig struct {
-	Small int64 `strata:"small" json:"small" toml:"small" yaml:"small"`
-}
-
 type demoConfig struct {
 	ServerHost string `json:"server_host" toml:"server_host" yaml:"server_host"`
 	ServerPort int    `json:"server_port" toml:"server_port" yaml:"server_port"`
