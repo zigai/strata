@@ -241,6 +241,10 @@ func applyLayer(target any, layer cascade.Layer, opts *loadOptions, meta *Metada
 	}
 
 	if err := codecInstance.Decode(data, target); err != nil {
+		if opts.keys.secretSegments(nil) {
+			err = &secretValueError{cause: err}
+		}
+
 		return fmt.Errorf("decode layer %s: %w", layer.Path, err)
 	}
 

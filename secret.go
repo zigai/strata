@@ -1,11 +1,18 @@
 package strata
 
-import "log/slog"
+import (
+	"errors"
+	"log/slog"
+)
 
 // Secret is a string value that redacts itself when formatted or logged.
 // Use Value to retrieve the underlying string. Save writes the real value;
 // Init omits the field from generated templates.
 type Secret string
+
+type secretValueError struct {
+	cause error
+}
 
 // String returns the redacted form of the secret.
 func (s Secret) String() string { return "[REDACTED]" }
@@ -18,3 +25,9 @@ func (s Secret) LogValue() slog.Value { return slog.StringValue("[REDACTED]") }
 
 // Value returns the underlying secret string.
 func (s Secret) Value() string { return string(s) }
+
+func (err *secretValueError) Error() string { return "invalid configuration value [REDACTED]" }
+
+func (err *secretValueError) GoString() string { return err.Error() }
+
+func (err *secretValueError) Is(target error) bool { return errors.Is(err.cause, target) }

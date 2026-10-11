@@ -27,6 +27,84 @@ func (s *secretFileConfig) SetDefaults() {
 	s.Token = "default-secret"
 }
 
+type secretEncodeValues []string
+
+func (values secretEncodeValues) MarshalJSON() ([]byte, error) {
+	return nil, errors.New("invalid " + values[0])
+}
+
+func TestRejectedSecretValuesDoNotLeak(t *testing.T) {
+	t.Parallel()
+
+	type config struct {
+		Credential time.Duration `strata:"credential,secret"`
+	}
+
+	for _, test := range []struct {
+		name     string
+		original string
+		reject   func(string) error
+	}{
+		{
+			name:     "load",
+			original: `{"credential":"token_"}`,
+			reject: func(path string) error {
+				_, err := strata.Load[config](strata.WithPath(path), strata.WithFormats("json"))
+				return err
+			},
+		},
+		{
+			name:     "set",
+			original: `{"credential":"1s"}`,
+			reject: func(path string) error {
+				return strata.Set[config](path, "credential", "token_")
+			},
+		},
+		{
+			name:     "set encoding",
+			original: `{"credential":[]}`,
+			reject: func(path string) error {
+				type encodeConfig struct {
+					Credential secretEncodeValues `strata:"credential,secret"`
+				}
+
+				return strata.Set[encodeConfig](path, "credential", secretEncodeValues{"token_"})
+			},
+		},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			t.Parallel()
+
+			path := filepath.Join(t.TempDir(), "config.json")
+			if err := os.WriteFile(path, []byte(test.original), 0o600); err != nil {
+				t.Fatal(err)
+			}
+
+			err := test.reject(path)
+			if err == nil {
+				t.Fatal("invalid secret was accepted")
+			}
+
+			if strings.Contains(err.Error(), "token_") {
+				t.Errorf("rejection leaked secret: %v", err)
+			}
+
+			if test.name == "load" && !errors.Is(err, strata.ErrMalformed) {
+				t.Errorf("Load error = %v, want ErrMalformed", err)
+			}
+
+			data, readErr := os.ReadFile(path)
+			if readErr != nil {
+				t.Fatal(readErr)
+			}
+
+			if string(data) != test.original {
+				t.Errorf("rejected operation changed file: %s", data)
+			}
+		})
+	}
+}
+
 func TestSecretRedactsWhenPrinted(t *testing.T) {
 	secret := strata.Secret("private-value")
 	if secret.String() != "[REDACTED]" || secret.GoString() != "[REDACTED]" || secret.LogValue().String() != "[REDACTED]" || secret.Value() != "private-value" {

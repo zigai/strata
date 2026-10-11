@@ -81,11 +81,12 @@ func Set[T any](targetPath string, dottedKey string, value any) error {
 		return fmt.Errorf("%w: %s", errInvalidConfigType, typ)
 	}
 
-	if !keyTreeFor(typ).known(dottedKey) {
+	keys := keyTreeFor(typ)
+	if !keys.known(dottedKey) {
 		var unknown UnknownKey
 
 		unknown.Key = dottedKey
-		unknown.Suggestion = keyTreeFor(typ).suggest(dottedKey)
+		unknown.Suggestion = keys.suggest(dottedKey)
 
 		return &unknownSetKeyError{path: targetPath, unknown: unknown}
 	}
@@ -97,10 +98,19 @@ func Set[T any](targetPath string, dottedKey string, value any) error {
 
 	typed, err := typedEditValue(fieldType, value)
 	if err != nil {
+		if keys.secret(dottedKey) {
+			err = &secretValueError{cause: err}
+		}
+
 		return fmt.Errorf("%s: %s: %w", targetPath, dottedKey, err)
 	}
 
-	return setFile(targetPath, dottedKey, typed)
+	err = setFile(targetPath, dottedKey, typed)
+	if err != nil && keys.secret(dottedKey) {
+		return &secretValueError{cause: err}
+	}
+
+	return err
 }
 
 func (e *unknownSetKeyError) Error() string { return e.path + ": " + e.unknown.String() }

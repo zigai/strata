@@ -49,7 +49,7 @@ var (
 	// the target. It covers every format, so a caller can tell a broken file
 	// from a missing one without knowing which codec ran.
 	//
-	// The error also wraps the parser's own error, reachable with [errors.As].
+	// Parser errors are reachable with [errors.As] only for targets without secrets.
 	ErrMalformed = codec.ErrMalformed
 
 	// ErrMultipleDocuments is returned for a YAML stream carrying more than one
