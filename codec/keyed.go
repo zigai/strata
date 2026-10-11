@@ -66,8 +66,8 @@ type keyedVisit struct {
 	length  int
 }
 
-func OmitSecrets(value any) (any, error) {
-	return keyedValueMode(value, mirrorMode{Format: "", OmitSecrets: true, StringifyDurations: false, PreserveDecoders: false})
+func OmitSecrets(value any, format string) (any, error) {
+	return keyedValueMode(value, mirrorMode{Format: format, OmitSecrets: true, StringifyDurations: false, PreserveDecoders: false})
 }
 
 func keyedValue(value any, format string) (any, error) {
@@ -174,7 +174,7 @@ func (b *structMirrorBuilder) collect(typ reflect.Type, prefix []int, types []re
 			continue
 		}
 
-		if embedsStruct(field) {
+		if embedsStruct(field, b.mode.Format) {
 			embeds = append(embeds, field)
 			continue
 		}
@@ -217,9 +217,15 @@ func (b *structMirrorBuilder) add(field reflect.StructField, prefix []int) {
 	b.paths = append(b.paths, appendIndex(prefix, field.Index))
 }
 
-func embedsStruct(field reflect.StructField) bool {
+func embedsStruct(field reflect.StructField, format string) bool {
 	if !field.Anonymous {
 		return false
+	}
+
+	if format == "json" {
+		if _, named := jsonTagName(field); named {
+			return false
+		}
 	}
 
 	embedType := derefType(field.Type)

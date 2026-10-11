@@ -861,6 +861,122 @@ func TestSetParsesLists(t *testing.T) {
 	}
 }
 
+func TestSetPreservesTaggedEmbeddedFields(t *testing.T) {
+	t.Parallel()
+
+	type DB struct{ Port int }
+
+	type config struct {
+		DB `json:"db"`
+	}
+
+	path := filepath.Join(t.TempDir(), "config.json")
+	if err := os.WriteFile(path, []byte(`{"db":{"port":9000}}`), 0o600); err != nil {
+		t.Fatal(err)
+	}
+
+	if err := strata.Set[config](path, "port", 9001); err != nil {
+		t.Fatal(err)
+	}
+
+	got, err := strata.Load[config](strata.WithPath(path), strata.WithFormats("json"))
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	want := config{Port: 9001}
+	if got != want {
+		t.Fatalf("updated configuration = %+v, want %+v", got, want)
+	}
+}
+
+func TestSetPrefersDirectFieldsOverTaggedEmbedding(t *testing.T) {
+	t.Parallel()
+
+	type DB struct {
+		Port string `json:"port"`
+	}
+
+	type config struct {
+		DB `json:"db"`
+
+		Port int `json:"port"`
+	}
+
+	path := writeFile(t, "config.json", `{"db":{"port":"unchanged"},"port":8080}`)
+	if err := strata.Set[config](path, "port", "8081"); err != nil {
+		t.Fatal(err)
+	}
+
+	data, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	var got config
+	if err := json.Unmarshal(data, &got); err != nil {
+		t.Fatal(err)
+	}
+
+	want := config{DB: DB{Port: "unchanged"}, Port: 8081}
+	if got != want {
+		t.Fatalf("updated configuration = %+v, want %+v", got, want)
+	}
+}
+
+func TestSetUsesSymlinkTargetFormat(t *testing.T) {
+	t.Parallel()
+
+	type DB struct{ Port int }
+
+	type config struct {
+		DB `json:"db"`
+	}
+
+	for _, test := range []struct {
+		name     string
+		target   string
+		link     string
+		document string
+	}{
+		{name: "JSON target", target: "actual.json", link: "config.yaml", document: `{"db":{"port":9000}}`},
+		{name: "TOML target", target: "actual.toml", link: "config.json", document: "port = 9000\n"},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			t.Parallel()
+
+			path := writeFile(t, test.target, test.document)
+
+			link := filepath.Join(filepath.Dir(path), test.link)
+			if err := os.Symlink(path, link); err != nil {
+				t.Fatal(err)
+			}
+
+			if err := strata.Set[config](link, "port", 9001); err != nil {
+				t.Fatal(err)
+			}
+
+			got, err := strata.Load[config](strata.WithPath(path), strata.WithFormats(filepath.Ext(path)))
+			if err != nil {
+				t.Fatal(err)
+			}
+
+			if got.Port != 9001 {
+				t.Fatalf("updated port = %d, want 9001", got.Port)
+			}
+
+			info, err := os.Lstat(link)
+			if err != nil {
+				t.Fatal(err)
+			}
+
+			if info.Mode()&os.ModeSymlink == 0 {
+				t.Fatal("configuration symlink was replaced")
+			}
+		})
+	}
+}
+
 func TestSetDecodesByFieldType(t *testing.T) {
 	path := filepath.Join(t.TempDir(), "config.toml")
 	if err := os.WriteFile(path, []byte("level = 'info'\nratio = 0\n[labels]\n"), 0o600); err != nil {

@@ -11,6 +11,32 @@ import (
 	"github.com/zigai/strata"
 )
 
+func TestSaveJSONPreservesTaggedEmbeddedFields(t *testing.T) {
+	t.Parallel()
+
+	type DB struct{ Port int }
+
+	type config struct {
+		DB `json:"db"`
+	}
+
+	want := config{Port: 9000}
+
+	path := filepath.Join(t.TempDir(), "config.json")
+	if err := strata.Save(path, want); err != nil {
+		t.Fatalf("Save: %v", err)
+	}
+
+	got, err := strata.Load[config](strata.WithPath(path), strata.WithFormats("json"))
+	if err != nil {
+		t.Fatalf("Load: %v", err)
+	}
+
+	if got != want {
+		t.Fatalf("saved configuration = %+v, want %+v", got, want)
+	}
+}
+
 func TestSave(t *testing.T) {
 	t.Parallel()
 

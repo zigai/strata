@@ -91,7 +91,12 @@ func Set[T any](targetPath string, dottedKey string, value any) error {
 		return &unknownSetKeyError{path: targetPath, unknown: unknown}
 	}
 
-	fieldType, err := plan.FieldType(typ, dottedKey)
+	resolvedPath, symlinkErr := filepath.EvalSymlinks(targetPath)
+	if symlinkErr == nil {
+		targetPath = resolvedPath
+	}
+
+	fieldType, fileKey, err := plan.FieldType(typ, dottedKey, formatName(normalizeExt(filepath.Ext(targetPath))))
 	if err != nil {
 		return fmt.Errorf("%s: %w", targetPath, err)
 	}
@@ -105,7 +110,7 @@ func Set[T any](targetPath string, dottedKey string, value any) error {
 		return fmt.Errorf("%s: %s: %w", targetPath, dottedKey, err)
 	}
 
-	err = setFile(targetPath, dottedKey, typed)
+	err = setFile(targetPath, fileKey, typed)
 	if err != nil && keys.secret(dottedKey) {
 		return &secretValueError{cause: err}
 	}
@@ -148,11 +153,6 @@ func setBytes(format string, data []byte, dottedKey string, val any) ([]byte, er
 }
 
 func setFile(targetPath string, dottedKey string, value any) error {
-	resolvedPath, symlinkErr := filepath.EvalSymlinks(targetPath)
-	if symlinkErr == nil {
-		targetPath = resolvedPath
-	}
-
 	f, openErr := os.Open(targetPath)
 	if openErr != nil {
 		return fmt.Errorf("open target configuration %s: %w", targetPath, openErr)

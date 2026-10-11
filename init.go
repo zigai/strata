@@ -82,7 +82,7 @@ func Init[T any](targetPath string, opts ...InitOption) error {
 		return fmt.Errorf("apply defaults for template: %w", err)
 	}
 
-	template, err := codec.OmitSecrets(target)
+	template, err := codec.OmitSecrets(target, formatName(normalizeExt(filepath.Ext(targetPath))))
 	if err != nil {
 		return fmt.Errorf("prepare configuration template: %w", err)
 	}

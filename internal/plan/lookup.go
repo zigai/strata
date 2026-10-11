@@ -52,17 +52,17 @@ func LeafFor(root reflect.Type, key string) (Leaf, error) {
 	}, nil
 }
 
-func FieldType(root reflect.Type, key string) (reflect.Type, error) {
+func FieldType(root reflect.Type, key string, format string) (reflect.Type, string, error) {
 	if root.Kind() != reflect.Struct {
-		return nil, fmt.Errorf("%w: %s", ErrNotStruct, root)
+		return nil, "", fmt.Errorf("%w: %s", ErrNotStruct, root)
 	}
 
-	typ, ok := fieldTypePath(root, strings.Split(key, "."), nil)
+	typ, path, ok := fieldTypePath(root, strings.Split(key, "."), nil, format)
 	if !ok {
-		return nil, fmt.Errorf("%w %q", errUnknownKey, key)
+		return nil, "", fmt.Errorf("%w %q", errUnknownKey, key)
 	}
 
-	return typ, nil
+	return typ, strings.Join(path, "."), nil
 }
 
 func IsUnsetSecret(root reflect.Value, key string) bool {
@@ -76,27 +76,30 @@ func IsUnsetSecret(root reflect.Value, key string) bool {
 	return !ok || field.IsZero()
 }
 
-func fieldTypePath(typ reflect.Type, parts []string, active []reflect.Type) (reflect.Type, bool) {
+func fieldTypePath(typ reflect.Type, parts []string, active []reflect.Type, format string) (reflect.Type, []string, bool) {
 	for typ.Kind() == reflect.Pointer {
 		typ = typ.Elem()
 	}
 
 	if len(parts) == 0 {
-		return typ, !defaulter.IsNestedStructType(typ)
+		return typ, nil, !defaulter.IsNestedStructType(typ)
 	}
 
 	if typ.Kind() == reflect.Map && typ.Key().Kind() == reflect.String {
-		return fieldTypePath(typ.Elem(), parts[1:], active)
+		found, path, ok := fieldTypePath(typ.Elem(), parts[1:], active, format)
+		return found, append([]string{parts[0]}, path...), ok
 	}
 
 	if typ.Kind() != reflect.Struct || slices.Contains(active, typ) {
-		return nil, false
+		return nil, nil, false
 	}
 
-	return fieldTypeInStruct(typ, parts, append(active, typ))
+	return fieldTypeInStruct(typ, parts, append(active, typ), format)
 }
 
-func fieldTypeInStruct(typ reflect.Type, parts []string, active []reflect.Type) (reflect.Type, bool) {
+func fieldTypeInStruct(typ reflect.Type, parts []string, active []reflect.Type, format string) (reflect.Type, []string, bool) {
+	var embeds []reflect.StructField
+
 	for field := range typ.Fields() {
 		if !field.IsExported() && !field.Anonymous {
 			continue
@@ -108,17 +111,28 @@ func fieldTypeInStruct(typ reflect.Type, parts []string, active []reflect.Type) 
 		}
 
 		if field.Anonymous && defaulter.IsNestedStructType(field.Type) {
-			if found, ok := fieldTypePath(field.Type, parts, active); ok {
-				return found, true
-			}
+			embeds = append(embeds, field)
+			continue
 		}
 
 		if key == parts[0] {
-			return fieldTypePath(field.Type, parts[1:], active)
+			found, path, ok := fieldTypePath(field.Type, parts[1:], active, format)
+			return found, append([]string{key}, path...), ok
 		}
 	}
 
-	return nil, false
+	for _, field := range embeds {
+		if found, path, ok := fieldTypePath(field.Type, parts, active, format); ok {
+			name, _, _ := strings.Cut(field.Tag.Get("json"), ",")
+			if format == "json" && strings.TrimSpace(name) != "" {
+				path = append([]string{defaulter.FieldKey(field)}, path...)
+			}
+
+			return found, path, true
+		}
+	}
+
+	return nil, nil, false
 }
 
 func fieldByKey(root reflect.Type, key string) ([]int, *reflect.StructField, bool, error) {

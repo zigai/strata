@@ -5,6 +5,7 @@ import (
 	"errors"
 	"os"
 	"path/filepath"
+	"reflect"
 	"strings"
 	"testing"
 	"time"
@@ -230,6 +231,42 @@ func TestInitNoOverwriteRace(t *testing.T) {
 
 	if !strings.Contains(string(data), "other process") {
 		t.Errorf("concurrent writer's content was overwritten: %s", data)
+	}
+}
+
+type DatabaseDefaults struct {
+	Port int
+}
+
+func (config *DatabaseDefaults) SetDefaults() {
+	config.Port = 9000
+}
+
+func TestInitPreservesTaggedEmbeddedFields(t *testing.T) {
+	t.Parallel()
+
+	type config struct {
+		DatabaseDefaults `json:"db"`
+	}
+
+	path := filepath.Join(t.TempDir(), "config.json")
+	if err := strata.Init[config](path); err != nil {
+		t.Fatal(err)
+	}
+
+	data, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	var document map[string]map[string]int
+	if err := json.Unmarshal(data, &document); err != nil {
+		t.Fatal(err)
+	}
+
+	want := map[string]map[string]int{"db": {"port": 9000}}
+	if !reflect.DeepEqual(document, want) {
+		t.Fatalf("template = %v, want %v", document, want)
 	}
 }
 
