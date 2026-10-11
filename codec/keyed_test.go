@@ -349,6 +349,43 @@ func TestRecursiveEncodersHonorCustomIsZero(t *testing.T) {
 	}
 }
 
+func TestYAMLEncoderSupportsInlineMaps(t *testing.T) {
+	t.Parallel()
+
+	value := struct {
+		Name   string
+		Extras map[string]string `yaml:",inline"`
+	}{Name: "public", Extras: map[string]string{"extra": "\nvalue"}}
+
+	data, err := codec.NewYAML().Encode(value)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	var got map[string]string
+	if err := yaml.Unmarshal(data, &got); err != nil {
+		t.Fatal(err)
+	}
+
+	want := map[string]string{"name": "public", "extra": "\nvalue"}
+	if !reflect.DeepEqual(got, want) {
+		t.Fatalf("document = %#v, want %#v", got, want)
+	}
+}
+
+func TestYAMLEncoderRejectsMultilineInlineMapKeys(t *testing.T) {
+	t.Parallel()
+
+	value := struct {
+		Extras map[string]int `yaml:",inline"`
+	}{Extras: map[string]int{"\nextra": 1}}
+
+	data, err := codec.NewYAML().Encode(value)
+	if err == nil || !strings.Contains(err.Error(), "inline YAML map keys cannot contain newlines") || data != nil {
+		t.Fatalf("Encode = %q, %v; want no document and unsupported inline key", data, err)
+	}
+}
+
 func TestYAMLEncoderRetainsInterfaceValues(t *testing.T) {
 	t.Parallel()
 

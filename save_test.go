@@ -11,6 +11,50 @@ import (
 	"github.com/zigai/strata"
 )
 
+func TestSaveYAMLPreservesLeadingNewline(t *testing.T) {
+	t.Parallel()
+
+	type config struct{ Text string }
+
+	want := config{Text: "\na"}
+
+	path := filepath.Join(t.TempDir(), "config.yaml")
+	if err := strata.Save(path, want); err != nil {
+		t.Fatalf("Save: %v", err)
+	}
+
+	got, err := strata.Load[config](strata.WithPath(path), strata.WithFormats("yaml"))
+	if err != nil {
+		t.Fatalf("Load: %v", err)
+	}
+
+	if got != want {
+		t.Fatalf("saved configuration = %+v, want %+v", got, want)
+	}
+}
+
+func TestSaveYAMLPreservesLeadingNewlineInMapKeys(t *testing.T) {
+	t.Parallel()
+
+	type config struct{ Values map[string]int }
+
+	want := config{Values: map[string]int{"\na": 1}}
+
+	path := filepath.Join(t.TempDir(), "config.yaml")
+	if err := strata.Save(path, want); err != nil {
+		t.Fatal(err)
+	}
+
+	got, err := strata.Load[config](strata.WithPath(path), strata.WithFormats("yaml"))
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	if !reflect.DeepEqual(got, want) {
+		t.Fatalf("saved configuration = %+v, want %+v", got, want)
+	}
+}
+
 func TestSaveJSONPreservesTaggedEmbeddedFields(t *testing.T) {
 	t.Parallel()
 

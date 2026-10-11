@@ -18,6 +18,7 @@ import (
 
 var (
 	errCyclicConfigurationValue = errors.New("cannot encode cyclic configuration value")
+	errMultilineInlineYAMLKey   = errors.New("inline YAML map keys cannot contain newlines")
 
 	keyedFormatTags = []string{"toml", "yaml", "json"}
 
@@ -67,7 +68,7 @@ type keyedVisit struct {
 }
 
 func (mode mirrorMode) needsValues() bool {
-	return mode.OmitSecrets
+	return mode.OmitSecrets || mode.Format == "yaml"
 }
 
 func (mode mirrorMode) preservesValue(value reflect.Value) bool {
@@ -127,6 +128,8 @@ func mirrorOfMode(typ reflect.Type, mode mirrorMode) *keyedMirror {
 		mirror = &keyedMirror{typ: reflect.TypeFor[string](), paths: nil, mode: mode}
 	case describesItself(typ) || mode.PreserveDecoders && decodesItself(typ) || isRecursive(typ, nil):
 		mirror = &keyedMirror{typ: nil, paths: nil, mode: mode}
+	case mode.Format == "yaml" && typ.Kind() == reflect.String:
+		mirror = &keyedMirror{typ: reflect.TypeFor[yamlString](), paths: nil, mode: mode}
 	default:
 		mirror = buildMirror(typ, mode)
 	}
@@ -250,6 +253,10 @@ func (b *structMirrorBuilder) convertField(index int, src reflect.Value, active 
 	}
 
 	field.Type = value.Type()
+	if b.mode.Format == "yaml" && multilineInlineYAMLMap(*field) {
+		return reflect.Value{}, errMultilineInlineYAMLKey
+	}
+
 	if value.Type() != src.Type() {
 		field.Tag = tag
 
@@ -327,8 +334,11 @@ func convertKeyed(src reflect.Value, mirror *keyedMirror) reflect.Value {
 		return src
 	}
 
-	if mirror.mode.StringifyDurations && src.Type() == reflect.TypeFor[time.Duration]() {
+	switch mirror.typ {
+	case reflect.TypeFor[string]():
 		return reflect.ValueOf(time.Duration(src.Int()).String())
+	case reflect.TypeFor[yamlString]():
+		return reflect.ValueOf(yamlString(src.String()))
 	}
 
 	dst := reflect.New(mirror.typ).Elem()
@@ -469,10 +479,12 @@ func convertRecursiveContainer(src reflect.Value, mode mirrorMode, active map[ke
 		return convertRecursiveElements(src, mode, active)
 	case reflect.Map:
 		return convertRecursiveMap(src, mode, active)
+	case reflect.String:
+		return convertKeyed(src, mirrorOfMode(src.Type(), mode)), nil
 	case reflect.Invalid, reflect.Bool, reflect.Int, reflect.Int8, reflect.Int16, reflect.Int32, reflect.Int64,
 		reflect.Uint, reflect.Uint8, reflect.Uint16, reflect.Uint32, reflect.Uint64, reflect.Uintptr,
 		reflect.Float32, reflect.Float64, reflect.Complex64, reflect.Complex128, reflect.Chan, reflect.Func,
-		reflect.Interface, reflect.String, reflect.UnsafePointer:
+		reflect.Interface, reflect.UnsafePointer:
 		return src, nil
 	}
 
@@ -635,7 +647,14 @@ func convertRecursiveElements(src reflect.Value, mode mirrorMode, active map[key
 }
 
 func convertRecursiveMap(src reflect.Value, mode mirrorMode, active map[keyedVisit]bool) (reflect.Value, error) {
-	typ := reflect.MapOf(src.Type().Key(), reflect.TypeFor[any]())
+	keyType := src.Type().Key()
+
+	keyMirror := mirrorOfMode(keyType, mode)
+	if mode.Format == "yaml" && keyType.Kind() == reflect.String && keyMirror.typ != nil && multilineYAMLKeys(src) {
+		keyType = keyMirror.typ
+	}
+
+	typ := reflect.MapOf(keyType, reflect.TypeFor[any]())
 
 	out := reflect.MakeMapWithSize(typ, src.Len())
 	for iter := src.MapRange(); iter.Next(); {
@@ -644,7 +663,12 @@ func convertRecursiveMap(src reflect.Value, mode mirrorMode, active map[keyedVis
 			return reflect.Value{}, err
 		}
 
-		out.SetMapIndex(iter.Key(), value)
+		key := iter.Key()
+		if key.Type() != keyType {
+			key = convertKeyed(key, keyMirror)
+		}
+
+		out.SetMapIndex(key, value)
 	}
 
 	return out, nil
@@ -712,6 +736,21 @@ func containsSecretFields(src reflect.Value, active map[keyedVisit]bool) bool {
 	}
 
 	return false
+}
+
+func multilineYAMLKeys(src reflect.Value) bool {
+	for iter := src.MapRange(); iter.Next(); {
+		if strings.Contains(iter.Key().String(), "\n") {
+			return true
+		}
+	}
+
+	return false
+}
+
+func multilineInlineYAMLMap(field reflect.StructField) bool {
+	return field.Type.Kind() == reflect.Map && field.Type.Key() == reflect.TypeFor[yamlString]() &&
+		slices.Contains(strings.Split(field.Tag.Get("yaml"), ","), "inline")
 }
 
 func decodesItself(typ reflect.Type) bool {

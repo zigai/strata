@@ -26,6 +26,8 @@ type yamlMappingVisit struct {
 	typ  reflect.Type
 }
 
+type yamlString string
+
 // NewYAML returns a codec that decodes and encodes YAML documents.
 func NewYAML() *YAML {
 	return &YAML{}
@@ -396,4 +398,13 @@ func (c *YAML) Encode(value any) ([]byte, error) {
 	}
 
 	return data, nil
+}
+
+func (value yamlString) MarshalYAML() (any, error) {
+	text := string(value)
+	if !strings.Contains(text, "\n") {
+		return text, nil
+	}
+
+	return &yaml.Node{Kind: yaml.ScalarNode, Tag: "!!str", Value: text, Style: yaml.DoubleQuotedStyle}, nil
 }
