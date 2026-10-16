@@ -100,8 +100,6 @@ func TestJSONBindsConfigurationKeys(t *testing.T) {
 		{
 			"promoted field",
 			`{"promoted": 6}`,
-
-			//nolint:modernize // Go allows eliding a literal's type only in array, slice, and map elements, not in a struct field
 			bindingConfig{bindingPromoted: bindingPromoted{Promoted: 6}},
 		},
 		{
