@@ -16,7 +16,7 @@ test *flags:
     exit $status
 
 # Run all tests under the race detector
-test-race: (test "-race")
+race: (test "-race")
 
 # Explore the config editors with the fuzzer, each target for the given time
 fuzz time="60s":
@@ -72,7 +72,7 @@ lint:
     cd examples/cli && golangci-lint run
 
 # Check formatting without rewriting files
-fmt-check:
+format-check:
     golangci-lint fmt --diff
     cd bridge/cobra && golangci-lint fmt --diff
     cd bridge/urfave && golangci-lint fmt --diff
@@ -87,7 +87,7 @@ build:
     cd examples/cli && go build -o /dev/null ./...
 
 # Run all non-mutating quality checks
-check: mod-check test-race lint build fmt-check
+check: mod-check race lint build format-check
 
 # Remove build and coverage artifacts
 clean:
