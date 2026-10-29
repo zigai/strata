@@ -9,6 +9,7 @@ import (
 	"go/doc"
 	"go/parser"
 	"go/token"
+	"io/fs"
 	"os"
 	"path/filepath"
 	"reflect"
@@ -65,9 +66,9 @@ func WithSchemaComments(packagePath, directory string) SchemaOption {
 // Schema returns the JSON Schema for T as indented JSON.
 //
 // Field names use snake_case Go names; field doc comments become descriptions.
-// Sources are located in the caller's module independently of the working
-// directory. WithSchemaComments supplies sources outside that module or for
-// binaries deployed without their original source tree. Unavailable sources
+// Sources are located in the caller's module. With -trimpath, the working
+// directory must be inside that module. WithSchemaComments supplies sources for
+// other locations or deployed binaries. Unavailable sources
 // wrap [ErrReflectSchema]. No property is required, since a config file may set
 // any subset of keys.
 //
@@ -183,7 +184,12 @@ func schemaCommentSources(typ reflect.Type, sourceFile, callerPackage string) ([
 	}
 
 	if !filepath.IsAbs(sourceFile) {
-		return nil, fmt.Errorf("%w: caller source path %q is not absolute; use WithSchemaComments", ErrReflectSchema, sourceFile)
+		resolved, err := trimmedSourcePath(sourceFile)
+		if err != nil {
+			return nil, err
+		}
+
+		sourceFile = resolved
 	}
 
 	callerDirectory := filepath.Dir(sourceFile)
@@ -205,6 +211,51 @@ func schemaCommentSources(typ reflect.Type, sourceFile, callerPackage string) ([
 	}
 
 	return sources, nil
+}
+
+// trimmedSourcePath finds the file that a binary built with -trimpath names
+// by its module path, such as "example.com/app/config.go", in the module that
+// holds the working directory.
+func trimmedSourcePath(sourceFile string) (string, error) {
+	directory, err := os.Getwd()
+	if err != nil {
+		return "", fmt.Errorf("%w: caller source path %q is not absolute: %w", ErrReflectSchema, sourceFile, err)
+	}
+
+	for {
+		modulePath, err := goModulePath(filepath.Join(directory, "go.mod"))
+		if err != nil && !errors.Is(err, fs.ErrNotExist) {
+			return "", fmt.Errorf("%w: locate caller module: %w", ErrReflectSchema, err)
+		}
+
+		if relative, found := strings.CutPrefix(filepath.ToSlash(sourceFile), modulePath+"/"); err == nil && found {
+			return filepath.Join(directory, filepath.FromSlash(relative)), nil
+		}
+
+		parent := filepath.Dir(directory)
+		if parent == directory {
+			return "", fmt.Errorf("%w: caller source path %q is not in the module of the working directory; use WithSchemaComments", ErrReflectSchema, sourceFile)
+		}
+
+		directory = parent
+	}
+}
+
+func goModulePath(path string) (string, error) {
+	data, err := os.ReadFile(path)
+	if err != nil {
+		return "", fmt.Errorf("read %s: %w", path, err)
+	}
+
+	for line := range strings.Lines(string(data)) {
+		if rest, found := strings.CutPrefix(strings.TrimSpace(line), "module"); found && rest != "" && (rest[0] == ' ' || rest[0] == '\t') {
+			name, _, _ := strings.Cut(strings.TrimSpace(rest), "//")
+
+			return strings.Trim(strings.TrimSpace(name), `"`), nil
+		}
+	}
+
+	return "", fmt.Errorf("%w: %s declares no module", fs.ErrNotExist, path)
 }
 
 func schemaCallerModule(callerDirectory, callerPackage string) (schemaCommentSource, error) {

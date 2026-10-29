@@ -6,6 +6,7 @@ import (
 	"errors"
 	"maps"
 	"net/http"
+	"os"
 	"path/filepath"
 	"runtime"
 	"slices"
@@ -83,10 +84,27 @@ func TestSchemaIncludesFieldDocComments(t *testing.T) {
 	}
 }
 
-func TestSchemaCommentsDoNotDependOnWorkingDirectory(t *testing.T) {
+// A build that keeps absolute source paths finds comments from any working
+// directory. A -trimpath build has only module paths, so it looks in the
+// module holding the working directory and reports the comments as unavailable
+// outside it.
+func TestSchemaCommentsWorkingDirectoryDependsOnSourcePaths(t *testing.T) {
+	_, sourceFile, _, ok := runtime.Caller(0)
+	if !ok {
+		t.Fatal("cannot locate test source")
+	}
+
 	t.Chdir(t.TempDir())
 
 	data, err := strata.Schema[DescribedSchemaConfig]()
+	if !filepath.IsAbs(sourceFile) {
+		if !errors.Is(err, strata.ErrReflectSchema) || !strings.Contains(err.Error(), "WithSchemaComments") {
+			t.Fatalf("Schema from outside the module of a trimmed build: err = %v, want ErrReflectSchema naming WithSchemaComments", err)
+		}
+
+		return
+	}
+
 	if err != nil {
 		t.Fatalf("Schema: %v", err)
 	}
@@ -100,12 +118,14 @@ func TestSchemaCommentsDoNotDependOnWorkingDirectory(t *testing.T) {
 func TestSchemaCommentsFromExplicitSourceDirectory(t *testing.T) {
 	t.Parallel()
 
-	_, sourceFile, _, ok := runtime.Caller(0)
-	if !ok {
-		t.Fatal("cannot locate test source")
+	// go test runs in the package directory, which holds this test's source
+	// whether or not the build trims source paths.
+	directory, err := os.Getwd()
+	if err != nil {
+		t.Fatal(err)
 	}
 
-	data, err := strata.Schema[DescribedSchemaConfig](strata.WithSchemaComments("github.com/zigai/strata_test", filepath.Dir(sourceFile)))
+	data, err := strata.Schema[DescribedSchemaConfig](strata.WithSchemaComments("github.com/zigai/strata_test", directory))
 	if err != nil {
 		t.Fatalf("Schema: %v", err)
 	}
