@@ -1013,17 +1013,17 @@ func TestFormatsMergeMapsAndReplaceLists(t *testing.T) {
 		Nested:  map[string]map[string]int{"inner": {"x": 9, "y": 2}},
 		List:    []overlayEntry{{A: 9, B: 0}},
 		Pair:    [2]int{8, 9},
-		Timeout: 168 * time.Hour,
+		Timeout: 7 * 24 * time.Hour,
 		Grace:   strata.Duration(90 * time.Second),
 	}
 
 	for name, document := range map[string]string{
 		"config.json": `{"entry": {"a": 9}, "entries": {"merged": {"a": 9}, "added": {"a": 9}}, "nested": {"inner": {"x": 9}},
-			"list": [{"a": 9}], "pair": [8, 9], "timeout": "168h", "grace": "1m30s"}`,
-		"config.toml": "list = [{a = 9}]\npair = [8, 9]\ntimeout = \"168h\"\ngrace = \"1m30s\"\n[entry]\na = 9\n" +
+			"list": [{"a": 9}], "pair": [8, 9], "timeout": "7d", "grace": "1m30s"}`,
+		"config.toml": "list = [{a = 9}]\npair = [8, 9]\ntimeout = \"7d\"\ngrace = \"1m30s\"\n[entry]\na = 9\n" +
 			"[entries.merged]\na = 9\n[entries.added]\na = 9\n[nested.inner]\nx = 9\n",
 		"config.yaml": "entry: {a: 9}\nentries: {merged: {a: 9}, added: {a: 9}}\nnested: {inner: {x: 9}}\n" +
-			"list: [{a: 9}]\npair: [8, 9]\ntimeout: 168h\ngrace: 1m30s\n",
+			"list: [{a: 9}]\npair: [8, 9]\ntimeout: 7d\ngrace: 1m30s\n",
 	} {
 		t.Run(name, func(t *testing.T) {
 			t.Parallel()

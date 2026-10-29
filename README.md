@@ -282,11 +282,11 @@ Pass `strata.WithSchemaURL(url)` to `Init` to link the two.
 
 ## Days and weeks
 
-Plain `time.Duration` loads and saves strings such as `"30s"` in TOML, YAML, and JSON. `strata.Duration` also understands `7d`, `2w`, and `1w2d`:
+Durations are strings such as `"30s"` in TOML, YAML, and JSON, and in environment variables and flags. Both `time.Duration` and `strata.Duration` fields also understand `7d`, `2w`, and `1w2d`:
 
 ```go
 type Config struct {
-	Timeout strata.Duration // "2w" works
+	Timeout time.Duration // "2w" works
 }
 ```
 

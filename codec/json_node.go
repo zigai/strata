@@ -11,6 +11,8 @@ import (
 	"strconv"
 	"sync"
 	"time"
+
+	"github.com/zigai/strata/internal/duration"
 )
 
 var (
@@ -35,7 +37,7 @@ var (
 			return fmt.Errorf("decode duration string: %w", err)
 		}
 
-		parsed, err := time.ParseDuration(raw)
+		parsed, err := duration.Parse(raw)
 		if err != nil {
 			return fmt.Errorf("parse duration: %w", err)
 		}

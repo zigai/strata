@@ -10,6 +10,8 @@ import (
 	"time"
 
 	"gopkg.in/yaml.v3"
+
+	"github.com/zigai/strata/internal/duration"
 )
 
 var (
@@ -67,7 +69,7 @@ func (n yamlNode) decode(target reflect.Value) error {
 			return errDurationString
 		}
 
-		parsed, err := time.ParseDuration(n.node.Value)
+		parsed, err := duration.Parse(n.node.Value)
 		if err != nil {
 			return fmt.Errorf("parse duration: %w", err)
 		}

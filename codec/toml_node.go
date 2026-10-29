@@ -11,6 +11,8 @@ import (
 	"time"
 
 	"github.com/pelletier/go-toml/v2"
+
+	"github.com/zigai/strata/internal/duration"
 )
 
 var tomlLeafTypes sync.Map // reflect.Type -> reflect.Type
@@ -87,7 +89,7 @@ func (n tomlNode) decode(target reflect.Value) error {
 			return errDurationString
 		}
 
-		parsed, err := time.ParseDuration(raw)
+		parsed, err := duration.Parse(raw)
 		if err != nil {
 			return fmt.Errorf("parse duration: %w", err)
 		}

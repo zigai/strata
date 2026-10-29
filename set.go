@@ -334,7 +334,7 @@ func typedEditString(typ reflect.Type, raw string) (any, error) {
 
 func parseTypedEditString(typ reflect.Type, raw string, preserveType bool) (any, error) {
 	if typ == reflect.TypeFor[time.Duration]() {
-		parsed, err := time.ParseDuration(raw)
+		parsed, err := ParseDuration(raw)
 		if err != nil {
 			return nil, fmt.Errorf("%q %w", raw, errNotDuration)
 		}

@@ -10,8 +10,8 @@ import (
 // whitespace is trimmed.
 var ErrEmptyDuration = duration.ErrEmpty
 
-// Duration wraps [time.Duration] and extends the textual form used by JSON,
-// TOML, and YAML with the day (d) and week (w) units.
+// Duration is a [time.Duration] that reads and writes itself as text with the
+// grammar of [ParseDuration], so encoders outside strata handle it too.
 //
 // Parsing accepts more than formatting reproduces. Any text
 // [Duration.UnmarshalText] accepts decodes to the matching [time.Duration], but
@@ -25,7 +25,9 @@ type Duration time.Duration
 // Standard units (ns, us, µs, ms, s, m, h) are handled by [time.ParseDuration].
 // This function extends that grammar with days (d) and weeks (w), which makes
 // "7d", "2w", "1w2d", "1.5d", and "-7d" valid. A leading "+" is accepted. The d
-// and w unit letters are matched case-insensitively.
+// and w unit letters are matched case-insensitively. Every duration field,
+// plain [time.Duration] or [Duration], reads this grammar from files, the
+// environment, flags, and [Set].
 //
 // Leading and trailing whitespace is trimmed before parsing. It returns
 // [ErrEmptyDuration] if the trimmed input is empty. Any other failure returns
