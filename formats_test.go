@@ -1356,6 +1356,39 @@ func TestInlineMapSecretsFollowExactKeys(t *testing.T) {
 	}
 }
 
+type recursiveTree []recursiveTree
+
+type recursiveTreeConfig struct {
+	Root  recursiveTree
+	Index map[string]recursiveTree
+}
+
+func TestRecursiveContainerTypesSaveAndLoad(t *testing.T) {
+	t.Parallel()
+
+	want := recursiveTreeConfig{Root: recursiveTree{{}, {{}}}, Index: map[string]recursiveTree{"a": {{}}}}
+
+	for _, format := range []string{jsonFormat, tomlFormat, yamlFormat} {
+		t.Run(format, func(t *testing.T) {
+			t.Parallel()
+
+			path := filepath.Join(t.TempDir(), "config."+format)
+			if err := strata.Save(path, want); err != nil {
+				t.Fatalf("Save: %v", err)
+			}
+
+			got, err := strata.Load[recursiveTreeConfig](strata.WithPath(path), strata.WithFormats(format))
+			if err != nil {
+				t.Fatalf("Load: %v", err)
+			}
+
+			if !reflect.DeepEqual(got, want) {
+				t.Fatalf("loaded %+v, want %+v", got, want)
+			}
+		})
+	}
+}
+
 type lowerCaseKey string
 
 var errUpperCaseKey = errors.New("key has upper-case letters")

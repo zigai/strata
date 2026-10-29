@@ -133,15 +133,19 @@ func EncodesItself(typ reflect.Type) bool {
 }
 
 func validate(typ reflect.Type, seen map[reflect.Type]bool) error {
-	for typ.Kind() == reflect.Pointer || typ.Kind() == reflect.Slice || typ.Kind() == reflect.Array || typ.Kind() == reflect.Map {
-		typ = typ.Elem()
-	}
-
-	if seen[typ] || !IsNestedStructType(typ) {
+	if seen[typ] {
 		return nil
 	}
 
 	seen[typ] = true
+
+	if typ.Kind() == reflect.Pointer || typ.Kind() == reflect.Slice || typ.Kind() == reflect.Array || typ.Kind() == reflect.Map {
+		return validate(typ.Elem(), seen)
+	}
+
+	if !IsNestedStructType(typ) {
+		return nil
+	}
 
 	layout := Of(typ)
 	if layout.err != nil {
