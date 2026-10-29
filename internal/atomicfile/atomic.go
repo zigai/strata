@@ -58,10 +58,6 @@ func commitAtomicFile(tmpPath, targetPath string, overwrite bool) error {
 }
 
 func writeFileAtomic(targetPath string, data []byte, perm os.FileMode, overwrite bool) error {
-	if perm == 0 {
-		perm = defaultFilePerm
-	}
-
 	dir := filepath.Dir(targetPath)
 	if err := os.MkdirAll(dir, defaultDirPerm); err != nil {
 		return fmt.Errorf("create directory %s: %w", dir, err)

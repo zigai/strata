@@ -237,3 +237,32 @@ func TestWritesFollowSymlinksAndKeepTheTargetMode(t *testing.T) {
 		})
 	}
 }
+
+func TestWritesKeepAFileWithNoPermissionBits(t *testing.T) {
+	t.Parallel()
+
+	for _, test := range []struct {
+		name  string
+		write func(path string) error
+	}{
+		{name: "Save", write: func(path string) error { return strata.Save(path, narrowConfig{Small: 7}) }},
+		{name: "Init", write: func(path string) error { return strata.Init[narrowConfig](path, strata.WithOverwrite(true)) }},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			t.Parallel()
+
+			path := writeFile(t, "config.toml", "small = 1\n")
+			if err := os.Chmod(path, 0); err != nil {
+				t.Fatal(err)
+			}
+
+			if err := test.write(path); err != nil {
+				t.Fatalf("%s: %v", test.name, err)
+			}
+
+			if got := fileMode(t, path); got != 0 {
+				t.Fatalf("%s left mode %#o, want 0000 kept", test.name, got)
+			}
+		})
+	}
+}
