@@ -98,7 +98,7 @@ func TestUpdateTOMLChangesOnlyTheNamedKey(t *testing.T) {
 		t.Run(tc.name, func(t *testing.T) {
 			t.Parallel()
 
-			out, err := edit.UpdateTOML([]byte(tc.input), tc.key, tc.value)
+			out, err := edit.UpdateTOML([]byte(tc.input), tc.path, tc.value)
 			if err != nil {
 				t.Fatalf("UpdateTOML: %v", err)
 			}
@@ -135,6 +135,8 @@ func FuzzUpdateTOML(f *testing.F) {
 		{"[a.\"b.c\"]\nx = 1\n[a]\nkeep = 2\n", "a.b"},
 		{"Port = 1\nport = 2\n", portKey},
 		{"a = 1\n", "a.b"},
+		{"[[srv]]\nname = \"a\"\n[[srv]]\nname = \"b\"\n", "srv.1.name"},
+		{"ports = [80, 443]\n", "ports.0"},
 		{"x = \"# not a comment\" # real\n", "x"},
 		{"", "a.b.c"},
 		// Found by fuzzing; each fails on the editor at 949febb.
@@ -170,7 +172,7 @@ func FuzzUpdateTOML(f *testing.F) {
 
 		path := strings.Split(key, ".")
 
-		out, err := edit.UpdateTOML([]byte(doc), key, value)
+		out, err := edit.UpdateTOML([]byte(doc), path, value)
 
 		switch tomlPathReach(before, path) {
 		case pathReachThroughScalar:
@@ -178,7 +180,9 @@ func FuzzUpdateTOML(f *testing.F) {
 				t.Fatalf("path %q runs through a scalar: err = %v, want ErrPathNotMapping\ninput:\n%s\noutput:\n%s", key, err, doc, out)
 			}
 		case pathReachThroughArray:
-			t.Skip("a path through an array of tables has no single target")
+			if !errors.Is(err, edit.ErrPathNotMapping) {
+				t.Fatalf("path %q runs through an array: err = %v, want ErrPathNotMapping\ninput:\n%s\noutput:\n%s", key, err, doc, out)
+			}
 		case pathReachLeafIsTable:
 			if err == nil {
 				requireTOMLEdit(t, []byte(doc), out, path, value)

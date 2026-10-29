@@ -2,6 +2,7 @@ package env
 
 import (
 	"encoding"
+	"encoding/json/jsontext"
 	"errors"
 	"fmt"
 	"os"
@@ -12,6 +13,9 @@ import (
 	"time"
 
 	"github.com/zigai/strata/internal/defaulter"
+	"github.com/zigai/strata/internal/duration"
+	"github.com/zigai/strata/internal/keypath"
+	"github.com/zigai/strata/internal/layout"
 )
 
 var (
@@ -23,17 +27,25 @@ var (
 )
 
 type Options struct {
-	Prefix        string
-	Lookup        func(string) (string, bool)
-	OnBind        func(key, envVar, rawVal string)
-	ParseDuration func(string) (time.Duration, error)
+	Prefix string
+	Lookup func(string) (string, bool)
+	OnBind func(key jsontext.Pointer, envVar, rawVal string)
 }
 
 type Var struct {
-	Key      string
+	Key      jsontext.Pointer
 	Name     string
 	Names    []string
 	IsSecret bool
+}
+
+// scope is where a struct value sits: the key it is reached by, and the layout
+// whose keys it contributes to, with the index path from that layout's struct.
+// A promoted struct shares the scope of the struct that holds it.
+type scope struct {
+	key    jsontext.Pointer
+	layout *layout.Struct
+	index  []int
 }
 
 func Apply(target any, opts Options) error {
@@ -56,7 +68,7 @@ func Apply(target any, opts Options) error {
 		lookup = os.LookupEnv
 	}
 
-	return bindEnvStruct(elem, normalizePrefix(opts.Prefix), "", lookup, opts.OnBind, opts.ParseDuration, false, nil, nil)
+	return bindEnvStruct(elem, normalizePrefix(opts.Prefix), rootScope(elem.Type()), lookup, opts.OnBind, false, nil, nil)
 }
 
 func Describe(typ reflect.Type, prefix string) []Var {
@@ -70,7 +82,7 @@ func Describe(typ reflect.Type, prefix string) []Var {
 
 	var vars []Var
 
-	describeStruct(typ, normalizePrefix(prefix), "", false, nil, &vars)
+	describeStruct(typ, normalizePrefix(prefix), rootScope(typ), false, nil, &vars)
 
 	return vars
 }
@@ -84,44 +96,66 @@ func normalizePrefix(prefix string) string {
 	return prefix
 }
 
-func describeStruct(typ reflect.Type, prefix, parentPath string, inheritedSecret bool, active []reflect.Type, vars *[]Var) {
+func rootScope(typ reflect.Type) scope {
+	return scope{key: "", layout: layout.Of(typ), index: nil}
+}
+
+func (at scope) promoted(member layout.Member) scope {
+	return scope{key: at.key, layout: at.layout, index: append(slices.Clone(at.index), member.Field.Index...)}
+}
+
+func (at scope) nested(key string, typ reflect.Type) scope {
+	for typ.Kind() == reflect.Pointer {
+		typ = typ.Elem()
+	}
+
+	return scope{key: at.key.AppendToken(key), layout: layout.Of(typ), index: nil}
+}
+
+// owns reports whether member holds its key in this scope; a field that a
+// shallower field shadows is not bound.
+func (at scope) owns(member layout.Member) bool {
+	field, ok := at.layout.Field(member.Key)
+
+	return ok && slices.Equal(field.Index, append(slices.Clone(at.index), member.Field.Index...))
+}
+
+func describeStruct(typ reflect.Type, prefix string, at scope, inheritedSecret bool, active []reflect.Type, vars *[]Var) {
 	if slices.Contains(active, typ) {
 		return
 	}
 
 	active = append(active, typ)
 
-	for sf := range typ.Fields() {
-		describeField(sf, prefix, parentPath, inheritedSecret, active, vars)
+	for _, member := range layout.MembersOf(typ) {
+		describeMember(member, prefix, at, inheritedSecret, active, vars)
 	}
 }
 
-func describeField(sf reflect.StructField, prefix, parentPath string, inheritedSecret bool, active []reflect.Type, vars *[]Var) {
-	if !sf.IsExported() {
+func describeMember(member layout.Member, prefix string, at scope, inheritedSecret bool, active []reflect.Type, vars *[]Var) {
+	sf := member.Field
+	if !sf.IsExported() || member.Rest {
 		return
 	}
 
-	key := defaulter.FieldKey(sf)
-	if key == "-" {
-		return
-	}
-
-	secret := inheritedSecret || defaulter.IsSecret(sf)
-
-	dottedKey := key
-	if sf.Anonymous {
-		dottedKey = parentPath
-	} else if parentPath != "" {
-		dottedKey = parentPath + "." + key
-	}
+	secret := inheritedSecret || member.Secret
 
 	fieldType := sf.Type
-	if fieldType.Kind() == reflect.Pointer && defaulter.IsNestedStructType(fieldType.Elem()) {
+	for fieldType.Kind() == reflect.Pointer && layout.IsNestedStructType(fieldType) {
 		fieldType = fieldType.Elem()
 	}
 
-	if fieldType.Kind() == reflect.Struct && defaulter.IsNestedStructType(fieldType) {
-		describeStruct(fieldType, prefix, dottedKey, secret, active, vars)
+	if member.Promoted {
+		describeStruct(fieldType, prefix, at.promoted(member), secret, active, vars)
+		return
+	}
+
+	if !at.owns(member) {
+		return
+	}
+
+	if layout.IsNestedStructType(fieldType) {
+		describeStruct(fieldType, prefix, at.nested(member.Key, fieldType), secret, active, vars)
 		return
 	}
 
@@ -129,12 +163,14 @@ func describeField(sf reflect.StructField, prefix, parentPath string, inheritedS
 		return
 	}
 
-	names := candidateNames(sf, prefix, dottedKey)
+	key := at.key.AppendToken(member.Key)
+
+	names := candidateNames(sf, prefix, key)
 	if len(names) == 0 {
 		return
 	}
 
-	*vars = append(*vars, Var{Key: dottedKey, Name: documentedName(sf, names), Names: names, IsSecret: secret})
+	*vars = append(*vars, Var{Key: key, Name: documentedName(sf, names), Names: names, IsSecret: secret})
 }
 
 func documentedName(sf reflect.StructField, names []string) string {
@@ -167,10 +203,9 @@ func envDecodable(typ reflect.Type) bool {
 func bindEnvStruct(
 	val reflect.Value,
 	prefix string,
-	parentPath string,
+	at scope,
 	lookup func(string) (string, bool),
-	onBind func(key, envVar, rawVal string),
-	parseDuration func(string) (time.Duration, error),
+	onBind func(key jsontext.Pointer, envVar, rawVal string),
 	inheritedSecret bool,
 	activeTypes []reflect.Type,
 	activePtrs []uintptr,
@@ -183,29 +218,27 @@ func bindEnvStruct(
 	activeTypes = append(activeTypes, typ)
 	defer func() { activeTypes = activeTypes[:len(activeTypes)-1] }()
 
-	for i := range val.NumField() {
-		field := val.Field(i)
-		sf := typ.Field(i)
-
-		if !sf.IsExported() {
+	for _, member := range layout.MembersOf(typ) {
+		if !member.Field.IsExported() || member.Rest {
 			continue
 		}
 
-		key := defaulter.FieldKey(sf)
-		if key == "-" {
-			continue
+		fieldSecret := inheritedSecret || member.Secret
+		field := val.FieldByIndex(member.Field.Index)
+
+		var err error
+
+		switch {
+		case member.Promoted:
+			err = bindStruct(field, prefix, at.promoted(member), lookup, onBind, fieldSecret, activeTypes, activePtrs)
+		case !at.owns(member):
+		case layout.IsNestedStructType(field.Type()):
+			err = bindStruct(field, prefix, at.nested(member.Key, field.Type()), lookup, onBind, fieldSecret, activeTypes, activePtrs)
+		default:
+			err = bindLeafField(field, member.Field, prefix, at.key.AppendToken(member.Key), lookup, onBind, fieldSecret)
 		}
 
-		fieldSecret := inheritedSecret || defaulter.IsSecret(sf)
-
-		dottedKey := key
-		if sf.Anonymous {
-			dottedKey = parentPath
-		} else if parentPath != "" {
-			dottedKey = parentPath + "." + key
-		}
-
-		if err := bindField(field, sf, prefix, dottedKey, lookup, onBind, parseDuration, fieldSecret, activeTypes, activePtrs); err != nil {
+		if err != nil {
 			return err
 		}
 	}
@@ -213,36 +246,29 @@ func bindEnvStruct(
 	return nil
 }
 
-func bindField(
+func bindStruct(
 	field reflect.Value,
-	sf reflect.StructField,
 	prefix string,
-	dottedKey string,
+	at scope,
 	lookup func(string) (string, bool),
-	onBind func(key, envVar, rawVal string),
-	parseDuration func(string) (time.Duration, error),
+	onBind func(key jsontext.Pointer, envVar, rawVal string),
 	inheritedSecret bool,
 	activeTypes []reflect.Type,
 	activePtrs []uintptr,
 ) error {
-	if defaulter.IsNestedStruct(field) {
-		return bindEnvStruct(field, prefix, dottedKey, lookup, onBind, parseDuration, inheritedSecret, activeTypes, activePtrs)
+	if field.Kind() == reflect.Pointer {
+		return bindPointerStructField(field, prefix, at, lookup, onBind, inheritedSecret, activeTypes, activePtrs)
 	}
 
-	if field.Kind() == reflect.Pointer && defaulter.IsNestedStructType(field.Type().Elem()) {
-		return bindPointerStructField(field, prefix, dottedKey, lookup, onBind, parseDuration, inheritedSecret, activeTypes, activePtrs)
-	}
-
-	return bindLeafField(field, sf, prefix, dottedKey, lookup, onBind, parseDuration, inheritedSecret)
+	return bindEnvStruct(field, prefix, at, lookup, onBind, inheritedSecret, activeTypes, activePtrs)
 }
 
 func bindPointerStructField(
 	field reflect.Value,
 	prefix string,
-	dottedKey string,
+	at scope,
 	lookup func(string) (string, bool),
-	onBind func(key, envVar, rawVal string),
-	parseDuration func(string) (time.Duration, error),
+	onBind func(key jsontext.Pointer, envVar, rawVal string),
 	inheritedSecret bool,
 	activeTypes []reflect.Type,
 	activePtrs []uintptr,
@@ -261,13 +287,13 @@ func bindPointerStructField(
 		activePtrs = append(activePtrs, ptr)
 		defer func() { activePtrs = activePtrs[:len(activePtrs)-1] }()
 
-		return bindEnvStruct(field.Elem(), prefix, dottedKey, lookup, onBind, parseDuration, inheritedSecret, activeTypes, activePtrs)
+		return bindEnvStruct(field.Elem(), prefix, at, lookup, onBind, inheritedSecret, activeTypes, activePtrs)
 	}
 
 	tmp := reflect.New(elemType)
 	boundCount := 0
 
-	countBind := func(k, envVar, rawVal string) {
+	countBind := func(k jsontext.Pointer, envVar, rawVal string) {
 		boundCount++
 
 		if onBind != nil {
@@ -275,7 +301,7 @@ func bindPointerStructField(
 		}
 	}
 
-	if err := bindEnvStruct(tmp.Elem(), prefix, dottedKey, lookup, countBind, parseDuration, inheritedSecret, activeTypes, activePtrs); err != nil {
+	if err := bindEnvStruct(tmp.Elem(), prefix, at, lookup, countBind, inheritedSecret, activeTypes, activePtrs); err != nil {
 		return err
 	}
 
@@ -290,27 +316,26 @@ func bindLeafField(
 	field reflect.Value,
 	sf reflect.StructField,
 	prefix string,
-	dottedKey string,
+	key jsontext.Pointer,
 	lookup func(string) (string, bool),
-	onBind func(key, envVar, rawVal string),
-	parseDuration func(string) (time.Duration, error),
+	onBind func(key jsontext.Pointer, envVar, rawVal string),
 	inheritedSecret bool,
 ) error {
-	envVar, rawVal, found := lookupEnvValue(sf, prefix, dottedKey, lookup)
+	envVar, rawVal, found := lookupEnvValue(sf, prefix, key, lookup)
 	if !found {
 		return nil
 	}
 
-	secret := inheritedSecret || defaulter.IsSecret(sf)
+	secret := inheritedSecret || layout.IsSecret(sf)
 
-	if err := unmarshalValue(field, rawVal, parseDuration); err != nil {
+	if err := unmarshalValue(field, rawVal); err != nil {
 		// NB: a secret field MUST NOT have its value reproduced here, and the
 		// parse library's own error text quotes the input.
 		if secret {
-			return fmt.Errorf("%w for %s from %s=[REDACTED]", ErrInvalidValue, dottedKey, envVar)
+			return fmt.Errorf("%w for %s from %s=[REDACTED]", ErrInvalidValue, keypath.Format(key), envVar)
 		}
 
-		return fmt.Errorf("%w for %s from %s=%q: %w", ErrInvalidValue, dottedKey, envVar, rawVal, err)
+		return fmt.Errorf("%w for %s from %s=%q: %w", ErrInvalidValue, keypath.Format(key), envVar, rawVal, err)
 	}
 
 	recordVal := rawVal
@@ -319,7 +344,7 @@ func bindLeafField(
 	}
 
 	if onBind != nil {
-		onBind(dottedKey, envVar, recordVal)
+		onBind(key, envVar, recordVal)
 	}
 
 	return nil
@@ -328,10 +353,10 @@ func bindLeafField(
 func lookupEnvValue(
 	sf reflect.StructField,
 	prefix string,
-	dottedKey string,
+	key jsontext.Pointer,
 	lookup func(string) (string, bool),
 ) (string, string, bool) {
-	for _, name := range candidateNames(sf, prefix, dottedKey) {
+	for _, name := range candidateNames(sf, prefix, key) {
 		if val, ok := lookup(name); ok {
 			return name, val, true
 		}
@@ -342,7 +367,7 @@ func lookupEnvValue(
 
 // Derived names require a prefix so generic process variables such as PORT
 // and HOST cannot bind accidentally.
-func candidateNames(sf reflect.StructField, prefix, dottedKey string) []string {
+func candidateNames(sf reflect.StructField, prefix string, key jsontext.Pointer) []string {
 	if isEnvSkipped(sf) {
 		return nil
 	}
@@ -362,9 +387,9 @@ func candidateNames(sf reflect.StructField, prefix, dottedKey string) []string {
 		return names
 	}
 
-	parts := strings.Split(dottedKey, ".")
-	for i, part := range parts {
-		parts[i] = toUpperSnake(part)
+	var parts []string
+	for token := range key.Tokens() {
+		parts = append(parts, toUpperSnake(token))
 	}
 
 	if len(parts) > 1 {
@@ -391,10 +416,10 @@ func isEnvSkipped(sf reflect.StructField) bool {
 }
 
 func toUpperSnake(s string) string {
-	return strings.ToUpper(defaulter.ToSnakeCase(s))
+	return strings.ToUpper(layout.ToSnakeCase(s))
 }
 
-func unmarshalValue(field reflect.Value, raw string, parseDuration func(string) (time.Duration, error)) error {
+func unmarshalValue(field reflect.Value, raw string) error {
 	if field.CanAddr() {
 		if u, ok := reflect.TypeAssert[encoding.TextUnmarshaler](field.Addr()); ok {
 			if err := u.UnmarshalText([]byte(raw)); err != nil {
@@ -408,31 +433,31 @@ func unmarshalValue(field reflect.Value, raw string, parseDuration func(string) 
 	//nolint:exhaustive // supported primitive, pointer, and slice kinds are bound; other kinds are rejected
 	switch field.Kind() {
 	case reflect.Pointer:
-		return unmarshalPointer(field, raw, parseDuration)
+		return unmarshalPointer(field, raw)
 	case reflect.String:
 		field.SetString(raw)
 		return nil
 	case reflect.Bool:
 		return unmarshalBool(field, raw)
 	case reflect.Int, reflect.Int8, reflect.Int16, reflect.Int32, reflect.Int64:
-		return unmarshalInt(field, raw, parseDuration)
+		return unmarshalInt(field, raw)
 	case reflect.Uint, reflect.Uint8, reflect.Uint16, reflect.Uint32, reflect.Uint64:
 		return unmarshalUint(field, raw)
 	case reflect.Float32, reflect.Float64:
 		return unmarshalFloat(field, raw)
 	case reflect.Slice:
-		return unmarshalSlice(field, raw, parseDuration)
+		return unmarshalSlice(field, raw)
 	default:
 		return fmt.Errorf("%w: %s", ErrUnsupportedType, field.Type())
 	}
 }
 
-func unmarshalPointer(field reflect.Value, raw string, parseDuration func(string) (time.Duration, error)) error {
+func unmarshalPointer(field reflect.Value, raw string) error {
 	if field.IsNil() {
 		field.Set(reflect.New(field.Type().Elem()))
 	}
 
-	return unmarshalValue(field.Elem(), raw, parseDuration)
+	return unmarshalValue(field.Elem(), raw)
 }
 
 func unmarshalBool(field reflect.Value, raw string) error {
@@ -446,20 +471,9 @@ func unmarshalBool(field reflect.Value, raw string) error {
 	return nil
 }
 
-func unmarshalInt(field reflect.Value, raw string, parseDuration func(string) (time.Duration, error)) error {
+func unmarshalInt(field reflect.Value, raw string) error {
 	if field.Type() == reflect.TypeFor[time.Duration]() {
-		if parseDuration != nil {
-			d, err := parseDuration(raw)
-			if err != nil {
-				return err
-			}
-
-			field.SetInt(int64(d))
-
-			return nil
-		}
-
-		d, err := time.ParseDuration(raw)
+		d, err := duration.Parse(raw)
 		if err != nil {
 			return fmt.Errorf("parse duration: %w", err)
 		}
@@ -510,7 +524,7 @@ func unmarshalFloat(field reflect.Value, raw string) error {
 	return nil
 }
 
-func unmarshalSlice(field reflect.Value, raw string, parseDuration func(string) (time.Duration, error)) error {
+func unmarshalSlice(field reflect.Value, raw string) error {
 	if field.Type().Elem() == reflect.TypeFor[byte]() {
 		field.SetBytes([]byte(raw))
 		return nil
@@ -527,7 +541,7 @@ func unmarshalSlice(field reflect.Value, raw string, parseDuration func(string) 
 
 	for i, item := range items {
 		elem := slice.Index(i)
-		if err := unmarshalValue(elem, strings.TrimSpace(item), parseDuration); err != nil {
+		if err := unmarshalValue(elem, strings.TrimSpace(item)); err != nil {
 			return fmt.Errorf("slice element %d (%q): %w", i, item, err)
 		}
 	}

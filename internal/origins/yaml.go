@@ -1,6 +1,7 @@
 package origins
 
 import (
+	"encoding/json/jsontext"
 	"slices"
 	"strconv"
 	"strings"
@@ -35,7 +36,7 @@ func readYAML(data []byte, emit func(Record)) {
 		referenced: make(map[*yaml.Node]bool),
 	}
 	collectAliasTargets(&document, walker.referenced)
-	walker.walk(document.Content[0], nil, false)
+	walker.walk(document.Content[0], "", false)
 }
 
 // Aliases are not followed, so ancestor aliases cannot make this walk recurse forever.
@@ -54,7 +55,7 @@ func collectAliasTargets(node *yaml.Node, targets map[*yaml.Node]bool) {
 // Merge sources are expanded before explicit keys so the latter win.
 // Template status is inherited by nested keys but not passed into merge sources:
 // a merged key is a real setting at its new location.
-func (w *yamlWalker) walk(node *yaml.Node, prefix []string, template bool) {
+func (w *yamlWalker) walk(node *yaml.Node, prefix jsontext.Pointer, template bool) {
 	if node == nil || node.Kind != yaml.MappingNode || w.active[node] {
 		return
 	}
@@ -76,13 +77,12 @@ func (w *yamlWalker) walk(node *yaml.Node, prefix []string, template bool) {
 			continue
 		}
 
-		segments := append(slices.Clone(prefix), keyNode.Value)
 		valueTemplate := template || w.referenced[valueNode]
-		w.value(valueNode, segments, keyNode.Line, valueTemplate)
+		w.value(valueNode, prefix.AppendToken(keyNode.Value), keyNode.Line, valueTemplate)
 	}
 }
 
-func (w *yamlWalker) value(node *yaml.Node, segments []string, line int, template bool) {
+func (w *yamlWalker) value(node *yaml.Node, key jsontext.Pointer, line int, template bool) {
 	if node == nil || w.active[node] {
 		return
 	}
@@ -91,17 +91,17 @@ func (w *yamlWalker) value(node *yaml.Node, segments []string, line int, templat
 		w.active[node] = true
 		defer delete(w.active, node)
 
-		w.value(node.Alias, segments, line, template)
+		w.value(node.Alias, key, line, template)
 
 		return
 	}
 
 	if node.Kind == yaml.MappingNode && len(node.Content) > 0 {
-		w.walk(node, segments, template)
+		w.walk(node, key, template)
 		return
 	}
 
-	w.emit(Record{Key: strings.Join(segments, "."), Segments: segments, Line: line, RawValue: yamlRawValue(node), IsTemplate: template})
+	w.emit(Record{Key: key, Line: line, RawValue: yamlRawValue(node), IsTemplate: template})
 
 	if node.Kind != yaml.SequenceNode {
 		return
@@ -112,7 +112,7 @@ func (w *yamlWalker) value(node *yaml.Node, segments []string, line int, templat
 
 	for index, item := range node.Content {
 		if item.Kind == yaml.MappingNode || item.Kind == yaml.SequenceNode || item.Kind == yaml.AliasNode {
-			w.value(item, append(slices.Clone(segments), strconv.Itoa(index)), item.Line, template)
+			w.value(item, key.AppendToken(strconv.Itoa(index)), item.Line, template)
 		}
 	}
 }
@@ -130,7 +130,7 @@ func yamlRawValue(node *yaml.Node) string {
 	return strings.TrimSpace(string(encoded))
 }
 
-func (w *yamlWalker) merge(node *yaml.Node, prefix []string, template bool) {
+func (w *yamlWalker) merge(node *yaml.Node, prefix jsontext.Pointer, template bool) {
 	switch node.Kind {
 	case yaml.AliasNode:
 		w.walk(node.Alias, prefix, template)

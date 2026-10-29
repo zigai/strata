@@ -10,7 +10,7 @@ import (
 func TestUpdateJSONNullInput(t *testing.T) {
 	t.Parallel()
 
-	updated, err := edit.UpdateJSON([]byte("null"), "key", "val")
+	updated, err := edit.UpdateJSON([]byte("null"), []string{"key"}, "val")
 	if err != nil {
 		t.Fatalf("UpdateJSON on null error: %v", err)
 	}
@@ -32,7 +32,7 @@ func TestUpdateJSONKeepsValuesAndIndentation(t *testing.T) {
 }
 `
 
-	updated, err := edit.UpdateJSON([]byte(document), "server.port", 9090)
+	updated, err := edit.UpdateJSON([]byte(document), []string{"server", "port"}, 9090)
 	if err != nil {
 		t.Fatalf("UpdateJSON: %v", err)
 	}

@@ -9,8 +9,9 @@ import (
 	"github.com/zigai/strata"
 )
 
+const portKey string = "port"
+
 const (
-	portKey    = "port"
 	jsonFormat = "json"
 	yamlFormat = "yaml"
 	tomlFormat = "toml"

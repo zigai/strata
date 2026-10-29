@@ -6,11 +6,15 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"reflect"
+	"slices"
 	"strconv"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/zigai/strata"
+	"github.com/zigai/strata/codec"
 )
 
 type dummyCustomCodec struct {
@@ -456,7 +460,7 @@ func TestWithTypedDecoder(t *testing.T) {
 				}
 
 				switch parts[0] {
-				case portKey:
+				case "port":
 					p, pErr := strconv.Atoi(parts[1])
 					if pErr != nil {
 						return fmt.Errorf("parse port: %w", pErr)
@@ -963,6 +967,391 @@ func TestWithCodecAppliesToOneLoadOnly(t *testing.T) {
 	for path, want := range map[string]string{saved: "port = 1\nhost = 's'\n", template: "port = 0\nhost = ''\n"} {
 		if data, err := os.ReadFile(path); err != nil || string(data) != want {
 			t.Errorf("%s = %q, %v; want %q from the built-in encoder", filepath.Base(path), data, err, want)
+		}
+	}
+}
+
+type overlayEntry struct {
+	A, B int
+}
+
+type overlayConfig struct {
+	Name    string
+	Entry   overlayEntry
+	Entries map[string]overlayEntry
+	Nested  map[string]map[string]int
+	List    []overlayEntry
+	Pair    [2]int
+	Timeout time.Duration
+	Grace   strata.Duration
+}
+
+func (c *overlayConfig) SetDefaults() {
+	c.Name = "default"
+	c.Entry = overlayEntry{A: 1, B: 2}
+	c.Entries = map[string]overlayEntry{"kept": {A: 1, B: 2}, "merged": {A: 1, B: 2}}
+	c.Nested = map[string]map[string]int{"inner": {"x": 1, "y": 2}}
+	c.List = []overlayEntry{{A: 1, B: 2}}
+	c.Pair = [2]int{1, 2}
+}
+
+func loadOverlay(t *testing.T, name, document string) (overlayConfig, error) {
+	t.Helper()
+
+	path := writeFile(t, name, document)
+
+	return strata.Load[overlayConfig](strata.WithPath(path), strata.WithFormats(filepath.Ext(name)))
+}
+
+func TestFormatsMergeMapsAndReplaceLists(t *testing.T) {
+	t.Parallel()
+
+	want := overlayConfig{
+		Name:    "default",
+		Entry:   overlayEntry{A: 9, B: 2},
+		Entries: map[string]overlayEntry{"kept": {A: 1, B: 2}, "merged": {A: 9, B: 2}, "added": {A: 9, B: 0}},
+		Nested:  map[string]map[string]int{"inner": {"x": 9, "y": 2}},
+		List:    []overlayEntry{{A: 9, B: 0}},
+		Pair:    [2]int{8, 9},
+		Timeout: 168 * time.Hour,
+		Grace:   strata.Duration(90 * time.Second),
+	}
+
+	for name, document := range map[string]string{
+		"config.json": `{"entry": {"a": 9}, "entries": {"merged": {"a": 9}, "added": {"a": 9}}, "nested": {"inner": {"x": 9}},
+			"list": [{"a": 9}], "pair": [8, 9], "timeout": "168h", "grace": "1m30s"}`,
+		"config.toml": "list = [{a = 9}]\npair = [8, 9]\ntimeout = \"168h\"\ngrace = \"1m30s\"\n[entry]\na = 9\n" +
+			"[entries.merged]\na = 9\n[entries.added]\na = 9\n[nested.inner]\nx = 9\n",
+		"config.yaml": "entry: {a: 9}\nentries: {merged: {a: 9}, added: {a: 9}}\nnested: {inner: {x: 9}}\n" +
+			"list: [{a: 9}]\npair: [8, 9]\ntimeout: 168h\ngrace: 1m30s\n",
+	} {
+		t.Run(name, func(t *testing.T) {
+			t.Parallel()
+
+			got, err := loadOverlay(t, name, document)
+			if err != nil {
+				t.Fatal(err)
+			}
+
+			if !reflect.DeepEqual(got, want) {
+				t.Fatalf("loaded %+v\nwant   %+v", got, want)
+			}
+		})
+	}
+}
+
+func TestFormatsResetNullToZero(t *testing.T) {
+	t.Parallel()
+
+	for name, document := range map[string]string{
+		"config.json": `{"name": null, "entry": null, "entries": {"merged": null}, "list": null}`,
+		"config.yaml": "name: null\nentry: ~\nentries: {merged: null}\nlist:\n",
+	} {
+		t.Run(name, func(t *testing.T) {
+			t.Parallel()
+
+			got, err := loadOverlay(t, name, document)
+			if err != nil {
+				t.Fatal(err)
+			}
+
+			wantEntries := map[string]overlayEntry{"kept": {A: 1, B: 2}, "merged": {}}
+			if got.Name != "" || got.Entry != (overlayEntry{}) || !reflect.DeepEqual(got.Entries, wantEntries) || got.List != nil {
+				t.Fatalf("loaded %+v, want null fields reset to zero and the kept entry untouched", got)
+			}
+		})
+	}
+}
+
+func TestFormatsRejectTheSameInvalidValues(t *testing.T) {
+	t.Parallel()
+
+	for _, test := range []struct {
+		name, document string
+		key            string
+	}{
+		{name: "config.json", document: `{"pair": [1]}`, key: "pair"},
+		{name: "config.toml", document: "pair = [1]\n", key: "pair"},
+		{name: "config.yaml", document: "pair: [1]\n", key: "pair"},
+		{name: "config.json", document: `{"timeout": 30}`, key: "timeout"},
+		{name: "config.toml", document: "timeout = 30\n", key: "timeout"},
+		{name: "config.yaml", document: "timeout: 30\n", key: "timeout"},
+	} {
+		t.Run(test.name+" "+test.key, func(t *testing.T) {
+			t.Parallel()
+
+			_, err := loadOverlay(t, test.name, test.document)
+
+			var keyErr *codec.KeyError
+			if !errors.As(err, &keyErr) || keyErr.Key != test.key || !errors.Is(err, strata.ErrMalformed) {
+				t.Fatalf("err = %v, want a malformed-document error for key %q", err, test.key)
+			}
+		})
+	}
+}
+
+type inlineServer struct {
+	Host string
+	Port int
+}
+
+type inlineTLS struct {
+	CertFile string
+}
+
+type inlineConfig struct {
+	Server inlineServer `yaml:",inline"`
+	TLS    *inlineTLS   `json:",embed"`
+	Name   string
+	Port   int
+}
+
+func (c *inlineConfig) SetDefaults() {
+	c.Server.Host = "localhost"
+	c.Server.Port = 1
+	c.Port = 2
+}
+
+func TestInlineFieldsLoadUnderTheParentKeys(t *testing.T) {
+	t.Parallel()
+
+	for name, document := range map[string]string{
+		"config.json": `{"host": "file", "port": 9, "cert_file": "c.pem"}`,
+		"config.toml": "host = 'file'\nport = 9\ncert_file = 'c.pem'\n",
+		"config.yaml": "host: file\nport: 9\ncert_file: c.pem\n",
+	} {
+		t.Run(name, func(t *testing.T) {
+			t.Parallel()
+
+			path := writeFile(t, name, document)
+
+			got, meta, err := strata.LoadWithMetadata[inlineConfig](strata.WithPath(path), strata.WithFormats(filepath.Ext(name)), strata.WithStrict())
+			if err != nil {
+				t.Fatal(err)
+			}
+
+			want := inlineConfig{Server: inlineServer{Host: "file", Port: 1}, TLS: &inlineTLS{CertFile: "c.pem"}, Port: 9}
+			if !reflect.DeepEqual(got, want) {
+				t.Fatalf("loaded %+v, want %+v", got, want)
+			}
+
+			for key, source := range map[string]strata.SourceKind{"host": strata.SourceFile, "port": strata.SourceFile, "cert_file": strata.SourceFile, "name": strata.SourceDefault} {
+				if origin, found := meta.Where(key); !found || origin.Source != source {
+					t.Errorf("Where(%q) = %+v, %t; want %v", key, origin, found, source)
+				}
+			}
+
+			if _, found := meta.Where("server.host"); found {
+				t.Error("the inline struct kept its own key")
+			}
+		})
+	}
+}
+
+func TestInlinePointerStaysNilUntilUsed(t *testing.T) {
+	t.Parallel()
+
+	path := writeFile(t, "config.yaml", "host: file\n")
+
+	got, err := strata.Load[inlineConfig](strata.WithPath(path), strata.WithFormats(yamlFormat))
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	if got.TLS != nil {
+		t.Fatalf("TLS = %+v, want nil without any of its keys", got.TLS)
+	}
+}
+
+func TestInlineFieldsRoundTripThroughEveryFormat(t *testing.T) {
+	t.Parallel()
+
+	saved := inlineConfig{Server: inlineServer{Host: "saved", Port: 1}, TLS: &inlineTLS{CertFile: "c.pem"}, Name: "n", Port: 7}
+
+	for _, format := range []string{jsonFormat, tomlFormat, yamlFormat} {
+		t.Run(format, func(t *testing.T) {
+			t.Parallel()
+
+			dir := t.TempDir()
+			savePath := filepath.Join(dir, "saved."+format)
+
+			if err := strata.Save(savePath, saved); err != nil {
+				t.Fatal(err)
+			}
+
+			got, err := strata.Load[inlineConfig](strata.WithPath(savePath), strata.WithFormats(format), strata.WithStrict())
+			if err != nil || !reflect.DeepEqual(got, saved) {
+				t.Fatalf("Save then Load = %+v, %v; want %+v", got, err, saved)
+			}
+
+			initPath := filepath.Join(dir, "init."+format)
+			if err := strata.Init[inlineConfig](initPath); err != nil {
+				t.Fatal(err)
+			}
+
+			got, err = strata.Load[inlineConfig](strata.WithPath(initPath), strata.WithFormats(format), strata.WithStrict())
+
+			want := inlineConfig{Server: inlineServer{Host: "localhost", Port: 1}, Port: 2}
+			if err != nil || !reflect.DeepEqual(got, want) {
+				t.Fatalf("Init then Load = %+v, %v; want %+v", got, err, want)
+			}
+		})
+	}
+}
+
+type inlineMapConfig struct {
+	Name  string
+	Extra map[string]int `strata:",inline"`
+}
+
+func TestInlineMapCollectsUnclaimedKeys(t *testing.T) {
+	t.Parallel()
+
+	for name, document := range map[string]string{
+		"config.json": `{"name": "n", "alpha": 1, "beta": 2}`,
+		"config.toml": "name = 'n'\nalpha = 1\nbeta = 2\n",
+		"config.yaml": "name: n\nalpha: 1\nbeta: 2\n",
+	} {
+		t.Run(name, func(t *testing.T) {
+			t.Parallel()
+
+			path := writeFile(t, name, document)
+
+			got, meta, err := strata.LoadWithMetadata[inlineMapConfig](strata.WithPath(path), strata.WithFormats(filepath.Ext(name)), strata.WithStrict())
+			if err != nil {
+				t.Fatal(err)
+			}
+
+			want := inlineMapConfig{Name: "n", Extra: map[string]int{"alpha": 1, "beta": 2}}
+			if !reflect.DeepEqual(got, want) {
+				t.Fatalf("loaded %+v, want %+v", got, want)
+			}
+
+			if origin, found := meta.Where("beta"); !found || origin.RawValue != "2" {
+				t.Fatalf("Where(/beta) = %+v, %t", origin, found)
+			}
+		})
+	}
+}
+
+func TestInlineMapRejectsValuesOfTheWrongType(t *testing.T) {
+	t.Parallel()
+
+	for name, document := range map[string]string{
+		"config.json": `{"alpha": "nope"}`,
+		"config.toml": "alpha = 'nope'\n",
+		"config.yaml": "alpha: nope\n",
+	} {
+		t.Run(name, func(t *testing.T) {
+			t.Parallel()
+
+			path := writeFile(t, name, document)
+
+			_, err := strata.Load[inlineMapConfig](strata.WithPath(path), strata.WithFormats(filepath.Ext(name)))
+
+			var keyErr *codec.KeyError
+			if !errors.As(err, &keyErr) || keyErr.Key != "alpha" || !errors.Is(err, strata.ErrMalformed) {
+				t.Fatalf("err = %v, want a malformed-document error for alpha", err)
+			}
+		})
+	}
+}
+
+type inlineOverlapConfig struct {
+	Host  string
+	Extra map[string]string `strata:",inline"`
+}
+
+type inlineSecretMapConfig struct {
+	Host  string
+	Extra map[string]string `strata:",inline,secret"`
+}
+
+type inlineSecretFieldConfig struct {
+	Host  string            `strata:",secret"`
+	Extra map[string]string `strata:",inline"`
+}
+
+func TestInlineMapKeysNeverCollideWithDeclaredFields(t *testing.T) {
+	t.Parallel()
+
+	const spacedHost = " host "
+
+	documents := map[string]string{
+		"config.json": `{"host": "declared", "HOST": "upper", " host ": "spaced", "ho_st": "underscored"}`,
+		"config.toml": "host = 'declared'\nHOST = 'upper'\n' host ' = 'spaced'\nho_st = 'underscored'\n",
+		"config.yaml": "host: declared\nHOST: upper\n' host ': spaced\nho_st: underscored\n",
+	}
+	wantExtra := map[string]string{"HOST": "upper", spacedHost: "spaced", "ho_st": "underscored"}
+	wantKeys := []string{"host", spacedHost, "HOST", "ho_st"}
+
+	for name, document := range documents {
+		t.Run(name, func(t *testing.T) {
+			t.Parallel()
+
+			path := writeFile(t, name, document)
+
+			got, meta, err := strata.LoadWithMetadata[inlineOverlapConfig](strata.WithPath(path), strata.WithFormats(filepath.Ext(name)), strata.WithStrict())
+			if err != nil {
+				t.Fatal(err)
+			}
+
+			if got.Host != "declared" || !reflect.DeepEqual(got.Extra, wantExtra) {
+				t.Fatalf("loaded %+v, want host declared and extra %q", got, wantExtra)
+			}
+
+			keys := make([]string, 0, len(wantKeys))
+			for _, origin := range meta.Origins() {
+				keys = append(keys, origin.Key)
+			}
+
+			slices.Sort(keys)
+
+			if want := slices.Sorted(slices.Values(wantKeys)); !slices.Equal(keys, want) {
+				t.Errorf("origin keys = %q, want %q", keys, want)
+			}
+
+			for key, raw := range map[string]string{"host": "declared", "HOST": "upper", spacedHost: "spaced", "ho_st": "underscored"} {
+				if origin, found := meta.Where(key); !found || origin.RawValue != raw {
+					t.Errorf("Where(%q) = %+v, %t; want raw value %q", key, origin, found, raw)
+				}
+			}
+
+			if origin, found := meta.Where("Host"); found {
+				t.Errorf("Where(/Host) = %+v, want no match where an inline map may hold the key", origin)
+			}
+		})
+	}
+}
+
+func TestInlineMapSecretsFollowExactKeys(t *testing.T) {
+	t.Parallel()
+
+	path := writeFile(t, "config.yaml", "host: declared\nHOST: upper\n")
+
+	_, secretMap, err := strata.LoadWithMetadata[inlineSecretMapConfig](strata.WithPath(path), strata.WithFormats(yamlFormat), strata.WithStrict())
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	_, secretField, err := strata.LoadWithMetadata[inlineSecretFieldConfig](strata.WithPath(path), strata.WithFormats(yamlFormat), strata.WithStrict())
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	for _, test := range []struct {
+		name string
+		meta *strata.Metadata
+		key  string
+		want string
+	}{
+		{"secret map, declared key", secretMap, "host", "declared"},
+		{"secret map, map key", secretMap, "HOST", "[REDACTED]"},
+		{"secret field, declared key", secretField, "host", "[REDACTED]"},
+		{"secret field, map key", secretField, "HOST", "upper"},
+	} {
+		if origin, found := test.meta.Where(test.key); !found || origin.RawValue != test.want {
+			t.Errorf("%s: Where(%q) = %+v, %t; want raw value %q", test.name, test.key, origin, found, test.want)
 		}
 	}
 }

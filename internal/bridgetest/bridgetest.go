@@ -126,7 +126,7 @@ func layersFlagsAndShow(t *testing.T, bridge Bridge) {
 
 	out := mustRun(t, app, "config", "show")
 
-	for _, row := range []string{`port\s+8200\s+env APP_PORT`, `db\.port\s+6000\s+file ` + regexp.QuoteMeta(path), `token\s+\(unset\)\s+default`} {
+	for _, row := range []string{`(?m)^port\s+8200\s+env APP_PORT`, `(?m)^db\.port\s+6000\s+file ` + regexp.QuoteMeta(path), `(?m)^token\s+\(unset\)\s+default`} {
 		if !regexp.MustCompile(row).MatchString(out) {
 			t.Errorf("config show lacks a row matching %q:\n%s", row, out)
 		}
@@ -360,7 +360,7 @@ func helpShowsTheDefault(t *testing.T, bridge Bridge) {
 }
 
 func flagSetupPanicsOnBadKeys(t *testing.T, bridge Bridge) {
-	for _, key := range []string{"prot", "db"} {
+	for _, key := range []string{"prot", "db", "db/port", `db\x`, ""} {
 		t.Run(key, func(t *testing.T) {
 			defer func() {
 				if recover() == nil {

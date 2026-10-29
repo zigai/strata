@@ -2,12 +2,14 @@ package edit
 
 import (
 	"bytes"
-	"errors"
+	"encoding/json/jsontext"
 	"fmt"
 	"reflect"
 	"slices"
 	"sort"
 	"strings"
+
+	"github.com/zigai/strata/internal/keypath"
 
 	"github.com/pelletier/go-toml/v2"
 
@@ -19,12 +21,6 @@ const (
 	// maxClosingContentQuotes is how many quote characters a multi-line string
 	// may end with directly before its closing delimiter.
 	maxClosingContentQuotes = 2
-)
-
-var (
-	ErrEmptyKey = errors.New("invalid empty key path")
-
-	ErrEmptyKeySegment = errors.New("invalid empty path segment")
 )
 
 type tomlAssignment struct {
@@ -49,16 +45,16 @@ type tomlLexer struct {
 	depth int
 }
 
-func UpdateTOML(data []byte, dottedKey string, value any) ([]byte, error) {
+func UpdateTOML(data []byte, parts []string, value any) ([]byte, error) {
 	formattedVal, err := formatTOMLValue(value)
 	if err != nil {
 		return nil, fmt.Errorf("format toml value: %w", err)
 	}
 
-	return UpdateTOMLFormatted(data, dottedKey, value, formattedVal)
+	return UpdateTOMLFormatted(data, parts, value, formattedVal)
 }
 
-func UpdateTOMLFormatted(data []byte, dottedKey string, value any, formattedVal string) ([]byte, error) {
+func UpdateTOMLFormatted(data []byte, parts []string, value any, formattedVal string) ([]byte, error) {
 	crlf := bytes.Contains(data, []byte("\r\n"))
 	rawLines := strings.Split(string(data), "\n")
 
@@ -67,13 +63,9 @@ func UpdateTOMLFormatted(data []byte, dottedKey string, value any, formattedVal 
 		lines[i] = strings.TrimSuffix(l, "\r")
 	}
 
-	targetParts := splitDottedKey(dottedKey)
-	if len(targetParts) == 0 {
-		return nil, ErrEmptyKey
-	}
-
-	if slices.Contains(targetParts, "") {
-		return nil, fmt.Errorf("%w in %q", ErrEmptyKeySegment, dottedKey)
+	targetParts, err := tomlTargetParts(data, parts)
+	if err != nil {
+		return nil, err
 	}
 
 	scanned := scanTOMLLines(lines)
@@ -81,10 +73,7 @@ func UpdateTOMLFormatted(data []byte, dottedKey string, value any, formattedVal 
 
 	matchIdx := findMatchingCandidate(candidates, targetParts)
 
-	var (
-		keyUpdated bool
-		err        error
-	)
+	var keyUpdated bool
 
 	if matchIdx != -1 {
 		cand := candidates[matchIdx]
@@ -124,6 +113,45 @@ func UpdateTOMLFormatted(data []byte, dottedKey string, value any, formattedVal 
 	}
 
 	return result, nil
+}
+
+func tomlTargetParts(data []byte, targetParts []string) ([]string, error) {
+	if len(targetParts) == 0 {
+		return nil, keypath.ErrEmpty
+	}
+
+	// A document that does not parse yet is still edited, so that setting the
+	// broken value can repair it; the result is checked after the edit.
+	var document map[string]any
+	if toml.Unmarshal(data, &document) == nil {
+		if err := checkTOMLPath(document, targetParts); err != nil {
+			return nil, err
+		}
+	}
+
+	return targetParts, nil
+}
+
+// checkTOMLPath rejects a key whose path runs through a value that is not a
+// table, such as an array of tables, which has no single table to edit.
+func checkTOMLPath(document map[string]any, parts []string) error {
+	current := document
+
+	for index, part := range parts[:len(parts)-1] {
+		value, exists := current[part]
+		if !exists {
+			return nil
+		}
+
+		table, ok := value.(map[string]any)
+		if !ok {
+			return fmt.Errorf("%w: key %q is not a table", ErrPathNotMapping, parts[index])
+		}
+
+		current = table
+	}
+
+	return nil
 }
 
 // scanTOMLLines classifies every line of a document. A line inside a multi-line
@@ -348,7 +376,12 @@ func handleInlineTableUpdate(lines []string, candidates []tomlAssignment, target
 			return lines, true, nil
 		}
 
-		return nil, false, fmt.Errorf("%w: key %q is not a table", ErrPathNotMapping, strings.Join(cand.fullKey, "."))
+		var key jsontext.Pointer
+		for _, part := range cand.fullKey {
+			key = key.AppendToken(part)
+		}
+
+		return nil, false, fmt.Errorf(`%w: key "%s" is not a table`, ErrPathNotMapping, keypath.Format(key))
 	}
 
 	return lines, false, nil

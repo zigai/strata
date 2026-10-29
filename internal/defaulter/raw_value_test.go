@@ -1,6 +1,7 @@
 package defaulter_test
 
 import (
+	"encoding/json/jsontext"
 	"fmt"
 	"math"
 	"reflect"
@@ -8,6 +9,7 @@ import (
 	"time"
 
 	"github.com/zigai/strata/internal/defaulter"
+	"github.com/zigai/strata/internal/layout"
 )
 
 type portNumber int
@@ -70,9 +72,9 @@ func TestDefaultRawValuesMatchFormatting(t *testing.T) {
 		Names:    []string{"a", "b"},
 	}
 
-	recorded := make(map[string]string)
+	recorded := make(map[jsontext.Pointer]string)
 
-	if err := defaulter.Apply(&cfg, func(key, rawVal string) {
+	if err := defaulter.Apply(&cfg, func(key jsontext.Pointer, rawVal string) {
 		recorded[key] = rawVal
 	}); err != nil {
 		t.Fatalf("Apply: %v", err)
@@ -85,7 +87,7 @@ func TestDefaultRawValuesMatchFormatting(t *testing.T) {
 	for i := range val.NumField() {
 		sf := typ.Field(i)
 		field := val.Field(i)
-		key := defaulter.FieldKey(sf)
+		key := jsontext.Pointer("").AppendToken(layout.FieldKey(sf))
 
 		if field.Kind() == reflect.Pointer {
 			field = field.Elem()
@@ -126,19 +128,19 @@ func TestInterceptingTypesAreNotFormattedByKind(t *testing.T) {
 		PtrLevel: 9,
 		Failing:  failure(42),
 	}
-	recorded := make(map[string]string)
+	recorded := make(map[jsontext.Pointer]string)
 
-	if err := defaulter.Apply(&cfg, func(key, rawVal string) {
+	if err := defaulter.Apply(&cfg, func(key jsontext.Pointer, rawVal string) {
 		recorded[key] = rawVal
 	}); err != nil {
 		t.Fatalf("Apply: %v", err)
 	}
 
-	for key, want := range map[string]string{
-		"nap":       "10s",
-		"level":     "level-3",
-		"ptr_level": "9", // String method on the pointer receiver, which %v ignores
-		"failing":   "failure(42)",
+	for key, want := range map[jsontext.Pointer]string{
+		"/nap":       "10s",
+		"/level":     "level-3",
+		"/ptr_level": "9", // String method on the pointer receiver, which %v ignores
+		"/failing":   "failure(42)",
 	} {
 		if got := recorded[key]; got != want {
 			t.Errorf("%s = %q, want %q", key, got, want)

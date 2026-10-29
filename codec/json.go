@@ -1,6 +1,7 @@
 package codec
 
 import (
+	"bytes"
 	"encoding/json/jsontext"
 	"encoding/json/v2"
 	"fmt"
@@ -23,7 +24,8 @@ func NewJSON() *JSON {
 // other members are ignored.
 //
 // Nil targets return [ErrNilTarget]. Malformed JSON, duplicate members, and
-// invalid UTF-8 wrap [ErrMalformed].
+// invalid UTF-8 wrap [ErrMalformed], as does a [KeyError] for each value that
+// does not fit its field.
 func (c *JSON) Decode(data []byte, target any) error {
 	if isNilTarget(target) {
 		return ErrNilTarget
@@ -35,34 +37,9 @@ func (c *JSON) Decode(data []byte, target any) error {
 		return fmt.Errorf("%w: json unmarshal: %w", ErrMalformed, err)
 	}
 
-	rewritten, changed, err := rewriteJSONDocument(document, target)
-	if err != nil {
-		return err
-	}
+	start := len(data) - len(bytes.TrimLeft(data, " \t\r\n"))
 
-	if changed {
-		document = rewritten
-	}
-
-	if err := json.Unmarshal(document, target, json.WithUnmarshalers(json.UnmarshalFunc(func(data []byte, value *time.Duration) error {
-		var raw string
-		if err := json.Unmarshal(data, &raw); err != nil {
-			return fmt.Errorf("decode duration string: %w", err)
-		}
-
-		duration, err := time.ParseDuration(raw)
-		if err != nil {
-			return fmt.Errorf("parse duration: %w", err)
-		}
-
-		*value = duration
-
-		return nil
-	}))); err != nil {
-		return fmt.Errorf("%w: json unmarshal: %w", ErrMalformed, err)
-	}
-
-	return nil
+	return decodeOverlay("json", jsonNode{document: data, offset: int64(start), value: document}, target)
 }
 
 // Encode writes value as indented JSON without a trailing newline. Map keys are

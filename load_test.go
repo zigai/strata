@@ -862,3 +862,83 @@ func TestSetDefaultsSkipsNilUnexportedEmbeddedPointer(t *testing.T) {
 		t.Fatalf("embedded pointer = %+v, want it left nil", got.embeddedDefaults)
 	}
 }
+
+type invalidLayoutLeft struct{ Port int }
+
+type invalidLayoutRight struct{ Port int }
+
+func TestInvalidLayoutsAreRejected(t *testing.T) {
+	t.Parallel()
+
+	type twoInlineMaps struct {
+		A map[string]int `strata:",inline"`
+		B map[string]int `yaml:",inline"`
+	}
+
+	type inlineScalar struct {
+		N int `strata:",inline"`
+	}
+
+	type inlineIntKeys struct {
+		M map[int]string `strata:",inline"`
+	}
+
+	type sameDepthKeys struct {
+		Left  invalidLayoutLeft  `strata:",inline"`
+		Right invalidLayoutRight `strata:",inline"`
+	}
+
+	type inlineSelfEncoder struct {
+		At time.Time `strata:",inline"`
+	}
+
+	for name, load := range map[string]func() error{
+		"two inline maps":       func() error { _, err := strata.Load[twoInlineMaps](); return err },
+		"inline scalar":         func() error { _, err := strata.Load[inlineScalar](); return err },
+		"inline map int keys":   func() error { _, err := strata.Load[inlineIntKeys](); return err },
+		"same depth duplicates": func() error { _, err := strata.Load[sameDepthKeys](); return err },
+		"inline self encoder":   func() error { _, err := strata.Load[inlineSelfEncoder](); return err },
+		"schema":                func() error { _, err := strata.Schema[sameDepthKeys](); return err },
+		"save":                  func() error { return strata.Save(filepath.Join(t.TempDir(), "c.json"), twoInlineMaps{}) },
+		"set":                   func() error { return strata.Set[inlineScalar](writeFile(t, "c.yaml", "n: 1\n"), "n", 2) },
+	} {
+		t.Run(name, func(t *testing.T) {
+			t.Parallel()
+
+			if err := load(); !errors.Is(err, strata.ErrInvalidLayout) {
+				t.Fatalf("err = %v, want ErrInvalidLayout", err)
+			}
+		})
+	}
+}
+
+type shadowingInner struct {
+	Port int
+	Host string
+}
+
+type shadowingConfig struct {
+	shadowingInner `strata:",inline"`
+
+	Port int
+}
+
+func (c *shadowingConfig) SetDefaults() {
+	c.shadowingInner.Port = 1
+	c.Port = 2
+}
+
+func TestShallowerFieldsOwnTheirKeys(t *testing.T) {
+	t.Parallel()
+
+	path := writeFile(t, "config.yaml", "port: 9\nhost: h\n")
+
+	got, err := strata.Load[shadowingConfig](strata.WithPath(path), strata.WithFormats(yamlFormat), strata.WithStrict())
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	if got.Port != 9 || got.shadowingInner.Port != 1 || got.Host != "h" {
+		t.Fatalf("loaded %+v, want the outer port from the file and the shadowed one left at its default", got)
+	}
+}

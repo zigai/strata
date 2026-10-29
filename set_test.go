@@ -213,6 +213,20 @@ func TestSetBytesFailuresAreClassifiable(t *testing.T) {
 			strata.ErrPathNotMapping,
 		},
 		{
+			"a YAML list in the way",
+			func() ([]byte, error) {
+				return strata.SetBytes(".yaml", []byte("items:\n  - a\n  - b\n"), "items.1", "z")
+			},
+			strata.ErrPathNotMapping,
+		},
+		{
+			"a TOML array of tables in the way",
+			func() ([]byte, error) {
+				return strata.SetBytes(".toml", []byte("[[srv]]\nname = \"a\"\n[[srv]]\nname = \"b\"\n"), "srv.1.name", "z")
+			},
+			strata.ErrPathNotMapping,
+		},
+		{
 			"a root that is not a mapping",
 			func() ([]byte, error) { return strata.SetBytes(".yaml", []byte("- a\n- b\n"), "a", 1) },
 			strata.ErrRootNotMapping,
@@ -228,9 +242,14 @@ func TestSetBytesFailuresAreClassifiable(t *testing.T) {
 			strata.ErrEmptyKey,
 		},
 		{
-			"an empty path segment",
-			func() ([]byte, error) { return strata.SetBytes(".toml", []byte("a = 1\n"), "a..b", 2) },
-			strata.ErrEmptyKeySegment,
+			"an unknown escape",
+			func() ([]byte, error) { return strata.SetBytes(".toml", []byte("a = 1\n"), `a\/b`, 2) },
+			strata.ErrInvalidKey,
+		},
+		{
+			"a dangling backslash",
+			func() ([]byte, error) { return strata.SetBytes(".toml", []byte("a = 1\n"), `a\`, 2) },
+			strata.ErrInvalidKey,
 		},
 		{
 			"a duplicate JSON key",
@@ -300,7 +319,7 @@ func TestSetMatchesKeysExactly(t *testing.T) {
 			}
 
 			text := string(out)
-			if !strings.Contains(text, "Port") || !strings.Contains(text, "1") || !strings.Contains(text, portKey) || !strings.Contains(text, "2") {
+			if !strings.Contains(text, "Port") || !strings.Contains(text, "1") || !strings.Contains(text, "port") || !strings.Contains(text, "2") {
 				t.Fatalf("SetBytes changed the wrong key or dropped one:\n%s", text)
 			}
 		})
@@ -428,7 +447,10 @@ func TestSetTextDecodedSlicesRoundTrip(t *testing.T) {
 			t.Parallel()
 
 			path := writeFile(t, "config."+format, initial)
-			for _, change := range []struct{ key, value string }{{"delays", "3s, 4s"}, {"levels", "debug, info"}} {
+			for _, change := range []struct {
+				key   string
+				value string
+			}{{"delays", "3s, 4s"}, {"levels", "debug, info"}} {
 				if err := strata.Set[config](path, change.key, change.value); err != nil {
 					t.Fatalf("Set(%s): %v", change.key, err)
 				}
@@ -463,7 +485,10 @@ func TestSetTextDecodedSlicesRoundTrip(t *testing.T) {
 				t.Fatal(err)
 			}
 
-			for _, change := range []struct{ key, value string }{{"delays", "3s, invalid"}, {"levels", "debug, invalid"}} {
+			for _, change := range []struct {
+				key   string
+				value string
+			}{{"delays", "3s, invalid"}, {"levels", "debug, invalid"}} {
 				if err := strata.Set[config](path, change.key, change.value); err == nil {
 					t.Fatalf("Set(%s) accepted invalid item", change.key)
 				}
@@ -703,7 +728,10 @@ func TestSetNamedSliceSerializationUsesDecodedElements(t *testing.T) {
 	}
 
 	path := writeFile(t, "config.json", `{"levels":"1","delays":"1"}`)
-	for _, change := range []struct{ key, raw string }{{"levels", "debug,info"}, {"delays", "3s,4s"}} {
+	for _, change := range []struct {
+		key string
+		raw string
+	}{{"levels", "debug,info"}, {"delays", "3s,4s"}} {
 		if err := strata.Set[config](path, change.key, change.raw); err != nil {
 			t.Fatalf("Set(%s): %v", change.key, err)
 		}
@@ -734,7 +762,10 @@ func TestSetNamedSliceSerializationUsesDecodedElements(t *testing.T) {
 		t.Fatalf("config = %+v, want %+v", got, want)
 	}
 
-	for _, change := range []struct{ key, raw string }{{"levels", "debug,invalid"}, {"delays", "3s,invalid"}} {
+	for _, change := range []struct {
+		key string
+		raw string
+	}{{"levels", "debug,invalid"}, {"delays", "3s,invalid"}} {
 		if err := strata.Set[config](path, change.key, change.raw); err == nil {
 			t.Fatalf("Set(%s) accepted invalid item", change.key)
 		}
@@ -862,7 +893,7 @@ func TestSetParsesLists(t *testing.T) {
 	}
 }
 
-func TestSetPreservesTaggedEmbeddedFields(t *testing.T) {
+func TestSetEditsTaggedEmbeddedStructAsNestedKey(t *testing.T) {
 	t.Parallel()
 
 	type DB struct{ Port int }
@@ -871,23 +902,31 @@ func TestSetPreservesTaggedEmbeddedFields(t *testing.T) {
 		DB `json:"db"`
 	}
 
-	path := filepath.Join(t.TempDir(), "config.json")
-	if err := os.WriteFile(path, []byte(`{"db":{"port":9000}}`), 0o600); err != nil {
-		t.Fatal(err)
-	}
+	for _, test := range []struct {
+		name     string
+		document string
+	}{
+		{name: "config.json", document: `{"db":{"port":9000}}`},
+		{name: "config.toml", document: "[db]\nport = 9000\n"},
+		{name: "config.yaml", document: "db:\n  port: 9000\n"},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			t.Parallel()
 
-	if err := strata.Set[config](path, "port", 9001); err != nil {
-		t.Fatal(err)
-	}
+			path := writeFile(t, test.name, test.document)
+			if err := strata.Set[config](path, "db.port", 9001); err != nil {
+				t.Fatal(err)
+			}
 
-	got, err := strata.Load[config](strata.WithPath(path), strata.WithFormats("json"))
-	if err != nil {
-		t.Fatal(err)
-	}
+			got, err := strata.Load[config](strata.WithPath(path), strata.WithFormats(filepath.Ext(path)), strata.WithStrict())
+			if err != nil {
+				t.Fatal(err)
+			}
 
-	want := config{Port: 9001}
-	if got != want {
-		t.Fatalf("updated configuration = %+v, want %+v", got, want)
+			if want := (config{DB: DB{Port: 9001}}); got != want {
+				t.Fatalf("updated configuration = %+v, want %+v", got, want)
+			}
+		})
 	}
 }
 
@@ -941,7 +980,7 @@ func TestSetUsesSymlinkTargetFormat(t *testing.T) {
 		document string
 	}{
 		{name: "JSON target", target: "actual.json", link: "config.yaml", document: `{"db":{"port":9000}}`},
-		{name: "TOML target", target: "actual.toml", link: "config.json", document: "port = 9000\n"},
+		{name: "TOML target", target: "actual.toml", link: "config.json", document: "[db]\nport = 9000\n"},
 	} {
 		t.Run(test.name, func(t *testing.T) {
 			t.Parallel()
@@ -953,7 +992,7 @@ func TestSetUsesSymlinkTargetFormat(t *testing.T) {
 				t.Fatal(err)
 			}
 
-			if err := strata.Set[config](link, "port", 9001); err != nil {
+			if err := strata.Set[config](link, "db.port", 9001); err != nil {
 				t.Fatal(err)
 			}
 
@@ -1174,7 +1213,9 @@ func TestSetRejectionLeavesTheFileUnchanged(t *testing.T) {
 	const initial = "port = 8080\nnarrow = 1\ncount = 1\ndebug = false\ntimeout = '1s'\nlevel = 'info'\n"
 
 	for _, tc := range []struct {
-		name, key, value string
+		name  string
+		key   string
+		value string
 	}{
 		{"out of range for int8", "narrow", "300"},
 		{"not an integer", portKey, "abc"},
@@ -1359,5 +1400,135 @@ func TestSetKeepsEveryConcurrentEditToOneFile(t *testing.T) {
 	}
 	if !reflect.DeepEqual(got.Counters, want) {
 		t.Fatalf("counters = %v, want every concurrent edit %v", got.Counters, want)
+	}
+}
+
+func TestSetEditsInlineKeysAtTheTopLevel(t *testing.T) {
+	t.Parallel()
+
+	for _, test := range []struct {
+		name, document, want string
+	}{
+		{"config.yaml", "port: 1\n", "port: 1\nhost: edited\n"},
+		{"config.json", "{\"port\": 1}\n", "{\"port\": 1, \"host\": \"edited\"}\n"},
+		{"config.toml", "port = 1\n", "port = 1\nhost = 'edited'\n"},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			t.Parallel()
+
+			path := writeFile(t, test.name, test.document)
+
+			if err := strata.Set[inlineConfig](path, "host", "edited"); err != nil {
+				t.Fatal(err)
+			}
+
+			got, err := strata.Load[inlineConfig](strata.WithPath(path), strata.WithFormats(filepath.Ext(test.name)), strata.WithStrict())
+			if err != nil || got.Server.Host != "edited" || got.Port != 1 {
+				t.Fatalf("reloaded %+v, %v; want host edited and port 1", got, err)
+			}
+
+			if err := strata.Set[inlineConfig](path, "server.host", "x"); !errors.Is(err, strata.ErrUnknownKey) {
+				t.Fatalf("Set(/server/host) error = %v, want ErrUnknownKey", err)
+			}
+		})
+	}
+}
+
+func TestSetChecksInlineMapEntriesAgainstTheMapType(t *testing.T) {
+	t.Parallel()
+
+	initial := "name: n\nalpha: 1\n"
+	path := writeFile(t, "config.yaml", initial)
+
+	if err := strata.Set[inlineMapConfig](path, "beta", "x"); err == nil || !strings.Contains(err.Error(), "beta") {
+		t.Fatalf("Set(/beta, x) error = %v, want a rejection naming /beta", err)
+	}
+
+	requireFileContent(t, path, initial)
+
+	if err := strata.Set[inlineMapConfig](path, "beta", 2); err != nil {
+		t.Fatal(err)
+	}
+
+	got, err := strata.Load[inlineMapConfig](strata.WithPath(path), strata.WithFormats(yamlFormat), strata.WithStrict())
+	if err != nil || !reflect.DeepEqual(got.Extra, map[string]int{"alpha": 1, "beta": 2}) {
+		t.Fatalf("reloaded %+v, %v", got, err)
+	}
+}
+
+func TestSetBytesTreatsEveryTokenAsOneKey(t *testing.T) {
+	t.Parallel()
+
+	for _, test := range []struct {
+		key  string
+		want string
+	}{
+		{`labels.a\.b`, "a.b"},
+		{"labels.a/b", "a/b"},
+		{`labels.a\\b`, `a\b`},
+		{"labels.a~b", "a~b"},
+		{"labels.", ""},
+		{"labels. x ", " x "},
+		{"labels.0", "0"},
+		{"labels.null", "null"},
+		{"labels.true", "true"},
+	} {
+		for _, format := range []string{jsonFormat, tomlFormat, yamlFormat} {
+			t.Run(format+" "+test.key, func(t *testing.T) {
+				t.Parallel()
+
+				empty := map[string][]byte{jsonFormat: []byte("{\"labels\": {}}\n"), tomlFormat: []byte("[labels]\n"), yamlFormat: []byte("labels: {}\n")}
+
+				edited, err := strata.SetBytes(format, empty[format], test.key, "v")
+				if err != nil {
+					t.Fatal(err)
+				}
+
+				path := writeFile(t, "config."+format, string(edited))
+
+				got, meta, err := strata.LoadWithMetadata[typoConfig](strata.WithPath(path), strata.WithFormats(format))
+				if err != nil || !reflect.DeepEqual(got.Labels, map[string]string{test.want: "v"}) {
+					t.Fatalf("labels = %q, %v; want only %q", got.Labels, err, test.want)
+				}
+
+				if origin, found := meta.Where(test.key); !found || origin.Source != strata.SourceFile || origin.Key != test.key {
+					t.Fatalf("Where(%q) = %+v, %t; want the file origin under the same key", test.key, origin, found)
+				}
+			})
+		}
+	}
+}
+
+type escapedKeyConfig struct {
+	Name   string
+	Labels map[string]map[string]int
+	Extra  map[string]string `strata:",inline"`
+}
+
+func TestSetRejectsMalformedKeysWithoutWriting(t *testing.T) {
+	t.Parallel()
+
+	const initial = "name: n\n"
+
+	for key, want := range map[string]error{
+		"":           strata.ErrEmptyKey,
+		`labels.a\`:  strata.ErrInvalidKey,
+		`labels.a\x`: strata.ErrInvalidKey,
+		`labels\/a`:  strata.ErrInvalidKey,
+	} {
+		path := writeFile(t, "config.yaml", initial)
+
+		if err := strata.Set[escapedKeyConfig](path, key, 1); !errors.Is(err, want) {
+			t.Errorf("Set(%q) error = %v, want %v", key, err, want)
+		}
+
+		requireFileContent(t, path, initial)
+
+		meta := strata.NewMetadata()
+		meta.Record(strata.Origin{Key: key, Source: strata.SourceFile, Path: path, Line: 0, RawValue: "1"})
+
+		if origin, found := meta.Where(key); found {
+			t.Errorf("Where(%q) = %+v, want a malformed key never to match", key, origin)
+		}
 	}
 }

@@ -1,6 +1,8 @@
 package strata
 
-import "fmt"
+import (
+	"fmt"
+)
 
 const (
 	// SourceDefault is the layer supplied by Go struct defaults or a [Defaulter].
@@ -38,9 +40,11 @@ type SourceKind string
 
 // Origin records where one configuration key came from.
 type Origin struct {
-	// Key is the dotted configuration key as the supplying layer named it,
-	// normally in snake_case. Lookups through [Metadata.Where] are
-	// case-insensitive, so the casing here is informational.
+	// Key is the dotted configuration key, such as "db.port". A dot or
+	// backslash inside one key is escaped, so `labels.a\.b` is the entry "a.b"
+	// and "labels.a.b" a nested one. Tokens that name declared fields are
+	// spelled as the target type declares them; map entries are spelled exactly
+	// as the supplying layer wrote them.
 	Key string
 
 	// Source identifies the layer that supplied the value.

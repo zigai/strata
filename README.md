@@ -157,7 +157,7 @@ For a complete CLI, see [`examples/cli`](examples/cli).
 
 ## Where did this value come from?
 
-Use `LoadWithMetadata` to get a `*Metadata` along with your config, then ask it about any key:
+Use `LoadWithMetadata` to get a `*Metadata` along with your config, then ask it about any key, such as `database.port`:
 
 ```go
 cfg, meta, err := strata.LoadWithMetadata[Config](strata.WithAppName("myapp"), strata.WithFormats("toml"))
@@ -252,7 +252,7 @@ func (c *Config) ValidateWith(meta *strata.Metadata) error {
 err := strata.Set[Config]("config.toml", "database.port", "5433")
 ```
 
-`Set[Config]` checks the key and field type before writing, including custom text decoders. Dotted paths can set map entries such as `labels.env`. For slice fields, a string such as `"a,b"` becomes two items. `SetBytes` edits arbitrary documents without a config type. TOML files keep comments, blank lines, and key order. YAML files keep comments but lose blank lines. JSON files keep number text in untouched values and sort keys.
+`Set[Config]` checks the key and field type before writing, including custom text decoders. Dots separate keys, so `labels.env` sets a map entry. Inside one key, `\.` is a literal dot and `\\` a literal backslash: `labels.a\.b` sets the entry named `a.b`, and `labels.` the empty one. Any other backslash fails with `ErrInvalidKey`. For slice fields, a string such as `"a,b"` becomes two items. `SetBytes` edits arbitrary documents without a config type. TOML files keep comments, blank lines, and key order. YAML files keep comments but lose blank lines. JSON files keep number text in untouched values and sort keys.
 
 For files only your program touches, like saved state, `Save` writes the whole struct at once:
 
@@ -316,11 +316,11 @@ type Config struct {
 
 <br>
 
-A field's key comes from its `strata`, `toml`, `yaml`, or `json` tag, whichever it finds first, or else its name in snake case. Nested structs use dots: `database.port`. Keys match exactly, so `max_conns` sets `MaxConns` but `maxconns` is reported as an unknown key.
+A field's key comes from its `strata`, `toml`, `yaml`, or `json` tag, whichever it finds first, or else its name in snake case. Nested structs use dots: `database.port`. An embedded struct's fields join its parent's keys, unless one of those tags names it, as in `json:"db"`; then its fields sit under that key, such as `db.port`, in every format. `strata:",inline"`, `yaml:",inline"`, or `json:",embed"` inlines a named struct field the same way in every format (`toml:",inline"` does not; go-toml uses it for table style). An inline `map[string]T` collects the keys no field claims, and checks their values as `T`. A field closer to the top owns its key over an inlined one; two inline maps, or two inlined fields claiming one key at the same depth, fail with `ErrInvalidLayout`. Keys match exactly, so `max_conns` sets `MaxConns` but `maxconns` is reported as an unknown key.
 
 An `env` tag gives a field an exact variable name, read even without `WithEnvPrefix`. Other fields are only read from the environment once you set a prefix, so a stray `PORT` or `HOST` never changes your config.
 
-`strata.Secret` is a string that redacts itself in formatting and logs; `Value()` returns the real value. Secrets are left out of `Init` templates and can't be bound as flags. For other field types, use the `secret` tag.
+`strata.Secret` is a string that redacts itself in formatting and logs; `Value()` returns the real value. Secrets are left out of `Init` templates and can't be bound as flags. For other field types, add the `secret` option to the field's `strata` or `env` tag, such as `strata:"api_key,secret"` or `strata:",secret"`.
 
 ```go
 type Config struct {

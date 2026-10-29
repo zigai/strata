@@ -136,15 +136,16 @@ func isBuiltIn(cmd *cobra.Command) bool {
 	}
 }
 
-// Flag adds a flag for key to flagSet, using the field's type and SetDefaults value.
-// A dotted key uses hyphens in its flag name. Invalid, unsupported, or secret
-// keys panic, as do duplicate flag names in the same flag set.
-func (b *Binding[T]) Flag(flagSet *pflag.FlagSet, key, usage string) {
+// Flag adds a flag for key, a dotted key such as "db.port", to flagSet,
+// using the field's type and SetDefaults value. The flag name joins the key's
+// tokens with hyphens, as in --db-port. Invalid, unsupported, or secret keys
+// panic, as do duplicate flag names in the same flag set.
+func (b *Binding[T]) Flag(flagSet *pflag.FlagSet, key string, usage string) {
 	b.FlagP(flagSet, key, "", usage)
 }
 
 // FlagP is Flag with a shorthand flag name.
-func (b *Binding[T]) FlagP(flagSet *pflag.FlagSet, key, shorthand, usage string) {
+func (b *Binding[T]) FlagP(flagSet *pflag.FlagSet, key string, shorthand, usage string) {
 	if flagSet == nil {
 		panic("stratacobra.Flag requires a flag set")
 	}
@@ -155,7 +156,7 @@ func (b *Binding[T]) FlagP(flagSet *pflag.FlagSet, key, shorthand, usage string)
 	}
 
 	if target.IsSecret {
-		panic(fmt.Sprintf("secret key %q cannot be a flag", key))
+		panic(fmt.Sprintf(`secret key "%s" cannot be a flag`, key))
 	}
 
 	target.Usage = usage
@@ -232,9 +233,10 @@ func (b *Binding[T]) EditPath() (string, error) {
 	return path, nil
 }
 
-// Set checks key and value against T, then edits EditPath's file. A missing file
-// reports that config init should be run first. It does not run ValidateWith.
-func (b *Binding[T]) Set(key, value string) (string, error) {
+// Set checks key, a dotted key such as "db.port", and value against T, then
+// edits EditPath's file. A missing file reports that config init should be run
+// first. It does not run ValidateWith.
+func (b *Binding[T]) Set(key string, value string) (string, error) {
 	path, err := b.EditPath()
 	if err != nil {
 		return "", err

@@ -7,6 +7,7 @@ import (
 	"github.com/urfave/cli/v3"
 
 	"github.com/zigai/strata"
+	"github.com/zigai/strata/internal/keypath"
 	"github.com/zigai/strata/internal/plan"
 )
 
@@ -157,7 +158,7 @@ func recordOrigin(meta *strata.Metadata, target *plan.Leaf, raw string) {
 	}
 
 	meta.Record(strata.Origin{
-		Key:      target.ConfigKey,
+		Key:      keypath.Format(target.ConfigKey),
 		Source:   strata.SourceFlag,
 		Path:     "--" + target.FlagName,
 		Line:     0,

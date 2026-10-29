@@ -1,13 +1,14 @@
 package plan
 
 import (
+	"encoding/json/jsontext"
 	"errors"
 	"fmt"
 	"reflect"
-	"slices"
 	"strings"
 
-	"github.com/zigai/strata/internal/defaulter"
+	"github.com/zigai/strata/internal/keypath"
+	"github.com/zigai/strata/internal/layout"
 )
 
 var (
@@ -19,7 +20,7 @@ var (
 type Leaf struct {
 	IndexPath []int
 	FieldName string
-	ConfigKey string
+	ConfigKey jsontext.Pointer
 	FlagName  string
 	Shorthand string
 	Usage     string
@@ -28,10 +29,44 @@ type Leaf struct {
 	IsSecret  bool
 }
 
-func LeafFor(root reflect.Type, key string) (Leaf, error) {
-	index, field, secret, err := fieldByKey(root, key)
+// LeafFor resolves a dotted key to a field that one flag can hold. The key may
+// run through nested and promoted structs, but not through maps or sequences,
+// which have no fixed field to bind.
+func LeafFor(root reflect.Type, dotted string) (Leaf, error) {
+	key, err := keypath.Parse(dotted)
 	if err != nil {
 		return Leaf{}, err
+	}
+
+	if root.Kind() != reflect.Struct {
+		return Leaf{}, fmt.Errorf("%w: %s", ErrNotStruct, root)
+	}
+
+	var (
+		index  []int
+		field  reflect.StructField
+		secret bool
+	)
+
+	current := root
+	for token := range key.Tokens() {
+		if !layout.IsNestedStructType(current) {
+			return Leaf{}, fmt.Errorf(`%w "%s"`, errUnknownKey, keypath.Format(key))
+		}
+
+		found, ok := layout.Of(deref(current)).Field(token)
+		if !ok {
+			return Leaf{}, fmt.Errorf(`%w "%s"`, errUnknownKey, keypath.Format(key))
+		}
+
+		index = append(index, found.Index...)
+		field = found.Member.Field
+		secret = secret || found.Secret
+		current = field.Type
+	}
+
+	if layout.IsNestedStructType(current) {
+		return Leaf{}, fmt.Errorf(`%w "%s"`, errUnknownKey, keypath.Format(key))
 	}
 
 	kind, leaf, err := Classify(field.Type)
@@ -43,7 +78,7 @@ func LeafFor(root reflect.Type, key string) (Leaf, error) {
 		IndexPath: index,
 		FieldName: field.Name,
 		ConfigKey: key,
-		FlagName:  strings.ReplaceAll(strings.ReplaceAll(key, ".", "-"), "_", "-"),
+		FlagName:  FlagName(key),
 		Shorthand: "",
 		Usage:     "",
 		Kind:      kind,
@@ -52,17 +87,40 @@ func LeafFor(root reflect.Type, key string) (Leaf, error) {
 	}, nil
 }
 
-func FieldType(root reflect.Type, key string, format string) (reflect.Type, string, error) {
+// FlagName spells key as a flag name: its tokens joined by hyphens, with
+// underscores also becoming hyphens, so db.max_conns is db-max-conns.
+func FlagName(key jsontext.Pointer) string {
+	var tokens []string
+	for token := range key.Tokens() {
+		tokens = append(tokens, strings.ReplaceAll(token, "_", "-"))
+	}
+
+	return strings.Join(tokens, "-")
+}
+
+// FieldType resolves key to the type of the value it addresses. Under a struct
+// a token names a field, or an entry of its inline map; under a string-keyed
+// map it names an entry. The value must not be a nested struct.
+func FieldType(root reflect.Type, key jsontext.Pointer) (reflect.Type, error) {
 	if root.Kind() != reflect.Struct {
-		return nil, "", fmt.Errorf("%w: %s", ErrNotStruct, root)
+		return nil, fmt.Errorf("%w: %s", ErrNotStruct, root)
 	}
 
-	typ, path, ok := fieldTypePath(root, strings.Split(key, "."), nil, format)
-	if !ok {
-		return nil, "", fmt.Errorf("%w %q", errUnknownKey, key)
+	current := root
+	for token := range key.Tokens() {
+		next, ok := childType(deref(current), token)
+		if !ok {
+			return nil, fmt.Errorf(`%w "%s"`, errUnknownKey, keypath.Format(key))
+		}
+
+		current = next
 	}
 
-	return typ, strings.Join(path, "."), nil
+	if layout.IsNestedStructType(current) {
+		return nil, fmt.Errorf(`%w "%s"`, errUnknownKey, keypath.Format(key))
+	}
+
+	return deref(current), nil
 }
 
 func IsUnsetSecret(root reflect.Value, key string) bool {
@@ -76,131 +134,30 @@ func IsUnsetSecret(root reflect.Value, key string) bool {
 	return !ok || field.IsZero()
 }
 
-func fieldTypePath(typ reflect.Type, parts []string, active []reflect.Type, format string) (reflect.Type, []string, bool) {
+func childType(typ reflect.Type, token string) (reflect.Type, bool) {
+	switch {
+	case layout.IsNestedStructType(typ):
+		structLayout := layout.Of(typ)
+		if field, ok := structLayout.Field(token); ok {
+			return field.Member.Field.Type, true
+		}
+
+		if structLayout.Rest != nil {
+			return structLayout.Rest.Member.Field.Type.Elem(), true
+		}
+
+		return nil, false
+	case typ.Kind() == reflect.Map && typ.Key().Kind() == reflect.String:
+		return typ.Elem(), true
+	default:
+		return nil, false
+	}
+}
+
+func deref(typ reflect.Type) reflect.Type {
 	for typ.Kind() == reflect.Pointer {
 		typ = typ.Elem()
 	}
 
-	if len(parts) == 0 {
-		return typ, nil, !defaulter.IsNestedStructType(typ)
-	}
-
-	if typ.Kind() == reflect.Map && typ.Key().Kind() == reflect.String {
-		found, path, ok := fieldTypePath(typ.Elem(), parts[1:], active, format)
-		return found, append([]string{parts[0]}, path...), ok
-	}
-
-	if typ.Kind() != reflect.Struct || slices.Contains(active, typ) {
-		return nil, nil, false
-	}
-
-	return fieldTypeInStruct(typ, parts, append(active, typ), format)
-}
-
-func fieldTypeInStruct(typ reflect.Type, parts []string, active []reflect.Type, format string) (reflect.Type, []string, bool) {
-	var embeds []reflect.StructField
-
-	for field := range typ.Fields() {
-		if !field.IsExported() && !field.Anonymous {
-			continue
-		}
-
-		key := defaulter.FieldKey(field)
-		if key == "-" {
-			continue
-		}
-
-		if field.Anonymous && defaulter.IsNestedStructType(field.Type) {
-			embeds = append(embeds, field)
-			continue
-		}
-
-		if key == parts[0] {
-			found, path, ok := fieldTypePath(field.Type, parts[1:], active, format)
-			return found, append([]string{key}, path...), ok
-		}
-	}
-
-	for _, field := range embeds {
-		if found, path, ok := fieldTypePath(field.Type, parts, active, format); ok {
-			name, _, _ := strings.Cut(field.Tag.Get("json"), ",")
-			if format == "json" && strings.TrimSpace(name) != "" {
-				path = append([]string{defaulter.FieldKey(field)}, path...)
-			}
-
-			return found, path, true
-		}
-	}
-
-	return nil, nil, false
-}
-
-func fieldByKey(root reflect.Type, key string) ([]int, *reflect.StructField, bool, error) {
-	if root.Kind() != reflect.Struct {
-		return nil, nil, false, fmt.Errorf("%w: %s", ErrNotStruct, root)
-	}
-
-	index, field, secret := lookupField(root, strings.Split(key, "."), nil, false, nil)
-	if field == nil {
-		return nil, nil, false, fmt.Errorf("%w %q", errUnknownKey, key)
-	}
-
-	return index, field, secret, nil
-}
-
-func lookupField(typ reflect.Type, parts []string, index []int, secret bool, active []reflect.Type) ([]int, *reflect.StructField, bool) {
-	if len(parts) == 0 || slices.Contains(active, typ) {
-		return nil, nil, false
-	}
-
-	active = append(active, typ)
-	for i := range typ.NumField() {
-		field := typ.Field(i)
-
-		path, leaf, fieldSecret := lookupCandidate(field, parts, append(append([]int(nil), index...), i), secret, active)
-		if leaf != nil {
-			return path, leaf, fieldSecret
-		}
-	}
-
-	return nil, nil, false
-}
-
-func lookupCandidate(field reflect.StructField, parts []string, path []int, secret bool, active []reflect.Type) ([]int, *reflect.StructField, bool) {
-	if !field.IsExported() && !field.Anonymous {
-		return nil, nil, false
-	}
-
-	key := defaulter.FieldKey(field)
-	if key == "-" {
-		return nil, nil, false
-	}
-
-	base := field.Type
-	for base.Kind() == reflect.Pointer {
-		base = base.Elem()
-	}
-
-	fieldSecret := secret || defaulter.IsSecret(field)
-	if field.Anonymous && defaulter.IsNestedStructType(base) {
-		return lookupField(base, parts, path, fieldSecret, active)
-	}
-
-	if key != parts[0] {
-		return nil, nil, false
-	}
-
-	if len(parts) == 1 {
-		if defaulter.IsNestedStructType(base) {
-			return nil, nil, false
-		}
-
-		return path, &field, fieldSecret
-	}
-
-	if defaulter.IsNestedStructType(base) {
-		return lookupField(base, parts[1:], path, fieldSecret, active)
-	}
-
-	return nil, nil, false
+	return typ
 }

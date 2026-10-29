@@ -1,6 +1,8 @@
 package env_test
 
 import (
+	"encoding/json/jsontext"
+	"maps"
 	"net/netip"
 	"strings"
 	"testing"
@@ -54,8 +56,8 @@ func TestEnvBindingVariables(t *testing.T) {
 	var c envTestConfig
 	c.SetDefaults()
 
-	recorded := make(map[string]string)
-	onBind := func(k, envVar, raw string) {
+	recorded := make(map[jsontext.Pointer]string)
+	onBind := func(k jsontext.Pointer, envVar, raw string) {
 		recorded[k] = raw
 	}
 
@@ -293,5 +295,36 @@ func TestExplicitEnvExclusion(t *testing.T) {
 
 	if cfg.Token != "original" {
 		t.Errorf("env:\"-\" still binds the derived variable: %q", cfg.Token)
+	}
+}
+
+type envInlineServer struct {
+	Host string
+}
+
+type envInlineConfig struct {
+	Server envInlineServer   `yaml:",inline"`
+	Extra  map[string]string `yaml:",inline"`
+	Plain  envInlineServer
+}
+
+func TestApplyBindsInlineFieldsUnderTheirOwnKeys(t *testing.T) {
+	t.Setenv("TAPP_HOST", "inline")
+	t.Setenv("TAPP_PLAIN__HOST", "nested")
+
+	var cfg envInlineConfig
+
+	bound := make(map[jsontext.Pointer]string)
+
+	if err := env.Apply(&cfg, env.Options{Prefix: "TAPP_", Lookup: nil, OnBind: func(key jsontext.Pointer, _, raw string) { bound[key] = raw }}); err != nil {
+		t.Fatal(err)
+	}
+
+	if cfg.Server.Host != "inline" || cfg.Plain.Host != "nested" {
+		t.Fatalf("config = %+v, want the inline host from TAPP_HOST and the nested one from TAPP_PLAIN__HOST", cfg)
+	}
+
+	if want := map[jsontext.Pointer]string{"/host": "inline", "/plain/host": "nested"}; !maps.Equal(bound, want) {
+		t.Fatalf("bound keys = %v, want %v", bound, want)
 	}
 }

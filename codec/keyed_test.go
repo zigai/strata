@@ -722,7 +722,7 @@ type restoreConfig struct {
 	Named map[string]restoreItem
 }
 
-func TestYAMLDecodeKeepsIdentityAndDropsReplacedState(t *testing.T) {
+func TestYAMLDecodeKeepsIdentityAndMergesMapEntries(t *testing.T) {
 	t.Parallel()
 
 	db := &restoreInner{Host: "db", Port: 1}
@@ -742,7 +742,7 @@ func TestYAMLDecodeKeepsIdentityAndDropsReplacedState(t *testing.T) {
 		t.Errorf("pointers not mentioned by the document were replaced")
 	}
 
-	wantNamed := map[string]restoreItem{"keep": {N: 1, hidden: 7}, "replace": {N: 3, hidden: 0}}
+	wantNamed := map[string]restoreItem{"keep": {N: 1, hidden: 7}, "replace": {N: 3, hidden: 8}}
 	if !reflect.DeepEqual(named, wantNamed) || reflect.ValueOf(target.Named).UnsafePointer() != reflect.ValueOf(named).UnsafePointer() {
 		t.Errorf("named = %+v (same map: %t), want %+v written into the original map",
 			target.Named, reflect.ValueOf(target.Named).UnsafePointer() == reflect.ValueOf(named).UnsafePointer(), wantNamed)
@@ -754,5 +754,299 @@ func TestYAMLDecodeKeepsIdentityAndDropsReplacedState(t *testing.T) {
 
 	if target.DB != db || db.Port != 2 || db.Host != "db" || target.Other.Port != 2 {
 		t.Errorf("db = %+v (same pointer: %t), want port 2 written through the original pointer", target.DB, target.DB == db)
+	}
+}
+
+type catchAllConfig struct {
+	Name  string            `yaml:"name"`
+	Extra map[string]string `yaml:",inline"`
+}
+
+func TestYAMLInlineMapsMergeUndeclaredKeysAcrossLayers(t *testing.T) {
+	t.Parallel()
+
+	var got catchAllConfig
+	if err := codec.NewYAML().Decode([]byte("name: base\ncustom: kept\n"), &got); err != nil {
+		t.Fatal(err)
+	}
+
+	if err := codec.NewYAML().Decode([]byte("other: added\nname: top\n"), &got); err != nil {
+		t.Fatal(err)
+	}
+
+	want := catchAllConfig{Name: "top", Extra: map[string]string{"custom": "kept", "other": "added"}}
+	if !reflect.DeepEqual(got, want) {
+		t.Fatalf("decoded = %#v, want %#v", got, want)
+	}
+}
+
+func TestYAMLInlineMapsRoundTrip(t *testing.T) {
+	t.Parallel()
+
+	value := catchAllConfig{Name: "example", Extra: map[string]string{"custom": "kept"}}
+
+	data, err := codec.NewYAML().Encode(value)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	var got catchAllConfig
+	if err := codec.NewYAML().Decode(data, &got); err != nil {
+		t.Fatal(err)
+	}
+
+	if !reflect.DeepEqual(got, value) {
+		t.Errorf("round trip of %s = %#v, want %#v", data, got, value)
+	}
+}
+
+func TestYAMLInlineMapErrorsNameTheEntryKey(t *testing.T) {
+	t.Parallel()
+
+	var got struct {
+		Extra map[string]int `yaml:",inline"`
+	}
+
+	err := codec.NewYAML().Decode([]byte("count: many\n"), &got)
+
+	keyErr, ok := errors.AsType[*codec.KeyError](err)
+	if !ok || keyErr.Key != "count" || keyErr.Line != 1 {
+		t.Fatalf("Decode error = %v, want a KeyError for count on line 1", err)
+	}
+}
+
+type jsonOptionConfig struct {
+	Count  int    `json:",string"`
+	Region string `json:",case:ignore"`
+}
+
+func TestJSONStringOptionRoundTrips(t *testing.T) {
+	t.Parallel()
+
+	value := jsonOptionConfig{Count: 7, Region: "north"}
+
+	data, err := codec.NewJSON().Encode(value)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	var got jsonOptionConfig
+	if err := codec.NewJSON().Decode(data, &got); err != nil {
+		t.Fatalf("Decode(%s) error = %v", data, err)
+	}
+
+	if !reflect.DeepEqual(got, value) {
+		t.Fatalf("Decode(%s) = %+v, want %+v", data, got, value)
+	}
+}
+
+func TestJSONCaseIgnoreOptionMatchesOtherSpellings(t *testing.T) {
+	t.Parallel()
+
+	var got jsonOptionConfig
+	if err := codec.NewJSON().Decode([]byte(`{"REGION":"north","Count":"3"}`), &got); err != nil {
+		t.Fatal(err)
+	}
+
+	if got.Region != "north" || got.Count != 0 {
+		t.Fatalf("decoded = %+v, want region north and count left unset", got)
+	}
+}
+
+func TestJSONFieldOptionErrorsNameTheKey(t *testing.T) {
+	t.Parallel()
+
+	var got jsonOptionConfig
+
+	err := codec.NewJSON().Decode([]byte("{\n\"count\": \"seven\"}"), &got)
+
+	keyErr, ok := errors.AsType[*codec.KeyError](err)
+	if !ok || keyErr.Key != "count" || keyErr.Line != 2 {
+		t.Fatalf("Decode error = %v, want a KeyError for count on line 2", err)
+	}
+
+	if strings.Contains(err.Error(), "struct {") {
+		t.Errorf("Decode error = %q, want no mention of an internal holder type", err)
+	}
+}
+
+type sizer interface{ Size() int }
+
+type sizedBox struct {
+	Width  int `json:"width" toml:"width" yaml:"width"`
+	Height int `json:"height" toml:"height" yaml:"height"`
+}
+
+func (b *sizedBox) Size() int { return b.Width * b.Height }
+
+type sizedLength int
+
+func (l sizedLength) Size() int { return int(l) }
+
+type interfaceConfig struct {
+	Value sizer `json:"value" toml:"value" yaml:"value"`
+}
+
+func interfaceCodecs() []struct {
+	name    string
+	codec   codec.Codec
+	mapping string
+	number  string
+} {
+	return []struct {
+		name    string
+		codec   codec.Codec
+		mapping string
+		number  string
+	}{
+		{"yaml", codec.NewYAML(), "value:\n  width: 3\n", "value: 4\n"},
+		{"json", codec.NewJSON(), `{"value":{"width":3}}`, `{"value":4}`},
+		{"toml", codec.NewTOML(), "[value]\nwidth = 3\n", "value = 4\n"},
+	}
+}
+
+func TestDecodersRejectNilInterfacesWithMethods(t *testing.T) {
+	t.Parallel()
+
+	for _, tt := range interfaceCodecs() {
+		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+
+			var got interfaceConfig
+
+			err := tt.codec.Decode([]byte(tt.mapping), &got)
+
+			keyErr, ok := errors.AsType[*codec.KeyError](err)
+			if !ok || keyErr.Key != "value" || !errors.Is(err, codec.ErrMalformed) {
+				t.Fatalf("Decode error = %v, want a malformed KeyError for value", err)
+			}
+
+			if got.Value != nil {
+				t.Errorf("Value = %#v, want nil", got.Value)
+			}
+		})
+	}
+}
+
+func TestDecodersFillTheConfiguredInterfaceImplementation(t *testing.T) {
+	t.Parallel()
+
+	for _, tt := range interfaceCodecs() {
+		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+
+			box := &sizedBox{Width: 1, Height: 2}
+			got := interfaceConfig{Value: box}
+
+			if err := tt.codec.Decode([]byte(tt.mapping), &got); err != nil {
+				t.Fatal(err)
+			}
+
+			if got.Value != box || *box != (sizedBox{Width: 3, Height: 2}) {
+				t.Fatalf("Value = %#v, want the configured box with width 3 and height 2", got.Value)
+			}
+
+			length := interfaceConfig{Value: sizedLength(1)}
+			if err := tt.codec.Decode([]byte(tt.number), &length); err != nil {
+				t.Fatal(err)
+			}
+
+			if length.Value != sizedLength(4) {
+				t.Fatalf("Value = %#v, want sizedLength(4)", length.Value)
+			}
+		})
+	}
+}
+
+func TestDecodersRejectShapesTheInterfaceImplementationCannotHold(t *testing.T) {
+	t.Parallel()
+
+	for _, tt := range interfaceCodecs() {
+		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+
+			got := interfaceConfig{Value: sizedLength(1)}
+
+			err := tt.codec.Decode([]byte(tt.mapping), &got)
+
+			if keyErr, ok := errors.AsType[*codec.KeyError](err); !ok || keyErr.Key != "value" {
+				t.Fatalf("Decode error = %v, want a KeyError for value", err)
+			}
+		})
+	}
+}
+
+type inlineLevel struct {
+	Level int `yaml:"level"`
+}
+
+type inlineServer struct {
+	Host string      `yaml:"host"`
+	Port int         `yaml:"port"`
+	Deep inlineLevel `yaml:"deep"`
+}
+
+type inlineMode struct {
+	Mode string `yaml:"mode"`
+}
+
+type inlineStructConfig struct {
+	Name   string       `yaml:"name"`
+	Server inlineServer `yaml:",inline"`
+	Mode   *inlineMode  `yaml:",inline"`
+}
+
+func TestYAMLInlineStructsRoundTrip(t *testing.T) {
+	t.Parallel()
+
+	value := inlineStructConfig{
+		Name:   "example",
+		Server: inlineServer{Host: "localhost", Port: 1, Deep: inlineLevel{Level: 2}},
+		Mode:   &inlineMode{Mode: "fast"},
+	}
+
+	data, err := codec.NewYAML().Encode(value)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	var got inlineStructConfig
+	if err := codec.NewYAML().Decode(data, &got); err != nil {
+		t.Fatal(err)
+	}
+
+	if !reflect.DeepEqual(got, value) {
+		t.Fatalf("round trip of %s = %+v, want %+v", data, got, value)
+	}
+}
+
+func TestYAMLInlineStructsReadTopLevelKeysAndMergeLayers(t *testing.T) {
+	t.Parallel()
+
+	var got inlineStructConfig
+	if err := codec.NewYAML().Decode([]byte("name: base\nhost: one\nport: 1\ndeep:\n  level: 3\n"), &got); err != nil {
+		t.Fatal(err)
+	}
+
+	if err := codec.NewYAML().Decode([]byte("port: 2\nserver:\n  host: ignored\n"), &got); err != nil {
+		t.Fatal(err)
+	}
+
+	want := inlineStructConfig{Name: "base", Server: inlineServer{Host: "one", Port: 2, Deep: inlineLevel{Level: 3}}, Mode: nil}
+	if !reflect.DeepEqual(got, want) {
+		t.Fatalf("decoded = %+v, want %+v with the inline pointer left nil", got, want)
+	}
+}
+
+func TestYAMLInlineStructErrorsNameTheTopLevelKey(t *testing.T) {
+	t.Parallel()
+
+	var got inlineStructConfig
+
+	err := codec.NewYAML().Decode([]byte("name: x\nport: many\n"), &got)
+
+	keyErr, ok := errors.AsType[*codec.KeyError](err)
+	if !ok || keyErr.Key != "port" || keyErr.Line != 2 {
+		t.Fatalf("Decode error = %v, want a KeyError for port on line 2", err)
 	}
 }

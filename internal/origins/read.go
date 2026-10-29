@@ -1,10 +1,12 @@
 package origins
 
-import "strings"
+import (
+	"encoding/json/jsontext"
+	"strings"
+)
 
 type Record struct {
-	Key      string
-	Segments []string
+	Key jsontext.Pointer
 
 	// Only the YAML reader populates Line; TOML and JSON report zero.
 	Line int

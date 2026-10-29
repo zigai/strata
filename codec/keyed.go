@@ -4,6 +4,7 @@ import (
 	"encoding"
 	"encoding/json/v2"
 	"errors"
+	"fmt"
 	"reflect"
 	"slices"
 	"strconv"
@@ -14,6 +15,7 @@ import (
 	"gopkg.in/yaml.v3"
 
 	"github.com/zigai/strata/internal/defaulter"
+	"github.com/zigai/strata/internal/layout"
 )
 
 var (
@@ -24,6 +26,11 @@ var (
 	keyedFormatTags = []string{"toml", "yaml", "json"}
 
 	keyedPassthroughTags = []string{"comment", "commented", "multiline"}
+
+	// restTag writes an inline map's entries beside the struct's own keys. TOML
+	// has no such field, so a struct with an inline map is written to TOML as a
+	// table built from its values.
+	restTag = reflect.StructTag(`toml:"-" yaml:",inline" json:",embed"`)
 
 	keyedMirrors sync.Map
 
@@ -47,7 +54,6 @@ type mirrorMode struct {
 	Format             string
 	OmitSecrets        bool
 	StringifyDurations bool
-	PreserveDecoders   bool
 }
 
 type structMirrorBuilder struct {
@@ -72,24 +78,31 @@ func (mode mirrorMode) needsValues() bool {
 	return mode.OmitSecrets || mode.Format == "yaml"
 }
 
+// needsValuesFor reports whether typ must be converted value by value: TOML
+// writes a struct with an inline map as a table its entries join, and the
+// fields promoted through a nil pointer are left out.
+func (mode mirrorMode) needsValuesFor(typ reflect.Type) bool {
+	return mode.needsValues() || mode.Format == "toml" && holdsStruct(typ, nil, hasRest) || holdsStruct(typ, nil, promotesThroughPointer)
+}
+
 func (mode mirrorMode) preservesValue(value reflect.Value) bool {
 	if describesItself(value.Type()) {
 		return !mode.OmitSecrets || !defaulter.ContainsSecrets(value)
 	}
 
-	return !mode.needsValues() && !isRecursive(value.Type(), nil)
+	return !mode.needsValuesFor(value.Type()) && !isRecursive(value.Type(), nil)
 }
 
 func OmitSecrets(value any, format string) (any, error) {
-	return keyedValueMode(value, mirrorMode{Format: format, OmitSecrets: true, StringifyDurations: false, PreserveDecoders: false})
+	return keyedValueMode(value, mirrorMode{Format: format, OmitSecrets: true, StringifyDurations: false})
 }
 
 func keyedValue(value any, format string) (any, error) {
-	return keyedValueMode(value, mirrorMode{Format: format, OmitSecrets: false, StringifyDurations: false, PreserveDecoders: false})
+	return keyedValueMode(value, mirrorMode{Format: format, OmitSecrets: false, StringifyDurations: false})
 }
 
 func keyedTOMLValue(value any) (any, error) {
-	return keyedValueMode(value, mirrorMode{Format: "toml", OmitSecrets: false, StringifyDurations: true, PreserveDecoders: false})
+	return keyedValueMode(value, mirrorMode{Format: "toml", OmitSecrets: false, StringifyDurations: true})
 }
 
 func keyedValueMode(value any, mode mirrorMode) (any, error) {
@@ -97,8 +110,12 @@ func keyedValueMode(value any, mode mirrorMode) (any, error) {
 		return value, nil
 	}
 
+	if err := layout.Validate(reflect.TypeOf(value)); err != nil {
+		return nil, fmt.Errorf("encode %T: %w", value, err)
+	}
+
 	src := reflect.ValueOf(value)
-	if mode.needsValues() || isRecursive(src.Type(), nil) && !describesItself(src.Type()) {
+	if mode.needsValuesFor(src.Type()) || isRecursive(src.Type(), nil) && !describesItself(src.Type()) {
 		converted, err := convertRecursiveKeyed(src, mode, make(map[keyedVisit]bool))
 		if err != nil {
 			return nil, err
@@ -127,7 +144,7 @@ func mirrorOfMode(typ reflect.Type, mode mirrorMode) *keyedMirror {
 	switch {
 	case mode.StringifyDurations && typ == reflect.TypeFor[time.Duration]():
 		mirror = &keyedMirror{typ: reflect.TypeFor[string](), paths: nil, mode: mode}
-	case describesItself(typ) || mode.PreserveDecoders && decodesItself(typ) || isRecursive(typ, nil):
+	case describesItself(typ) || isRecursive(typ, nil):
 		mirror = &keyedMirror{typ: nil, paths: nil, mode: mode}
 	case mode.Format == "yaml" && typ.Kind() == reflect.String:
 		mirror = &keyedMirror{typ: reflect.TypeFor[yamlString](), paths: nil, mode: mode}
@@ -164,7 +181,7 @@ func buildMirror(typ reflect.Type, mode mirrorMode) *keyedMirror {
 	case reflect.Struct:
 		builder := structMirrorBuilder{mode: mode, fields: nil, paths: nil, seen: nil}
 
-		builder.collect(typ, nil, nil)
+		builder.collect(typ)
 
 		return &keyedMirror{typ: reflect.StructOf(builder.fields), paths: builder.paths, mode: mode}
 	}
@@ -172,49 +189,34 @@ func buildMirror(typ reflect.Type, mode mirrorMode) *keyedMirror {
 	return &keyedMirror{typ: mirrored, paths: nil, mode: mode}
 }
 
-func (b *structMirrorBuilder) collect(typ reflect.Type, prefix []int, types []reflect.Type) {
-	if slices.Contains(types, typ) {
-		return
+func (b *structMirrorBuilder) collect(typ reflect.Type) {
+	structLayout := layout.Of(typ)
+
+	for _, field := range structLayout.Fields {
+		if b.mode.OmitSecrets && field.Secret {
+			continue
+		}
+
+		b.add(field.Member.Field, field.Index, keyedTag(field.Member.Field, field.Key))
 	}
 
-	types = append(types, typ)
+	if rest := structLayout.Rest; rest != nil && (!b.mode.OmitSecrets || !rest.Secret) {
+		b.add(rest.Member.Field, rest.Index, restTag)
+	}
+}
 
+func (b *structMirrorBuilder) add(field reflect.StructField, path []int, tag reflect.StructTag) {
 	if b.seen == nil {
 		b.seen = make(map[string]bool)
 	}
 
-	var embeds []reflect.StructField
-
-	for field := range typ.Fields() {
-		if b.mode.OmitSecrets && defaulter.IsSecret(field) {
-			continue
-		}
-
-		if embedsStruct(field, b.mode.Format) {
-			embeds = append(embeds, field)
-			continue
-		}
-
-		b.add(field, prefix)
+	// Promoted fields may share a Go name under different keys.
+	name := field.Name
+	for suffix := 1; b.seen[name]; suffix++ {
+		name = field.Name + strconv.Itoa(suffix)
 	}
 
-	// Promoted fields rank below the enclosing struct's own fields, as in Go.
-	for _, embed := range embeds {
-		b.collect(derefType(embed.Type), appendIndex(prefix, embed.Index), types)
-	}
-}
-
-func (b *structMirrorBuilder) add(field reflect.StructField, prefix []int) {
-	if !field.IsExported() || b.seen[field.Name] {
-		return
-	}
-
-	key := defaulter.FieldKey(field)
-	if key == "-" {
-		return
-	}
-
-	b.seen[field.Name] = true
+	b.seen[name] = true
 
 	fieldType := field.Type
 	if mirror := mirrorOfMode(fieldType, b.mode); mirror.typ != nil {
@@ -222,15 +224,30 @@ func (b *structMirrorBuilder) add(field reflect.StructField, prefix []int) {
 	}
 
 	b.fields = append(b.fields, reflect.StructField{
-		Name:      field.Name,
+		Name:      name,
 		PkgPath:   "",
 		Type:      fieldType,
-		Tag:       keyedTag(field, key),
+		Tag:       tag,
 		Offset:    0,
 		Index:     nil,
 		Anonymous: false,
 	})
-	b.paths = append(b.paths, appendIndex(prefix, field.Index))
+	b.paths = append(b.paths, path)
+}
+
+func (b *structMirrorBuilder) valueAt(index int, src reflect.Value, active map[keyedVisit]bool) (reflect.Value, error) {
+	field, err := src.FieldByIndexErr(b.paths[index])
+	if err != nil {
+		// A field promoted through a nil pointer is left out, so decoding the
+		// output leaves the pointer nil.
+		if b.fields[index].Tag != restTag {
+			b.fields[index].Tag = keyedTag(b.fields[index], "-")
+		}
+
+		return reflect.Zero(b.fields[index].Type), nil
+	}
+
+	return b.convertField(index, field, active)
 }
 
 func (b *structMirrorBuilder) convertField(index int, src reflect.Value, active map[keyedVisit]bool) (reflect.Value, error) {
@@ -267,29 +284,6 @@ func (b *structMirrorBuilder) convertField(index int, src reflect.Value, active 
 	}
 
 	return value, nil
-}
-
-func embedsStruct(field reflect.StructField, format string) bool {
-	if !field.Anonymous {
-		return false
-	}
-
-	if format == "json" {
-		if _, named := jsonTagName(field); named {
-			return false
-		}
-	}
-
-	embedType := derefType(field.Type)
-
-	return embedType.Kind() == reflect.Struct && !describesItself(embedType)
-}
-
-func appendIndex(prefix, index []int) []int {
-	path := make([]int, 0, len(prefix)+len(index))
-	path = append(path, prefix...)
-
-	return append(path, index...)
 }
 
 // A field whose tag for a format is "-" stays excluded from that format,
@@ -404,11 +398,11 @@ func secretKeyedValue(value reflect.Value) bool {
 		value = value.Elem()
 	}
 
-	return defaulter.IsSecretType(value.Type())
+	return layout.IsSecretType(value.Type())
 }
 
 func convertRecursiveKeyed(src reflect.Value, mode mirrorMode, active map[keyedVisit]bool) (reflect.Value, error) {
-	if mode.OmitSecrets && defaulter.IsSecretType(src.Type()) {
+	if mode.OmitSecrets && layout.IsSecretType(src.Type()) {
 		return src, nil
 	}
 
@@ -494,26 +488,26 @@ func convertRecursiveContainer(src reflect.Value, mode mirrorMode, active map[ke
 
 func convertRecursiveStruct(src reflect.Value, mode mirrorMode, active map[keyedVisit]bool) (reflect.Value, error) {
 	for field := range src.Type().Fields() {
-		if mode.OmitSecrets && field.Anonymous && !field.IsExported() && !defaulter.IsSecret(field) && describesItself(derefType(field.Type)) {
+		if mode.OmitSecrets && field.Anonymous && !field.IsExported() && !layout.IsSecret(field) && describesItself(derefType(field.Type)) {
 			return reflect.Value{}, errSecretEmbedding
 		}
 	}
 
+	if mode.Format == "toml" && layout.Of(src.Type()).Rest != nil {
+		return convertTOMLTable(src, mode, active)
+	}
+
 	builder := structMirrorBuilder{mode: mode, fields: nil, paths: nil, seen: nil}
-	builder.collect(src.Type(), nil, nil)
+	builder.collect(src.Type())
 
 	values := make([]reflect.Value, len(builder.paths))
-	for index, path := range builder.paths {
-		field, err := src.FieldByIndexErr(path)
-		if err != nil {
-			values[index] = reflect.Zero(builder.fields[index].Type)
-			continue
-		}
-
-		values[index], err = builder.convertField(index, field, active)
+	for index := range builder.paths {
+		value, err := builder.valueAt(index, src, active)
 		if err != nil {
 			return reflect.Value{}, err
 		}
+
+		values[index] = value
 	}
 
 	out := reflect.New(reflect.StructOf(builder.fields)).Elem()
@@ -522,6 +516,80 @@ func convertRecursiveStruct(src reflect.Value, mode mirrorMode, active map[keyed
 	}
 
 	return out, nil
+}
+
+// convertTOMLTable writes a struct with an inline map as one table: the keys of
+// its fields, then each inline entry no field claims.
+func convertTOMLTable(src reflect.Value, mode mirrorMode, active map[keyedVisit]bool) (reflect.Value, error) {
+	structLayout := layout.Of(src.Type())
+
+	table, err := tomlTableFields(src, structLayout, mode, active)
+	if err != nil {
+		return reflect.Value{}, err
+	}
+
+	rest := structLayout.Rest
+	if rest == nil || mode.OmitSecrets && rest.Secret {
+		return reflect.ValueOf(table), nil
+	}
+
+	// A nil embedded pointer on the way holds no inline map.
+	entries, _ := src.FieldByIndexErr(rest.Index)
+	if !entries.IsValid() {
+		return reflect.ValueOf(table), nil
+	}
+
+	if err := addTOMLEntries(table, entries, mode, active); err != nil {
+		return reflect.Value{}, err
+	}
+
+	return reflect.ValueOf(table), nil
+}
+
+func tomlTableFields(src reflect.Value, structLayout *layout.Struct, mode mirrorMode, active map[keyedVisit]bool) (map[string]any, error) {
+	table := make(map[string]any, len(structLayout.Fields))
+
+	for _, field := range structLayout.Fields {
+		if mode.OmitSecrets && field.Secret || field.Member.Field.Tag.Get("toml") == "-" {
+			continue
+		}
+
+		value, err := src.FieldByIndexErr(field.Index)
+		if err != nil || (value.Kind() == reflect.Pointer || value.Kind() == reflect.Interface) && value.IsNil() {
+			continue
+		}
+
+		if mode.OmitSecrets && secretKeyedValue(value) {
+			continue
+		}
+
+		converted, err := convertRecursiveKeyed(value, mode, active)
+		if err != nil {
+			return nil, err
+		}
+
+		table[field.Key] = converted.Interface()
+	}
+
+	return table, nil
+}
+
+func addTOMLEntries(table map[string]any, entries reflect.Value, mode mirrorMode, active map[keyedVisit]bool) error {
+	for iter := entries.MapRange(); iter.Next(); {
+		name := iter.Key().String()
+		if _, claimed := table[name]; claimed || mode.OmitSecrets && secretKeyedValue(iter.Value()) {
+			continue
+		}
+
+		converted, err := convertRecursiveKeyed(iter.Value(), mode, active)
+		if err != nil {
+			return err
+		}
+
+		table[name] = converted.Interface()
+	}
+
+	return nil
 }
 
 func recursiveFieldTag(tag reflect.StructTag, value reflect.Value, mode mirrorMode) (reflect.StructTag, bool) {
@@ -726,6 +794,63 @@ func describesItself(typ reflect.Type) bool {
 	for _, iface := range []reflect.Type{textMarshalerType, jsonMarshalerType, yamlMarshalerType} {
 		if typ.Implements(iface) || reflect.PointerTo(typ).Implements(iface) {
 			return true
+		}
+	}
+
+	return false
+}
+
+func holdsStruct(typ reflect.Type, path []reflect.Type, match func(reflect.Type) bool) bool {
+	if slices.Contains(path, typ) {
+		return false
+	}
+
+	path = append(path, typ)
+
+	//nolint:exhaustive // only container kinds can hold a struct
+	switch typ.Kind() {
+	case reflect.Pointer, reflect.Slice, reflect.Array, reflect.Map:
+		return holdsStruct(typ.Elem(), path, match)
+	case reflect.Struct:
+		if describesItself(typ) {
+			return false
+		}
+
+		if match(typ) {
+			return true
+		}
+
+		for _, field := range layout.Of(typ).Fields {
+			if holdsStruct(field.Member.Field.Type, path, match) {
+				return true
+			}
+		}
+	}
+
+	return false
+}
+
+func hasRest(typ reflect.Type) bool {
+	return layout.Of(typ).Rest != nil
+}
+
+func promotesThroughPointer(typ reflect.Type) bool {
+	structLayout := layout.Of(typ)
+
+	fields := structLayout.Fields
+	if structLayout.Rest != nil {
+		fields = append(slices.Clone(fields), *structLayout.Rest)
+	}
+
+	for _, field := range fields {
+		owner := typ
+		for _, step := range field.Index[:len(field.Index)-1] {
+			member := owner.Field(step)
+			if member.Type.Kind() == reflect.Pointer {
+				return true
+			}
+
+			owner = member.Type
 		}
 	}
 

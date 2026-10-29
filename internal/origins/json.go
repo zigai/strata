@@ -4,9 +4,9 @@ import (
 	"bytes"
 	"encoding/json/jsontext"
 	"encoding/json/v2"
+	"maps"
 	"slices"
 	"strconv"
-	"strings"
 )
 
 // Decoding a number into any routes it through float64 and loses digits.
@@ -18,27 +18,27 @@ func readJSON(data []byte, emit func(Record)) bool {
 		return false
 	}
 
-	walkJSONObject(document, nil, emit)
+	walkJSONObject(document, "", emit)
 
 	return true
 }
 
-func walkJSONObject(document map[string]jsontext.Value, prefix []string, emit func(Record)) {
-	for key, raw := range document {
-		walkJSONValue(raw, append(slices.Clone(prefix), key), emit)
+func walkJSONObject(document map[string]jsontext.Value, prefix jsontext.Pointer, emit func(Record)) {
+	for _, key := range slices.Sorted(maps.Keys(document)) {
+		walkJSONValue(document[key], prefix.AppendToken(key), emit)
 	}
 }
 
-func walkJSONValue(raw jsontext.Value, segments []string, emit func(Record)) {
+func walkJSONValue(raw jsontext.Value, key jsontext.Pointer, emit func(Record)) {
 	if isJSONObject(raw) {
 		var nested map[string]jsontext.Value
 		if err := json.Unmarshal(raw, &nested); err == nil && len(nested) > 0 {
-			walkJSONObject(nested, segments, emit)
+			walkJSONObject(nested, key, emit)
 			return
 		}
 	}
 
-	emit(Record{Key: strings.Join(segments, "."), Segments: segments, Line: 0, RawValue: renderJSONValue(raw), IsTemplate: false})
+	emit(Record{Key: key, Line: 0, RawValue: renderJSONValue(raw), IsTemplate: false})
 
 	trimmed := bytes.TrimSpace(raw)
 	if len(trimmed) == 0 || trimmed[0] != '[' {
@@ -53,7 +53,7 @@ func walkJSONValue(raw jsontext.Value, segments []string, emit func(Record)) {
 	for index, item := range items {
 		item = bytes.TrimSpace(item)
 		if len(item) > 0 && (item[0] == '{' || item[0] == '[') {
-			walkJSONValue(item, append(slices.Clone(segments), strconv.Itoa(index)), emit)
+			walkJSONValue(item, key.AppendToken(strconv.Itoa(index)), emit)
 		}
 	}
 }

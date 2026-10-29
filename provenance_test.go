@@ -2,6 +2,7 @@ package strata_test
 
 import (
 	"errors"
+	"maps"
 	"os"
 	"path/filepath"
 	"reflect"
@@ -82,30 +83,38 @@ func TestProvenanceMetadata(t *testing.T) {
 	}
 }
 
-func TestMetadataUnicodeKeyNormalization(t *testing.T) {
+func TestWhereFoldsDeclaredUnicodeKeys(t *testing.T) {
 	t.Parallel()
 
-	meta := strata.NewMetadata()
-	meta.Record(strata.Origin{
-		Key:      "ÉTAGÈRE",
-		Source:   strata.SourceEnv,
-		Path:     "ETAGERE",
-		RawValue: "val",
-	})
+	type config struct {
+		Shelf string `strata:"ÉTAGÈRE"`
+		Delta string `strata:"ǅelta"`
+	}
 
-	if _, ok := meta.Where("étagère"); !ok {
-		t.Errorf("Where('étagère') failed to find key recorded as 'ÉTAGÈRE'")
+	_, meta, err := strata.LoadWithMetadata[config]()
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	for _, key := range []string{"étagère", "ǆelta"} {
+		if _, ok := meta.Where(key); !ok {
+			t.Errorf("Where(%q) did not find the declared key it folds to", key)
+		}
 	}
 }
 
-func TestMetadataTitlecaseLookup(t *testing.T) {
+func TestWhereMatchesUndeclaredKeysExactly(t *testing.T) {
 	t.Parallel()
 
 	meta := strata.NewMetadata()
-	meta.Record(strata.Origin{Key: "ǅelta", Source: strata.SourceEnv, RawValue: "visible"})
+	meta.Record(strata.Origin{Key: "ÉTAGÈRE", Source: strata.SourceEnv, Path: "ETAGERE", RawValue: "val"})
 
-	if origin, found := meta.Where("ǆelta"); !found || origin.RawValue != "visible" {
-		t.Fatalf("Where = %+v, %t", origin, found)
+	if _, ok := meta.Where("ÉTAGÈRE"); !ok {
+		t.Error("Where missed the exactly recorded key")
+	}
+
+	if origin, ok := meta.Where("étagère"); ok {
+		t.Errorf("Where(/étagère) = %+v, want no match for a key no type declares", origin)
 	}
 }
 
@@ -287,7 +296,7 @@ func TestMetadataZeroValueRecordsAndReports(t *testing.T) {
 
 	var meta strata.Metadata
 
-	meta.Record(strata.Origin{Key: "Port", Source: strata.SourceEnv, RawValue: "9090"})
+	meta.Record(strata.Origin{Key: portKey, Source: strata.SourceEnv, RawValue: "9090"})
 
 	origin, ok := meta.Where(portKey)
 	if !ok {
@@ -546,6 +555,137 @@ func TestWhereReportsTheExactOriginPerSource(t *testing.T) {
 
 			if got, ok := meta.Where(tc.key); !ok || got != tc.want {
 				t.Fatalf("Where(%s) = %+v, %t; want %+v", tc.key, got, ok, tc.want)
+			}
+		})
+	}
+}
+
+func TestMapEntriesWithSurroundingSpacesKeepTheirOwnOrigins(t *testing.T) {
+	t.Parallel()
+
+	const spacedLabel = " key "
+
+	type config struct {
+		Port   int
+		Labels map[string]string
+	}
+
+	stdin := strings.NewReader(`{"port": 8080, "labels": {"key": "one", " key ": "two"}}`)
+
+	loaded, meta, err := strata.LoadWithMetadata[config](strata.WithStdin(stdin), strata.WithPath("-"), strata.WithFormats("json"))
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	if want := map[string]string{"key": "one", spacedLabel: "two"}; !maps.Equal(loaded.Labels, want) {
+		t.Fatalf("Labels = %q, want %q", loaded.Labels, want)
+	}
+
+	for _, test := range []struct {
+		key   string
+		value string
+	}{
+		{key: "labels.key", value: "one"},
+		{key: "labels." + spacedLabel, value: "two"},
+		{key: " port ", value: "8080"},
+		{key: "labels .key", value: "one"},
+	} {
+		origin, found := meta.Where(test.key)
+		if !found || origin.RawValue != test.value {
+			t.Errorf("Where(%q) = %+v, %t; want %q", test.key, origin, found, test.value)
+		}
+	}
+
+	origins := meta.Origins()
+
+	keys := make([]string, 0, len(origins))
+	for _, origin := range origins {
+		keys = append(keys, origin.Key)
+	}
+
+	if want := []string{"port", "labels", "labels." + spacedLabel, "labels.key"}; !slices.Equal(keys, want) {
+		t.Errorf("origin keys = %q, want %q", keys, want)
+	}
+}
+
+func TestMapEntriesSpelledAlikeKeepTheirOwnOrigins(t *testing.T) {
+	t.Parallel()
+
+	type config struct {
+		Labels map[string]string
+	}
+
+	path := writeFile(t, "config.yaml", "labels:\n  foo_bar: one\n  foobar: two\n  Env: three\n  env: four\n")
+
+	_, meta, err := strata.LoadWithMetadata[config](strata.WithPath(path), strata.WithFormats("yaml"))
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	for _, test := range []struct {
+		key   string
+		value string
+		line  int
+	}{
+		{key: "labels.foo_bar", value: "one", line: 2},
+		{key: "labels.foobar", value: "two", line: 3},
+		{key: "labels.Env", value: "three", line: 4},
+		{key: "labels.env", value: "four", line: 5},
+		{key: "Labels.env", value: "four", line: 5},
+	} {
+		origin, found := meta.Where(test.key)
+		if !found || origin.RawValue != test.value || origin.Line != test.line {
+			t.Errorf("Where(%q) = %+v, %t; want %q from line %d", test.key, origin, found, test.value, test.line)
+		}
+	}
+
+	if origin, found := meta.Where("labels.ENV"); found {
+		t.Errorf("Where(labels.ENV) = %+v, want no match for a spelling two entries share", origin)
+	}
+
+	origins := meta.Origins()
+
+	keys := make([]string, 0, len(origins))
+	for _, origin := range origins {
+		keys = append(keys, origin.Key)
+	}
+
+	if want := []string{"labels", "labels.foo_bar", "labels.foobar", "labels.Env", "labels.env"}; !slices.Equal(keys, want) {
+		t.Errorf("origin keys = %v, want %v", keys, want)
+	}
+}
+
+func TestLiteralDottedKeysKeepTheirOwnOrigins(t *testing.T) {
+	t.Parallel()
+
+	type config struct {
+		Labels map[string]any
+	}
+
+	for name, document := range map[string]string{
+		"config.json": "{\"labels\": {\n\"a.b\": \"literal\",\n\"a\": {\"b\": \"nested\"}}}",
+		"config.toml": "[labels]\n\"a.b\" = \"literal\"\n[labels.a]\nb = \"nested\"\n",
+		"config.yaml": "labels:\n  a.b: literal\n  a:\n    b: nested\n",
+	} {
+		t.Run(name, func(t *testing.T) {
+			t.Parallel()
+
+			path := writeFile(t, name, document)
+
+			got, meta, err := strata.LoadWithMetadata[config](strata.WithPath(path), strata.WithFormats(filepath.Ext(name)))
+			if err != nil {
+				t.Fatal(err)
+			}
+
+			want := map[string]any{"a.b": "literal", "a": map[string]any{"b": "nested"}}
+			if !reflect.DeepEqual(got.Labels, want) {
+				t.Fatalf("labels = %v, want %v", got.Labels, want)
+			}
+
+			for key, raw := range map[string]string{`labels.a\.b`: "literal", "labels.a.b": "nested"} {
+				if origin, found := meta.Where(key); !found || origin.RawValue != raw {
+					t.Errorf("Where(%q) = %+v, %t; want raw value %q", key, origin, found, raw)
+				}
 			}
 		})
 	}

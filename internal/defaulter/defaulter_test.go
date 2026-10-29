@@ -1,6 +1,7 @@
 package defaulter_test
 
 import (
+	"encoding/json/jsontext"
 	"errors"
 	"reflect"
 	"testing"
@@ -94,9 +95,9 @@ func TestApplyDefaults(t *testing.T) {
 
 		var cfg appConfig
 
-		recorded := make(map[string]string)
+		recorded := make(map[jsontext.Pointer]string)
 
-		recordFn := func(key, val string) {
+		recordFn := func(key jsontext.Pointer, val string) {
 			recorded[key] = val
 		}
 
@@ -120,11 +121,11 @@ func TestApplyDefaults(t *testing.T) {
 			t.Errorf("Database = %+v, want maxConns 10, timeout 5s", cfg.Database)
 		}
 
-		if val, ok := recorded["app_name"]; !ok || val != "default-app" {
+		if val, ok := recorded["/app_name"]; !ok || val != "default-app" {
 			t.Errorf("recorded app_name = %v, want default-app", val)
 		}
 
-		if val, ok := recorded["server.port"]; !ok || val != "8080" {
+		if val, ok := recorded["/server/port"]; !ok || val != "8080" {
 			t.Errorf("recorded server.port = %v, want 8080", val)
 		}
 	})

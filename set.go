@@ -2,12 +2,14 @@ package strata
 
 import (
 	"encoding"
+	"encoding/json/jsontext"
 	"encoding/json/v2"
 	"errors"
 	"fmt"
 	"os"
 	"path/filepath"
 	"reflect"
+	"slices"
 	"strconv"
 	"strings"
 	"time"
@@ -16,6 +18,8 @@ import (
 
 	"github.com/zigai/strata/internal/atomicfile"
 	"github.com/zigai/strata/internal/edit"
+	"github.com/zigai/strata/internal/keypath"
+	"github.com/zigai/strata/internal/layout"
 	"github.com/zigai/strata/internal/plan"
 	"github.com/zigai/strata/internal/stream"
 )
@@ -36,7 +40,19 @@ type unknownSetKeyError struct {
 	unknown UnknownKey
 }
 
+type fileEdit struct {
+	key    jsontext.Pointer
+	value  any
+	secret bool
+}
+
 // SetBytes updates one key in raw configuration bytes and returns the result.
+// key is dotted: each dot separates two mapping keys, each spelled exactly.
+// Inside a key, \. is a literal dot and \\ a literal backslash, so
+// `labels.a\.b` names the key "a.b" under labels, "labels.a/b" names "a/b",
+// and "labels." names the empty key. Any other backslash returns
+// [ErrInvalidKey], and the empty string returns [ErrEmptyKey].
+//
 // Comments, keys, and values outside the replaced key survive, including YAML
 // anchors and aliases and TOML multi-line values. Formatting changes by format:
 //
@@ -48,13 +64,14 @@ type unknownSetKeyError struct {
 //     scalar the YAML encoder cannot reproduce exactly, such as one starting
 //     with a blank line, is rewritten as a literal block or a quoted string
 //     with the same value, and an empty null in a flow collection is written
-//     as null. A value on the key's path that is not a mapping is replaced by
-//     one.
+//     as null.
 //   - JSON keeps indentation and untouched number text, sorts object keys, and
 //     adds a trailing newline.
 //
 // Multi-document YAML and JSON with duplicate keys are rejected rather than
-// rewritten, because re-encoding would discard content.
+// rewritten, because re-encoding would discard content. A key whose path runs
+// through a value that is not a mapping, such as a list or an array of TOML
+// tables, returns [ErrPathNotMapping]; a null on the path becomes a mapping.
 //
 // format accepts a case-insensitive extension with or without a leading dot.
 // Unsupported formats wrap [ErrUnsupportedFormat].
@@ -62,14 +79,19 @@ type unknownSetKeyError struct {
 // String values are inferred as numbers or booleans when possible: "9090"
 // becomes an integer and "1e5" a number. Only the full words "true" and
 // "false" become booleans; a single letter such as "t" stays a string.
-func SetBytes(format string, data []byte, dottedKey string, value any) ([]byte, error) {
-	return setBytes(format, data, dottedKey, inferScalar(value))
+func SetBytes(format string, data []byte, key string, value any) ([]byte, error) {
+	parsed, err := keypath.Parse(key)
+	if err != nil {
+		return nil, fmt.Errorf("set configuration: %w", err)
+	}
+
+	return setBytes(format, data, parsed, inferScalar(value))
 }
 
 // Set updates one key in the file at targetPath after checking that T declares
 // the key and the value can decode into its field type. Unknown keys include a
-// close-match suggestion. Dotted paths may address entries under string-keyed
-// maps. Set does not run ValidateWith.
+// close-match suggestion. A key may address an entry of a string-keyed map or
+// an inline map. Set does not run ValidateWith.
 //
 // Format-specific edits preserve untouched content as described by [SetBytes].
 // A symlink is followed and the file it points to is edited. The file is staged
@@ -82,20 +104,28 @@ func SetBytes(format string, data []byte, dottedKey string, value any) ([]byte, 
 // it, so concurrent edits never overwrite each other. The lock file stays in
 // place. On platforms without file locking the write fails with an error
 // wrapping [errors.ErrUnsupported].
-func Set[T any](targetPath string, dottedKey string, value any) error {
+func Set[T any](targetPath string, key string, value any) error {
 	typ := reflect.TypeFor[T]()
 	if typ.Kind() != reflect.Struct {
 		return fmt.Errorf("%w: %s", errInvalidConfigType, typ)
 	}
 
+	if err := layout.Validate(typ); err != nil {
+		return fmt.Errorf("set configuration: %w", err)
+	}
+
 	keys := keyTreeFor(typ)
-	if !keys.known(dottedKey) {
-		var unknown UnknownKey
 
-		unknown.Key = dottedKey
-		unknown.Suggestion = keys.suggest(dottedKey)
+	parsed, err := keypath.Parse(key)
+	if err != nil {
+		return fmt.Errorf("set configuration: %w", err)
+	}
 
-		return &unknownSetKeyError{path: targetPath, unknown: unknown}
+	if !keys.known(parsed) {
+		return &unknownSetKeyError{path: targetPath, unknown: UnknownKey{
+			Origin:     Origin{Key: keypath.Format(parsed), Source: "", Path: "", Line: 0, RawValue: ""},
+			Suggestion: keypath.Format(keys.suggest(parsed)),
+		}}
 	}
 
 	resolvedPath, err := atomicfile.Resolve(targetPath)
@@ -103,54 +133,50 @@ func Set[T any](targetPath string, dottedKey string, value any) error {
 		return fmt.Errorf("set configuration: %w", err)
 	}
 
-	targetPath = resolvedPath
+	secret := keys.secret(parsed)
 
-	fieldType, fileKey, err := plan.FieldType(typ, dottedKey, formatName(normalizeExt(filepath.Ext(targetPath))))
+	fieldType, err := plan.FieldType(typ, parsed)
 	if err != nil {
-		return fmt.Errorf("%s: %w", targetPath, err)
+		return fmt.Errorf("%s: %w", resolvedPath, err)
 	}
 
 	typed, err := typedEditValue(fieldType, value)
 	if err != nil {
-		if keys.secret(dottedKey) {
+		if secret {
 			err = &secretValueError{cause: err}
 		}
 
-		return fmt.Errorf("%s: %s: %w", targetPath, dottedKey, err)
+		return fmt.Errorf("%s: %s: %w", resolvedPath, keypath.Format(parsed), err)
 	}
 
-	err = setFile(targetPath, fileKey, typed)
-	if err != nil && keys.secret(dottedKey) {
-		return &secretValueError{cause: err}
-	}
-
-	return err
+	return editFile(resolvedPath, fileEdit{key: parsed, value: typed, secret: secret})
 }
 
 func (e *unknownSetKeyError) Error() string { return e.path + ": " + e.unknown.String() }
 
 func (e *unknownSetKeyError) Unwrap() error { return ErrUnknownKey }
 
-func setBytes(format string, data []byte, dottedKey string, val any) ([]byte, error) {
+func setBytes(format string, data []byte, key jsontext.Pointer, val any) ([]byte, error) {
 	ext := normalizeExt(format)
+	tokens := slices.Collect(key.Tokens())
 
 	switch ext {
 	case ".yaml", ".yml":
-		updated, err := edit.UpdateYAML(data, dottedKey, val)
+		updated, err := edit.UpdateYAML(data, tokens, val)
 		if err != nil {
 			return nil, fmt.Errorf("update yaml: %w", err)
 		}
 
 		return updated, nil
 	case ".toml":
-		updated, err := edit.UpdateTOML(data, dottedKey, val)
+		updated, err := edit.UpdateTOML(data, tokens, val)
 		if err != nil {
 			return nil, fmt.Errorf("update toml: %w", err)
 		}
 
 		return updated, nil
 	case ".json":
-		updated, err := edit.UpdateJSON(data, dottedKey, val)
+		updated, err := edit.UpdateJSON(data, tokens, val)
 		if err != nil {
 			return nil, fmt.Errorf("update json: %w", err)
 		}
@@ -161,7 +187,7 @@ func setBytes(format string, data []byte, dottedKey string, val any) ([]byte, er
 	}
 }
 
-func setFile(targetPath string, dottedKey string, value any) (err error) {
+func editFile(targetPath string, change fileEdit) (err error) {
 	if _, statErr := os.Stat(targetPath); statErr != nil {
 		return fmt.Errorf("open target configuration %s: %w", targetPath, statErr)
 	}
@@ -182,12 +208,16 @@ func setFile(targetPath string, dottedKey string, value any) (err error) {
 		return err
 	}
 
-	updated, err := setBytes(filepath.Ext(targetPath), data, dottedKey, value)
+	data, err = setBytes(filepath.Ext(targetPath), data, change.key, change.value)
 	if err != nil {
-		return fmt.Errorf("update %s in %s: %w", dottedKey, targetPath, err)
+		if change.secret {
+			return &secretValueError{cause: err}
+		}
+
+		return fmt.Errorf("update %s in %s: %w", change.key, targetPath, err)
 	}
 
-	if err := atomicfile.Write(targetPath, updated, mode); err != nil {
+	if err := atomicfile.Write(targetPath, data, mode); err != nil {
 		return fmt.Errorf("write updated configuration to %s: %w", targetPath, err)
 	}
 

@@ -8,6 +8,7 @@ import (
 	"github.com/zigai/strata/internal/defaulter"
 	"github.com/zigai/strata/internal/edit"
 	"github.com/zigai/strata/internal/env"
+	"github.com/zigai/strata/internal/keypath"
 	"github.com/zigai/strata/internal/stream"
 )
 
@@ -61,8 +62,9 @@ var (
 	ErrMultipleDocuments = codec.ErrMultipleDocuments
 
 	// ErrPathNotMapping is returned when [SetBytes] must traverse a value
-	// that is not an object to reach the requested key in a TOML or JSON
-	// document. A YAML edit replaces such a value with a mapping instead.
+	// that is not a mapping, such as a list, an array of TOML tables, or a
+	// string, to reach the requested key. A null on the path becomes a
+	// mapping.
 	ErrPathNotMapping = edit.ErrPathNotMapping
 
 	// ErrRootNotMapping is returned when [SetBytes] is given a document whose
@@ -73,11 +75,19 @@ var (
 	// encodes to an empty document, leaving the key with nothing to hold.
 	ErrEmptyEncodedValue = edit.ErrEmptyEncodedValue
 
-	// ErrEmptyKey is returned when a dotted key path is empty.
-	ErrEmptyKey = edit.ErrEmptyKey
+	// ErrEmptyKey is returned when a key is the empty string, which names no
+	// key at all.
+	ErrEmptyKey = keypath.ErrEmpty
 
-	// ErrEmptyKeySegment is returned when a dotted key path contains an empty segment.
-	ErrEmptyKeySegment = edit.ErrEmptyKeySegment
+	// ErrInvalidKey is returned when a dotted key has a backslash that does not
+	// start one of the two escapes, \. or \\, or is not valid UTF-8.
+	ErrInvalidKey = keypath.ErrInvalid
+
+	// ErrInvalidLayout is returned when a configuration type declares keys that
+	// cannot be laid out: an inline field that is neither a struct nor a map
+	// with string keys, more than one inline map, or two fields that claim the
+	// same key at the same depth.
+	ErrInvalidLayout = codec.ErrInvalidLayout
 
 	// ErrDefaultsTypeMismatch is returned when the type given to [WithDefaults]
 	// differs from the type being loaded.

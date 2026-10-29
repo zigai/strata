@@ -27,7 +27,7 @@ port = 8080 # web port
 port = 5432 # pg port
 `
 
-	updated, err := edit.UpdateTOML([]byte(input), "database.port", 5433)
+	updated, err := edit.UpdateTOML([]byte(input), []string{"database", "port"}, 5433)
 	if err != nil {
 		t.Fatalf("UpdateTOML error: %v", err)
 	}
@@ -50,7 +50,7 @@ port = 5432 # pg port
 		t.Errorf("expected server port untouched, got:\n%s", result)
 	}
 
-	appended, err := edit.UpdateTOML([]byte(input), "metrics.enabled", true)
+	appended, err := edit.UpdateTOML([]byte(input), []string{"metrics", "enabled"}, true)
 	if err != nil {
 		t.Fatalf("UpdateTOML append error: %v", err)
 	}
@@ -75,7 +75,7 @@ func TestUpdateTOMLCompositeSubtreesPreserveSiblings(t *testing.T) {
 		t.Run(test.name, func(t *testing.T) {
 			t.Parallel()
 
-			updated, err := edit.UpdateTOML([]byte(test.input), "service.ports", map[string]item{"first": {HTTPPort: 9090}})
+			updated, err := edit.UpdateTOML([]byte(test.input), []string{"service", "ports"}, map[string]item{"first": {HTTPPort: 9090}})
 			if err != nil {
 				t.Fatal(err)
 			}
@@ -111,7 +111,7 @@ func TestUpdateTOMLInlineCommentHeader(t *testing.T) {
 port = 8080
 `
 
-	updated, err := edit.UpdateTOML([]byte(input), "server.port", 9000)
+	updated, err := edit.UpdateTOML([]byte(input), []string{"server", "port"}, 9000)
 	if err != nil {
 		t.Fatalf("UpdateTOML error: %v", err)
 	}
@@ -131,7 +131,7 @@ line 2
 other = "keep"
 `
 
-	updated, err := edit.UpdateTOML([]byte(input), "val", "single line")
+	updated, err := edit.UpdateTOML([]byte(input), []string{"val"}, "single line")
 	if err != nil {
 		t.Fatalf("UpdateTOML error: %v", err)
 	}
@@ -158,7 +158,7 @@ func TestUpdateTOMLDecodesEscapedKeys(t *testing.T) {
 		t.Run(test.name, func(t *testing.T) {
 			t.Parallel()
 
-			updated, err := edit.UpdateTOML([]byte(test.input), test.key, 3)
+			updated, err := edit.UpdateTOML([]byte(test.input), strings.Split(test.key, "."), 3)
 			if err != nil {
 				t.Fatal(err)
 			}
@@ -193,7 +193,7 @@ func TestUpdateTOMLRetainsMultilineClosingComment(t *testing.T) {
 
 			input := "message = " + delimiter + "\nold # text, not a comment\n" + delimiter + " # keep closing comment\nkeep = 2\n"
 
-			updated, err := edit.UpdateTOML([]byte(input), "message", "new")
+			updated, err := edit.UpdateTOML([]byte(input), []string{"message"}, "new")
 			if err != nil {
 				t.Fatal(err)
 			}
@@ -224,7 +224,7 @@ port = 8080
 port = 5432
 `
 
-	updated, err := edit.UpdateTOML([]byte(input), "server.timeout", 30)
+	updated, err := edit.UpdateTOML([]byte(input), []string{"server", "timeout"}, 30)
 	if err != nil {
 		t.Fatalf("UpdateTOML error: %v", err)
 	}
@@ -251,7 +251,7 @@ func TestAppendTOMLKey(t *testing.T) {
 port = 8080
 `
 
-	updated, err := edit.UpdateTOML([]byte(initial), "server.host", "0.0.0.0")
+	updated, err := edit.UpdateTOML([]byte(initial), []string{"server", "host"}, "0.0.0.0")
 	if err != nil {
 		t.Fatalf("UpdateTOML error: %v", err)
 	}
@@ -260,7 +260,7 @@ port = 8080
 		t.Errorf("expected appended host, got:\n%s", string(updated))
 	}
 
-	updatedTop, err := edit.UpdateTOML([]byte(initial), "version", 2)
+	updatedTop, err := edit.UpdateTOML([]byte(initial), []string{"version"}, 2)
 	if err != nil {
 		t.Fatalf("UpdateTOML error: %v", err)
 	}
@@ -282,7 +282,7 @@ func TestUpdateTOMLPreservesLiteralDottedSibling(t *testing.T) {
 		t.Run(input, func(t *testing.T) {
 			t.Parallel()
 
-			updated, err := edit.UpdateTOML([]byte(input), "a.b", 3)
+			updated, err := edit.UpdateTOML([]byte(input), []string{"a", "b"}, 3)
 			if err != nil {
 				t.Fatal(err)
 			}
@@ -316,7 +316,7 @@ func TestTOMLQuotedTableHeader(t *testing.T) {
 foo = "bar"
 `
 
-	updated, err := edit.UpdateTOML([]byte(input), `table."sub.key".foo`, "updated")
+	updated, err := edit.UpdateTOML([]byte(input), []string{"table", "sub.key", "foo"}, "updated")
 	if err != nil {
 		t.Fatalf("UpdateTOML error: %v", err)
 	}
@@ -341,7 +341,7 @@ port = 8080
 name = "first"
 `
 
-	updated, err := edit.UpdateTOML([]byte(input), "server.port", 9000)
+	updated, err := edit.UpdateTOML([]byte(input), []string{"server", "port"}, 9000)
 	if err != nil {
 		t.Fatalf("UpdateTOML error: %v", err)
 	}
@@ -361,7 +361,7 @@ func TestUpdateTOMLIntermediateScalarReturnsError(t *testing.T) {
 
 	input := "a = 1\n"
 
-	_, err := edit.UpdateTOML([]byte(input), "a.b", 2)
+	_, err := edit.UpdateTOML([]byte(input), []string{"a", "b"}, 2)
 	if err == nil {
 		t.Fatalf("expected error when setting dotted key on scalar, got nil")
 	}
@@ -376,7 +376,7 @@ func TestUpdateTOMLInlineTable(t *testing.T) {
 
 	input := "server = { port = 8080, host = \"localhost\" }\n"
 
-	updated, err := edit.UpdateTOML([]byte(input), "server.port", 9090)
+	updated, err := edit.UpdateTOML([]byte(input), []string{"server", "port"}, 9090)
 	if err != nil {
 		t.Fatalf("UpdateTOML error: %v", err)
 	}
@@ -401,7 +401,7 @@ matrix = [
 ]
 `
 
-	updated, err := edit.UpdateTOML([]byte(input), "server.port", 8080)
+	updated, err := edit.UpdateTOML([]byte(input), []string{"server", "port"}, 8080)
 	if err != nil {
 		t.Fatalf("UpdateTOML error: %v", err)
 	}
@@ -417,7 +417,7 @@ func TestUpdateTOMLQuotedKeyPreserved(t *testing.T) {
 
 	input := "name = \"app\"\n"
 
-	updated, err := edit.UpdateTOML([]byte(input), "\"foo.bar\"", 2)
+	updated, err := edit.UpdateTOML([]byte(input), []string{"foo.bar"}, 2)
 	if err != nil {
 		t.Fatalf("UpdateTOML error: %v", err)
 	}
@@ -433,7 +433,7 @@ func TestUpdateTOMLSingleQuotedStringBackslash(t *testing.T) {
 
 	input := "path = 'C:\\dir\\' # comment\n"
 
-	updated, err := edit.UpdateTOML([]byte(input), portKey, 8080)
+	updated, err := edit.UpdateTOML([]byte(input), []string{portKey}, 8080)
 	if err != nil {
 		t.Fatalf("UpdateTOML error: %v", err)
 	}
@@ -450,7 +450,7 @@ func TestUpdateTOMLSliceOfMaps(t *testing.T) {
 	input := "app = \"test\"\n"
 	routes := []map[string]any{{"path": "/api"}}
 
-	updated, err := edit.UpdateTOML([]byte(input), "routes", routes)
+	updated, err := edit.UpdateTOML([]byte(input), []string{"routes"}, routes)
 	if err != nil {
 		t.Fatalf("UpdateTOML error: %v", err)
 	}
@@ -476,7 +476,7 @@ func TestUpdateTOMLMultilineEdits(t *testing.T) {
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
-			got, err := edit.UpdateTOMLFormatted([]byte(tc.input), tc.key, nil, tc.literal)
+			got, err := edit.UpdateTOMLFormatted([]byte(tc.input), strings.Split(tc.key, "."), nil, tc.literal)
 			if err != nil {
 				t.Fatal(err)
 			}
@@ -499,7 +499,7 @@ func TestUpdateTOMLEmptyKey(t *testing.T) {
 	func() {
 		defer func() { panicked = recover() }()
 
-		_, err = edit.UpdateTOML([]byte("port = 8080\n"), "", 1)
+		_, err = edit.UpdateTOML([]byte("port = 8080\n"), nil, 1)
 	}()
 
 	if panicked != nil {
@@ -514,7 +514,7 @@ func TestUpdateTOMLCaseSensitiveExactMatchPreference(t *testing.T) {
 
 	in := "Port = 1\nport = 2\n"
 
-	got, err := edit.UpdateTOML([]byte(in), portKey, 3)
+	got, err := edit.UpdateTOML([]byte(in), []string{portKey}, 3)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -543,7 +543,7 @@ arr = [
 ]
 `
 
-	updated, err := edit.UpdateTOML([]byte(document), "server.port", 9090)
+	updated, err := edit.UpdateTOML([]byte(document), []string{"server", "port"}, 9090)
 	if err != nil {
 		t.Fatalf("UpdateTOML: %v", err)
 	}

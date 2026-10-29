@@ -1,6 +1,7 @@
 package strata
 
 import (
+	"encoding/json/jsontext"
 	"errors"
 	"fmt"
 	"os"
@@ -12,6 +13,8 @@ import (
 	"github.com/zigai/strata/internal/cascade"
 	"github.com/zigai/strata/internal/defaulter"
 	"github.com/zigai/strata/internal/env"
+	"github.com/zigai/strata/internal/keypath"
+	"github.com/zigai/strata/internal/layout"
 	"github.com/zigai/strata/internal/origins"
 	"github.com/zigai/strata/internal/stream"
 )
@@ -60,16 +63,10 @@ func LoadInto[T any](target *T, opts ...Option) (*Metadata, error) {
 		return nil, ErrInvalidTarget
 	}
 
-	options := defaultLoadOptions()
-	for _, opt := range opts {
-		opt(options)
-	}
-
-	if err := prepareLoadOptions(options); err != nil {
+	options, err := loadOptionsFor(reflect.TypeFor[T](), opts)
+	if err != nil {
 		return nil, err
 	}
-
-	options.keys = keyTreeFor(reflect.TypeFor[T]())
 
 	meta := NewMetadata()
 	meta.secretKeys = options.keys
@@ -88,19 +85,18 @@ func LoadInto[T any](target *T, opts ...Option) (*Metadata, error) {
 		}
 	}
 
-	err := env.Apply(target, env.Options{
+	err = env.Apply(target, env.Options{
 		Prefix: options.envPrefix,
 		Lookup: os.LookupEnv,
-		OnBind: func(key, envVar, rawVal string) {
-			meta.Record(Origin{
-				Key:      key,
+		OnBind: func(key jsontext.Pointer, envVar, rawVal string) {
+			meta.record(key, Origin{
+				Key:      "",
 				Source:   SourceEnv,
 				Path:     envVar,
 				Line:     0,
 				RawValue: rawVal,
 			})
 		},
-		ParseDuration: ParseDuration,
 	})
 	if err != nil {
 		return nil, fmt.Errorf("bind environment variables: %w", err)
@@ -122,9 +118,9 @@ func LoadInto[T any](target *T, opts ...Option) (*Metadata, error) {
 }
 
 func applyDefaults(target any, opts *loadOptions, meta *Metadata) error {
-	recordDefault := func(key, rawVal string) {
-		meta.Record(Origin{
-			Key:      key,
+	recordDefault := func(key jsontext.Pointer, rawVal string) {
+		meta.record(key, Origin{
+			Key:      "",
 			Source:   SourceDefault,
 			Path:     "",
 			Line:     0,
@@ -241,8 +237,8 @@ func applyLayer(target any, layer cascade.Layer, opts *loadOptions, meta *Metada
 	}
 
 	if err := codecInstance.Decode(data, target); err != nil {
-		if opts.keys.secretSegments(nil) {
-			err = &secretValueError{cause: err}
+		if opts.keys.secret("") {
+			err = redactDecodeError(err, opts.keys)
 		}
 
 		return fmt.Errorf("decode layer %s: %w", layer.Path, err)
@@ -326,6 +322,25 @@ func resolveFormatAliases(opts *loadOptions) error {
 	return nil
 }
 
+func loadOptionsFor(typ reflect.Type, opts []Option) (*loadOptions, error) {
+	if err := layout.Validate(typ); err != nil {
+		return nil, fmt.Errorf("load configuration: %w", err)
+	}
+
+	options := defaultLoadOptions()
+	for _, opt := range opts {
+		opt(options)
+	}
+
+	if err := prepareLoadOptions(options); err != nil {
+		return nil, err
+	}
+
+	options.keys = keyTreeFor(typ)
+
+	return options, nil
+}
+
 func prepareLoadOptions(opts *loadOptions) error {
 	if len(opts.formatAliases) > 0 {
 		if err := resolveFormatAliases(opts); err != nil {
@@ -384,19 +399,19 @@ func discoverAndApplyLayers(target any, opts *loadOptions, meta *Metadata) error
 func recordLayerOrigins(data []byte, layer cascade.Layer, ext string, keys *keyTree, meta *Metadata) {
 	origins.Read(data, ext, func(record origins.Record) {
 		origin := Origin{
-			Key:      record.Key,
+			Key:      keypath.Format(record.Key),
 			Source:   SourceKind(layer.Source),
 			Path:     layer.Path,
 			Line:     record.Line,
 			RawValue: record.RawValue,
 		}
 
-		if keys.knownSegments(record.Segments) {
-			if keys.secretSegments(record.Segments) {
+		if keys.known(record.Key) {
+			if keys.secret(record.Key) {
 				origin.RawValue = "[REDACTED]"
 			}
 
-			meta.record(origin, record.Segments)
+			meta.record(record.Key, origin)
 
 			return
 		}
@@ -409,12 +424,12 @@ func recordLayerOrigins(data []byte, layer cascade.Layer, ext string, keys *keyT
 
 		// A JSON file names its schema, as [Init] writes it, in a top-level
 		// $schema property. Editors read it; it configures nothing.
-		if ext == ".json" && record.Key == jsonSchemaProperty {
+		if ext == ".json" && record.Key == "/"+jsonSchemaProperty {
 			return
 		}
 
 		origin.RawValue = ""
-		meta.recordUnknown(UnknownKey{Origin: origin, Suggestion: keys.suggest(record.Key)})
+		meta.recordUnknown(UnknownKey{Origin: origin, Suggestion: keypath.Format(keys.suggest(record.Key))})
 	})
 }
 
@@ -427,9 +442,9 @@ func unknownKeysError(meta *Metadata) error {
 	errs := make([]error, 0, len(unknown))
 
 	for _, key := range unknown {
-		cause := fmt.Errorf("%w %q", ErrUnknownKey, key.Key)
+		cause := fmt.Errorf(`%w "%s"`, ErrUnknownKey, key.Key)
 		if key.Suggestion != "" {
-			cause = fmt.Errorf("%w %q (did you mean %q?)", ErrUnknownKey, key.Key, key.Suggestion)
+			cause = fmt.Errorf(`%w "%s" (did you mean "%s"?)`, ErrUnknownKey, key.Key, key.Suggestion)
 		}
 
 		errs = append(errs, &ConfigError{Key: key.Key, Err: cause, Origin: key.Origin})

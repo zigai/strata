@@ -26,7 +26,7 @@ database:
   port: 5432
 `
 
-	updated, err := edit.UpdateYAML([]byte(input), "server.port", 9090)
+	updated, err := edit.UpdateYAML([]byte(input), []string{"server", "port"}, 9090)
 	if err != nil {
 		t.Fatalf("UpdateYAML error: %v", err)
 	}
@@ -53,7 +53,7 @@ database:
 		t.Errorf("expected host: 127.0.0.1 preserved, got:\n%s", result)
 	}
 
-	withAppended, err := edit.UpdateYAML([]byte(input), "server.timeout", "30s")
+	withAppended, err := edit.UpdateYAML([]byte(input), []string{"server", "timeout"}, "30s")
 	if err != nil {
 		t.Fatalf("UpdateYAML append error: %v", err)
 	}
@@ -73,7 +73,7 @@ func TestYAMLPreservesAliasFields(t *testing.T) {
 production: *default
 `
 
-	updated, err := edit.UpdateYAML([]byte(input), "production.retries", 5)
+	updated, err := edit.UpdateYAML([]byte(input), []string{"production", "retries"}, 5)
 	if err != nil {
 		t.Fatalf("UpdateYAML error: %v", err)
 	}
@@ -94,7 +94,7 @@ func TestUpdateYAMLRetainsAliasComment(t *testing.T) {
 
 	input := "base: &base\n  x: 1\n  y: 2\ncopy: *base # keep alias comment\n"
 
-	updated, err := edit.UpdateYAML([]byte(input), "copy.x", 3)
+	updated, err := edit.UpdateYAML([]byte(input), []string{"copy", "x"}, 3)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -119,7 +119,7 @@ func TestUpdateYAMLRejectsDanglingAliases(t *testing.T) {
 
 	input := []byte("base:\n  x: &value 1\ncopy: *value\n")
 
-	updated, err := edit.UpdateYAML(input, "base", map[string]int{"y": 2})
+	updated, err := edit.UpdateYAML(input, []string{"base"}, map[string]int{"y": 2})
 	if !errors.Is(err, codec.ErrMalformed) || updated != nil {
 		t.Fatalf("UpdateYAML = %q, %v, want nil and ErrMalformed", updated, err)
 	}
@@ -136,7 +136,7 @@ func TestYAMLCaseSensitiveKeyMatching(t *testing.T) {
 port: 9090
 `
 
-	updated, err := edit.UpdateYAML([]byte(input), portKey, 9999)
+	updated, err := edit.UpdateYAML([]byte(input), []string{portKey}, 9999)
 	if err != nil {
 		t.Fatalf("UpdateYAML error: %v", err)
 	}
@@ -156,7 +156,7 @@ func TestUpdateYAMLAnchorPreserved(t *testing.T) {
 
 	input := "base: &base 10\ncopy: *base\n"
 
-	updated, err := edit.UpdateYAML([]byte(input), "base", 20)
+	updated, err := edit.UpdateYAML([]byte(input), []string{"base"}, 20)
 	if err != nil {
 		t.Fatalf("UpdateYAML error: %v", err)
 	}
@@ -164,6 +164,19 @@ func TestUpdateYAMLAnchorPreserved(t *testing.T) {
 	result := string(updated)
 	if !strings.Contains(result, "&base") {
 		t.Errorf("anchor was lost:\n%s", result)
+	}
+}
+
+func TestUpdateYAMLKeepsIndentationOfAnchoredMappings(t *testing.T) {
+	t.Parallel()
+
+	updated, err := edit.UpdateYAML([]byte("base: &b\n  host: a\nprod: *b\n"), []string{"prod", "host"}, "z")
+	if err != nil {
+		t.Fatalf("UpdateYAML error: %v", err)
+	}
+
+	if want := "base: &b\n  host: a\nprod:\n  host: z\n"; string(updated) != want {
+		t.Fatalf("updated =\n%s\nwant\n%s", updated, want)
 	}
 }
 
@@ -176,7 +189,7 @@ func TestUpdateYAMLAliasDeepClone(t *testing.T) {
 server: *default
 `
 
-	updated, err := edit.UpdateYAML([]byte(input), "server.nested.val", 999)
+	updated, err := edit.UpdateYAML([]byte(input), []string{"server", "nested", "val"}, 999)
 	if err != nil {
 		t.Fatalf("UpdateYAML error: %v", err)
 	}
@@ -208,7 +221,7 @@ production:
     <<: *d
 `
 
-	updated, err := edit.UpdateYAML([]byte(document), "server.port", 9090)
+	updated, err := edit.UpdateYAML([]byte(document), []string{"server", "port"}, 9090)
 	if err != nil {
 		t.Fatalf("UpdateYAML: %v", err)
 	}

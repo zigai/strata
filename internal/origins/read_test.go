@@ -1,15 +1,18 @@
 package origins_test
 
 import (
+	"encoding/json/jsontext"
+	"maps"
+	"slices"
 	"testing"
 
 	"github.com/zigai/strata/internal/origins"
 )
 
-func collect(t *testing.T, data, format string) map[string]origins.Record {
+func collect(t *testing.T, data, format string) map[jsontext.Pointer]origins.Record {
 	t.Helper()
 
-	records := make(map[string]origins.Record)
+	records := make(map[jsontext.Pointer]origins.Record)
 
 	origins.Read([]byte(data), format, func(record origins.Record) {
 		records[record.Key] = record
@@ -28,7 +31,7 @@ func TestReadJoinsNestedKeys(t *testing.T) {
 
 	records := collect(t, nested, ".json")
 
-	for _, key := range []string{"server.port", "name"} {
+	for _, key := range []jsontext.Pointer{"/server/port", "/name"} {
 		if _, ok := records[key]; !ok {
 			t.Errorf("no record for %q, got %v", key, keysOf(records))
 		}
@@ -44,7 +47,7 @@ func TestReadReportsLinesForYAMLOnly(t *testing.T) {
 
 	yamlRecords := collect(t, "server:\n  port: 8080\nname: app\n", ".yaml")
 
-	if got := yamlRecords["server.port"].Line; got != 2 {
+	if got := yamlRecords["/server/port"].Line; got != 2 {
 		t.Errorf("YAML server.port line = %d, want 2", got)
 	}
 
@@ -54,13 +57,13 @@ func TestReadReportsLinesForYAMLOnly(t *testing.T) {
 			".json": `{"name": "app"}`,
 		}[format]
 
-		if got := collect(t, body, format)["name"].Line; got != 0 {
+		if got := collect(t, body, format)["/name"].Line; got != 0 {
 			t.Errorf("%s reported line %d, want 0", format, got)
 		}
 	}
 
 	yamlNoDot := collect(t, "server:\n  port: 8080\nname: app\n", "yaml")
-	if got := yamlNoDot["server.port"].Line; got != 2 {
+	if got := yamlNoDot["/server/port"].Line; got != 2 {
 		t.Errorf("YAML (no dot) server.port line = %d, want 2", got)
 	}
 }
@@ -72,11 +75,11 @@ func TestReadKeepsExactNumberLiterals(t *testing.T) {
 
 	const body = `{"big": 9007199254740993}`
 
-	if got := collect(t, body, ".json")["big"].RawValue; got != "9007199254740993" {
+	if got := collect(t, body, ".json")["/big"].RawValue; got != "9007199254740993" {
 		t.Errorf("JSON big = %q, want the literal", got)
 	}
 
-	if got := collect(t, "big = 9007199254740993\n", ".toml")["big"].RawValue; got != "9007199254740993" {
+	if got := collect(t, "big = 9007199254740993\n", ".toml")["/big"].RawValue; got != "9007199254740993" {
 		t.Errorf("TOML big = %q, want the literal", got)
 	}
 }
@@ -89,7 +92,7 @@ func TestReadUnquotesStrings(t *testing.T) {
 		{".yaml", "name: app\n"},
 		{".toml", "name = \"app\"\n"},
 	} {
-		if got := collect(t, tc.body, tc.format)["name"].RawValue; got != "app" {
+		if got := collect(t, tc.body, tc.format)["/name"].RawValue; got != "app" {
 			t.Errorf("%s name = %q, want app unquoted", tc.format, got)
 		}
 	}
@@ -109,7 +112,7 @@ func TestReadIdentifiesAnUnknownFormat(t *testing.T) {
 		t.Run(tc.name, func(t *testing.T) {
 			t.Parallel()
 
-			if got := collect(t, tc.body, "")["name"].RawValue; got != "app" {
+			if got := collect(t, tc.body, "")["/name"].RawValue; got != "app" {
 				t.Errorf("name = %q, want app", got)
 			}
 		})
@@ -119,7 +122,7 @@ func TestReadIdentifiesAnUnknownFormat(t *testing.T) {
 func TestReadAutodetectedJSONHasNoLine(t *testing.T) {
 	t.Parallel()
 
-	if record := collect(t, nested, ".custom")["server.port"]; record.Line != 0 || record.RawValue != "8080" {
+	if record := collect(t, nested, ".custom")["/server/port"]; record.Line != 0 || record.RawValue != "8080" {
 		t.Fatalf("JSON origin = %+v, want value 8080 without a line", record)
 	}
 }
@@ -144,11 +147,11 @@ func TestReadMarksReusedYAMLAnchorsAsTemplates(t *testing.T) {
 
 	records := collect(t, "base: &b\n  host: h\nunused: &u\n  host: x\ndatabase:\n  <<: *b\n  port: 1\n", ".yaml")
 
-	for key, want := range map[string]bool{
-		"base.host":     true,
-		"unused.host":   false,
-		"database.host": false,
-		"database.port": false,
+	for key, want := range map[jsontext.Pointer]bool{
+		"/base/host":     true,
+		"/unused/host":   false,
+		"/database/host": false,
+		"/database/port": false,
 	} {
 		record, ok := records[key]
 		if !ok {
@@ -161,12 +164,33 @@ func TestReadMarksReusedYAMLAnchorsAsTemplates(t *testing.T) {
 	}
 }
 
-func keysOf(records map[string]origins.Record) []string {
-	keys := make([]string, 0, len(records))
+func keysOf(records map[jsontext.Pointer]origins.Record) []jsontext.Pointer {
+	keys := make([]jsontext.Pointer, 0, len(records))
 
 	for key := range records {
 		keys = append(keys, key)
 	}
 
 	return keys
+}
+
+func TestReadKeepsEveryKeyAsOneToken(t *testing.T) {
+	t.Parallel()
+
+	for _, test := range []struct{ format, body string }{
+		{".json", `{"labels": {"a.b": "literal", "a": {"b": "nested"}, "c/d": "slash", "e~f": "tilde", "": "empty", " g ": "space", "0": "zero"}}`},
+		{".yaml", "labels:\n  a.b: literal\n  a:\n    b: nested\n  c/d: slash\n  e~f: tilde\n  \"\": empty\n  \" g \": space\n  \"0\": zero\n"},
+		{".toml", "[labels]\n\"a.b\" = \"literal\"\n\"c/d\" = \"slash\"\n\"e~f\" = \"tilde\"\n\"\" = \"empty\"\n\" g \" = \"space\"\n\"0\" = \"zero\"\n[labels.a]\nb = \"nested\"\n"},
+	} {
+		records := collect(t, test.body, test.format)
+
+		want := []jsontext.Pointer{"/labels/", "/labels/ g ", "/labels/0", "/labels/a.b", "/labels/a/b", "/labels/c~1d", "/labels/e~0f"}
+		if got := slices.Sorted(maps.Keys(records)); !slices.Equal(got, want) {
+			t.Errorf("%s keys = %q, want %q", test.format, got, want)
+		}
+
+		if got := records["/labels/a.b"].RawValue; got != "literal" {
+			t.Errorf("%s /labels/a.b = %q, want the literal entry", test.format, got)
+		}
+	}
 }

@@ -19,7 +19,7 @@ import (
 
 	"github.com/invopop/jsonschema"
 
-	"github.com/zigai/strata/internal/defaulter"
+	"github.com/zigai/strata/internal/layout"
 )
 
 // ErrReflectSchema is returned when a schema cannot be reflected from a Go type.
@@ -125,9 +125,13 @@ func Schema[T any](opts ...SchemaOption) ([]byte, error) {
 }
 
 func reflectSchema(typ reflect.Type, sourceFile, callerPackage string, sources []schemaCommentSource) (*jsonschema.Schema, error) {
+	if err := layout.Validate(typ); err != nil {
+		return nil, fmt.Errorf("%w: %w", ErrReflectSchema, err)
+	}
+
 	reflector := &jsonschema.Reflector{
 		ExpandedStruct: true,
-		KeyNamer:       defaulter.ToSnakeCase,
+		KeyNamer:       layout.ToSnakeCase,
 		// Every key is optional in a config file, so none is required unless its
 		// field says so with a jsonschema:"required" tag.
 		RequiredFromJSONSchemaTags: true,
@@ -310,7 +314,7 @@ func collectSchemaPackages(typ reflect.Type, seen map[reflect.Type]bool, package
 		return
 	}
 
-	if !defaulter.IsNestedStructType(typ) {
+	if !layout.IsNestedStructType(typ) {
 		return
 	}
 

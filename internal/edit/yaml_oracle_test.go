@@ -138,7 +138,7 @@ func TestUpdateYAMLChangesOnlyTheNamedKey(t *testing.T) {
 		t.Run(tc.name, func(t *testing.T) {
 			t.Parallel()
 
-			out, err := edit.UpdateYAML([]byte(tc.input), tc.key, tc.value)
+			out, err := edit.UpdateYAML([]byte(tc.input), strings.Split(tc.key, "."), tc.value)
 			if err != nil {
 				t.Fatalf("UpdateYAML: %v", err)
 			}
@@ -148,10 +148,10 @@ func TestUpdateYAMLChangesOnlyTheNamedKey(t *testing.T) {
 	}
 }
 
-func TestUpdateYAMLReplacedAnchorKeepsItsAliases(t *testing.T) {
+func TestUpdateYAMLNullBecomesMappingAndKeepsItsAliases(t *testing.T) {
 	t.Parallel()
 
-	out, err := edit.UpdateYAML([]byte("a: &v 1\nb: *v\n"), "a.x", 2)
+	out, err := edit.UpdateYAML([]byte("a: &v\nb: *v\n"), []string{"a", "x"}, 2)
 	if err != nil {
 		t.Fatalf("UpdateYAML: %v", err)
 	}
@@ -217,13 +217,43 @@ func FuzzUpdateYAML(f *testing.F) {
 			t.Skip("the edit reaches a node other keys alias")
 		}
 
-		out, err := edit.UpdateYAML([]byte(doc), key, value)
+		out, err := edit.UpdateYAML([]byte(doc), path, value)
+
+		before, _ := decodeYAMLDocument([]byte(doc))
+		if yamlPathThroughValue(before, path) {
+			if !errors.Is(err, edit.ErrPathNotMapping) {
+				t.Fatalf("path %q runs through a value that is not a mapping: err = %v, want ErrPathNotMapping\ninput:\n%s\noutput:\n%s", key, err, doc, out)
+			}
+
+			return
+		}
+
 		if err != nil {
 			t.Fatalf("UpdateYAML(%q) refused a valid edit: %v\ninput:\n%s", key, err, doc)
 		}
 
 		requireYAMLEdit(t, []byte(doc), out, path, value)
 	})
+}
+
+// yamlPathThroughValue reports whether path passes through a value that is
+// neither a mapping nor null, which an edit cannot add a key to.
+func yamlPathThroughValue(doc map[string]any, path []string) bool {
+	for _, part := range path[:len(path)-1] {
+		value, exists := doc[part]
+		if !exists || value == nil {
+			return false
+		}
+
+		child, ok := value.(map[string]any)
+		if !ok {
+			return true
+		}
+
+		doc = child
+	}
+
+	return false
 }
 
 func singleYAMLDocument(doc string) bool {

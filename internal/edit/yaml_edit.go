@@ -8,6 +8,8 @@ import (
 	"strconv"
 	"strings"
 
+	"github.com/zigai/strata/internal/keypath"
+
 	"gopkg.in/yaml.v3"
 
 	"github.com/zigai/strata/codec"
@@ -29,7 +31,11 @@ type scalarPosition struct {
 	IsKey  bool
 }
 
-func UpdateYAML(data []byte, dottedKey string, value any) ([]byte, error) {
+func UpdateYAML(data []byte, parts []string, value any) ([]byte, error) {
+	if len(parts) == 0 {
+		return nil, keypath.ErrEmpty
+	}
+
 	if err := ensureSingleYAMLDocument(data); err != nil {
 		return nil, err
 	}
@@ -58,7 +64,6 @@ func UpdateYAML(data []byte, dottedKey string, value any) ([]byte, error) {
 		return nil, err
 	}
 
-	parts := strings.Split(dottedKey, ".")
 	if err := updateMappingNode(rootMapping, parts, newValNode); err != nil {
 		return nil, err
 	}
@@ -139,11 +144,20 @@ func collectMappingColumns(nodes []*yaml.Node, parentCol int, counts map[int]int
 			continue
 		}
 
-		if parentCol > 0 && node.Column > parentCol {
-			counts[node.Column-parentCol]++
+		// A block mapping's position is that of its anchor or tag when it has
+		// one, so its first key gives the indentation. A flow mapping sets none.
+		if node.Style&yaml.FlowStyle != 0 || len(node.Content) == 0 {
+			collectMappingColumns(node.Content, parentCol, counts)
+
+			continue
 		}
 
-		collectMappingColumns(node.Content, node.Column, counts)
+		column := node.Content[0].Column
+		if parentCol > 0 && column > parentCol {
+			counts[column-parentCol]++
+		}
+
+		collectMappingColumns(node.Content, column, counts)
 	}
 }
 
@@ -175,48 +189,13 @@ func updateMappingNode(mapping *yaml.Node, parts []string, newVal *yaml.Node) er
 	currentKey := parts[0]
 	isLeaf := len(parts) == 1
 
-	matchIdx := findMatchingKeyIndex(mapping, currentKey)
-	if matchIdx != -1 {
-		vNode := mapping.Content[matchIdx+1]
-
-		if isLeaf {
-			newVal.HeadComment = vNode.HeadComment
-			newVal.LineComment = vNode.LineComment
-			newVal.FootComment = vNode.FootComment
-			newVal.Anchor = vNode.Anchor
-			mapping.Content[matchIdx+1] = newVal
-
-			return nil
-		}
-
-		if vNode.Kind == yaml.MappingNode {
-			return updateMappingNode(vNode, parts[1:], newVal)
-		}
-
-		// NB: the alias target's entries are copied into a new mapping; the
-		// aliased mapping keeps its fields.
-		if vNode.Kind == yaml.AliasNode && vNode.Alias != nil && vNode.Alias.Kind == yaml.MappingNode {
-			newMap := copyAliasedMapping(vNode.Alias)
-			newMap.HeadComment = vNode.HeadComment
-			newMap.LineComment = ""
-			newMap.FootComment = vNode.FootComment
-			keyNode := mapping.Content[matchIdx]
-			keyNode.LineComment = strings.TrimSpace(keyNode.LineComment + "\n" + vNode.LineComment)
-			mapping.Content[matchIdx+1] = newMap
-
-			return updateMappingNode(newMap, parts[1:], newVal)
-		}
-
-		// The replaced value keeps its anchor, as a replaced leaf does, so an
-		// alias of it still names a node.
-		newMap := &yaml.Node{Kind: yaml.MappingNode, Anchor: vNode.Anchor}
-		mapping.Content[matchIdx+1] = newMap
-
-		return updateMappingNode(newMap, parts[1:], newVal)
+	if matchIdx := findMatchingKeyIndex(mapping, currentKey); matchIdx != -1 {
+		return updateExistingEntry(mapping, matchIdx, parts, newVal)
 	}
 
 	kNode := &yaml.Node{
 		Kind:  yaml.ScalarNode,
+		Tag:   "!!str",
 		Value: currentKey,
 	}
 
@@ -228,8 +207,15 @@ func updateMappingNode(mapping *yaml.Node, parts []string, newVal *yaml.Node) er
 	// A mapping inherited through a merge key is copied in whole, so the edit
 	// overrides one key and the inherited siblings survive.
 	subMap := &yaml.Node{Kind: yaml.MappingNode}
-	if inherited := mergedMappingValue(mapping, currentKey, map[*yaml.Node]bool{}); inherited != nil {
+
+	inherited, found := mergedValue(mapping, currentKey, map[*yaml.Node]bool{})
+
+	switch {
+	case !found || inherited.Kind == yaml.ScalarNode && inherited.ShortTag() == "!!null":
+	case inherited.Kind == yaml.MappingNode:
 		subMap = copyAliasedMapping(inherited)
+	default:
+		return fmt.Errorf("%w: %q", ErrPathNotMapping, currentKey)
 	}
 
 	mapping.Content = append(mapping.Content, kNode, subMap)
@@ -237,27 +223,69 @@ func updateMappingNode(mapping *yaml.Node, parts []string, newVal *yaml.Node) er
 	return updateMappingNode(subMap, parts[1:], newVal)
 }
 
+func updateExistingEntry(mapping *yaml.Node, matchIdx int, parts []string, newVal *yaml.Node) error {
+	currentKey := parts[0]
+	isLeaf := len(parts) == 1
+
+	vNode := mapping.Content[matchIdx+1]
+
+	if isLeaf {
+		newVal.HeadComment = vNode.HeadComment
+		newVal.LineComment = vNode.LineComment
+		newVal.FootComment = vNode.FootComment
+		newVal.Anchor = vNode.Anchor
+		mapping.Content[matchIdx+1] = newVal
+
+		return nil
+	}
+
+	if vNode.Kind == yaml.MappingNode {
+		return updateMappingNode(vNode, parts[1:], newVal)
+	}
+
+	// NB: the alias target's entries are copied into a new mapping; the
+	// aliased mapping keeps its fields.
+	if vNode.Kind == yaml.AliasNode && vNode.Alias != nil && vNode.Alias.Kind == yaml.MappingNode {
+		newMap := copyAliasedMapping(vNode.Alias)
+		newMap.HeadComment = vNode.HeadComment
+		newMap.LineComment = ""
+		newMap.FootComment = vNode.FootComment
+		keyNode := mapping.Content[matchIdx]
+		keyNode.LineComment = strings.TrimSpace(keyNode.LineComment + "\n" + vNode.LineComment)
+		mapping.Content[matchIdx+1] = newMap
+
+		return updateMappingNode(newMap, parts[1:], newVal)
+	}
+
+	if vNode.Kind != yaml.ScalarNode || vNode.ShortTag() != "!!null" {
+		return fmt.Errorf("%w: %q", ErrPathNotMapping, currentKey)
+	}
+
+	// A null becomes a mapping that keeps its anchor, as a replaced leaf
+	// does, so an alias of it still names a node.
+	newMap := &yaml.Node{Kind: yaml.MappingNode, Anchor: vNode.Anchor}
+	mapping.Content[matchIdx+1] = newMap
+
+	return updateMappingNode(newMap, parts[1:], newVal)
+}
+
 // Merge precedence is own keys before merges, then earlier sequence entries
 // before later ones.
-func mergedMappingValue(mapping *yaml.Node, key string, seen map[*yaml.Node]bool) *yaml.Node {
+func mergedValue(mapping *yaml.Node, key string, seen map[*yaml.Node]bool) (*yaml.Node, bool) {
 	for _, source := range mergeSources(mapping) {
 		found, ok := inheritedValue(source, key, seen)
 		if !ok {
 			continue
 		}
 
-		if found.Kind == yaml.AliasNode {
+		for found.Kind == yaml.AliasNode && found.Alias != nil {
 			found = found.Alias
 		}
 
-		if found == nil || found.Kind != yaml.MappingNode {
-			return nil
-		}
-
-		return found
+		return found, true
 	}
 
-	return nil
+	return nil, false
 }
 
 func inheritedValue(source *yaml.Node, key string, seen map[*yaml.Node]bool) (*yaml.Node, bool) {

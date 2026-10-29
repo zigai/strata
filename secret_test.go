@@ -2,6 +2,7 @@ package strata_test
 
 import (
 	"errors"
+	"maps"
 	"os"
 	"path/filepath"
 	"strings"
@@ -459,5 +460,156 @@ func TestSecretOriginsAreRedactedInEveryLayer(t *testing.T) {
 				}
 			}
 		})
+	}
+}
+
+func TestDecodeErrorsNameKeysWithoutSecretValues(t *testing.T) {
+	t.Parallel()
+
+	type config struct {
+		Port int
+		Pin  int `strata:"pin,secret"`
+	}
+
+	for _, test := range []struct {
+		name, document string
+		wantPort       string
+	}{
+		{name: "config.yaml", document: "port: busy\npin: s3cr3t-pin\n", wantPort: `line 1: key "port"`},
+		{name: "config.json", document: "{\n  \"port\": \"busy\",\n  \"pin\": \"s3cr3t-pin\"\n}", wantPort: `line 2: key "port"`},
+		{name: "config.toml", document: "port = \"busy\"\npin = \"s3cr3t-pin\"\n", wantPort: `key "port"`},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			t.Parallel()
+
+			path := writeFile(t, test.name, test.document)
+
+			_, err := strata.Load[config](strata.WithPath(path), strata.WithFormats(filepath.Ext(test.name)))
+			if !errors.Is(err, strata.ErrMalformed) {
+				t.Fatalf("err = %v, want ErrMalformed", err)
+			}
+
+			message := err.Error()
+			if strings.Contains(message, "s3cr3t") || !strings.Contains(message, test.wantPort) || !strings.Contains(message, `key "pin": invalid value [REDACTED]`) {
+				t.Fatalf("err = %q, want the port failure in full and the pin value redacted", message)
+			}
+		})
+	}
+}
+
+func TestUnattributedDecodeErrorsStayRedacted(t *testing.T) {
+	t.Parallel()
+
+	type config struct {
+		Pin string `strata:"pin,secret"`
+	}
+
+	path := writeFile(t, "config.toml", "pin = s3cr3t-pin\n")
+
+	_, err := strata.Load[config](strata.WithPath(path), strata.WithFormats("toml"))
+	if !errors.Is(err, strata.ErrMalformed) || strings.Contains(err.Error(), "s3cr3t") {
+		t.Fatalf("err = %v, want a redacted malformed-document error", err)
+	}
+}
+
+func TestDecodeErrorsRedactSecretsUnderDottedMapKeys(t *testing.T) {
+	t.Parallel()
+
+	type entry struct {
+		Password time.Duration `strata:",secret"`
+	}
+
+	type config struct {
+		Entries map[string]entry
+	}
+
+	for name, document := range map[string]string{
+		"config.json": `{"entries": {"a.b": {"password": "s3cr3t-pin"}}}`,
+		"config.toml": "[entries.\"a.b\"]\npassword = \"s3cr3t-pin\"\n",
+		"config.yaml": "entries:\n  a.b:\n    password: s3cr3t-pin\n",
+	} {
+		t.Run(name, func(t *testing.T) {
+			t.Parallel()
+
+			path := writeFile(t, name, document)
+
+			_, err := strata.Load[config](strata.WithPath(path), strata.WithFormats(filepath.Ext(name)))
+
+			if !errors.Is(err, strata.ErrMalformed) || strings.Contains(err.Error(), "s3cr3t") || !strings.Contains(err.Error(), `key "entries.a\.b.password": invalid value [REDACTED]`) {
+				t.Fatalf("err = %v, want a redacted failure at entries.a\\.b.password", err)
+			}
+		})
+	}
+}
+
+func TestInlineSecretStructsStayRedacted(t *testing.T) {
+	t.Parallel()
+
+	type credentials struct {
+		Code int
+	}
+
+	type config struct {
+		Credentials credentials `strata:",inline,secret"`
+	}
+
+	path := writeFile(t, "config.yaml", "code: s3cr3t-pin\n")
+
+	_, err := strata.Load[config](strata.WithPath(path), strata.WithFormats(yamlFormat))
+
+	if !errors.Is(err, strata.ErrMalformed) || strings.Contains(err.Error(), "s3cr3t") || !strings.Contains(err.Error(), `key "code": invalid value [REDACTED]`) {
+		t.Fatalf("err = %v, want a redacted failure at /code", err)
+	}
+}
+
+func TestInlineSecretStructOriginsStayRedacted(t *testing.T) {
+	t.Parallel()
+
+	type credentials struct {
+		Code int
+	}
+
+	type config struct {
+		Credentials credentials `yaml:",inline" strata:",secret"`
+	}
+
+	path := writeFile(t, "config.yaml", "code: 4321\n")
+
+	got, meta, err := strata.LoadWithMetadata[config](strata.WithPath(path), strata.WithFormats(yamlFormat))
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	if origin, found := meta.Where("code"); got.Credentials.Code != 4321 || !found || origin.RawValue != "[REDACTED]" {
+		t.Fatalf("code = %d, Where(/code) = %+v, %t; want the value loaded and its origin redacted", got.Credentials.Code, origin, found)
+	}
+}
+
+func TestSecretMapEntriesWithEscapedKeysStayRedacted(t *testing.T) {
+	t.Parallel()
+
+	type config struct {
+		Tokens map[string]string `strata:",secret"`
+	}
+
+	path := writeFile(t, "config.yaml", "tokens:\n  a.b: s3cr3t-pin\n")
+
+	if err := strata.Set[config](path, `tokens.c\.d`, "s3cr3t-new"); err != nil {
+		t.Fatal(err)
+	}
+
+	got, meta, err := strata.LoadWithMetadata[config](strata.WithPath(path), strata.WithFormats(yamlFormat))
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	if want := map[string]string{"a.b": "s3cr3t-pin", "c.d": "s3cr3t-new"}; !maps.Equal(got.Tokens, want) {
+		t.Fatalf("tokens = %q, want %q", got.Tokens, want)
+	}
+
+	for _, key := range []string{`tokens.a\.b`, `tokens.c\.d`} {
+		if origin, found := meta.Where(key); !found || origin.Key != key || origin.RawValue != "[REDACTED]" {
+			t.Errorf("Where(%q) = %+v, %t; want a redacted origin under the same key", key, origin, found)
+		}
 	}
 }

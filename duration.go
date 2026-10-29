@@ -1,26 +1,14 @@
 package strata
 
 import (
-	"errors"
-	"fmt"
-	"math/big"
-	"regexp"
-	"strings"
 	"time"
+
+	"github.com/zigai/strata/internal/duration"
 )
 
-const (
-	durationInDay  = 24 * time.Hour
-	durationInWeek = 7 * durationInDay
-)
-
-var (
-	// ErrEmptyDuration is returned when a duration string is empty after
-	// whitespace is trimmed.
-	ErrEmptyDuration = errors.New("empty duration string")
-
-	durUnitRe = regexp.MustCompile(`([0-9]+(?:\.[0-9]*)?|\.[0-9]+)([wWdD])`)
-)
+// ErrEmptyDuration is returned when a duration string is empty after
+// whitespace is trimmed.
+var ErrEmptyDuration = duration.ErrEmpty
 
 // Duration wraps [time.Duration] and extends the textual form used by JSON,
 // TOML, and YAML with the day (d) and week (w) units.
@@ -43,52 +31,7 @@ type Duration time.Duration
 // [ErrEmptyDuration] if the trimmed input is empty. Any other failure returns
 // the error from [time.ParseDuration] wrapped with the original input.
 func ParseDuration(s string) (time.Duration, error) {
-	trimmed := strings.TrimSpace(s)
-	if trimmed == "" {
-		return 0, ErrEmptyDuration
-	}
-
-	if !strings.ContainsAny(trimmed, "wdWD") {
-		d, err := time.ParseDuration(trimmed)
-		if err != nil {
-			return 0, fmt.Errorf("parse duration %q: %w", s, err)
-		}
-
-		return d, nil
-	}
-
-	converted := durUnitRe.ReplaceAllStringFunc(trimmed, func(match string) string {
-		numStr := match[:len(match)-1]
-		unit := strings.ToLower(match[len(match)-1:])
-
-		value, ok := new(big.Rat).SetString(numStr)
-		if !ok {
-			return match
-		}
-
-		var duration time.Duration
-
-		switch unit {
-		case "w":
-			duration = durationInWeek
-		case "d":
-			duration = durationInDay
-		default:
-			return match
-		}
-
-		value.Mul(value, new(big.Rat).SetInt64(int64(duration)))
-		nanoseconds := new(big.Int).Quo(value.Num(), value.Denom())
-
-		return nanoseconds.String() + "ns"
-	})
-
-	d, err := time.ParseDuration(converted)
-	if err != nil {
-		return 0, fmt.Errorf("parse duration %q: %w", s, err)
-	}
-
-	return d, nil
+	return duration.Parse(s)
 }
 
 // Duration returns the underlying [time.Duration].

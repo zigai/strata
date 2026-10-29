@@ -1,13 +1,13 @@
 package strata
 
 import (
+	"encoding/json/jsontext"
 	"slices"
 	"sort"
 	"strings"
 	"sync"
-	"unicode"
 
-	"github.com/zigai/strata/internal/defaulter"
+	"github.com/zigai/strata/internal/keypath"
 )
 
 const (
@@ -25,12 +25,10 @@ const (
 // All methods tolerate a nil receiver. A caller may therefore treat a missing
 // Metadata as an empty one without a nil check.
 type Metadata struct {
-	origins     map[string]Origin
-	paths       map[string][]string
-	order       []string
-	secrets     map[string]secretScope
+	origins     map[jsontext.Pointer]Origin
+	order       []jsontext.Pointer
+	secrets     map[jsontext.Pointer]secretScope
 	secretKeys  *keyTree
-	canonical   map[string]string
 	activeFiles []string
 	unknown     []UnknownKey
 	mu          sync.RWMutex
@@ -42,61 +40,67 @@ type secretScope uint8
 // equally usable.
 func NewMetadata() *Metadata {
 	return &Metadata{
-		origins:     make(map[string]Origin),
-		paths:       make(map[string][]string),
+		origins:     make(map[jsontext.Pointer]Origin),
 		order:       nil,
-		secrets:     make(map[string]secretScope),
+		secrets:     make(map[jsontext.Pointer]secretScope),
 		secretKeys:  nil,
-		canonical:   make(map[string]string),
 		activeFiles: make([]string, 0),
 		unknown:     nil,
 		mu:          sync.RWMutex{},
 	}
 }
 
-// Where returns the origin recorded for a dotted configuration key.
+// Where returns the origin recorded for a dotted configuration key, such as
+// "db.port". A literal dot or backslash inside one key is escaped as \. or
+// \\, so `labels.a\.b` names the entry "a.b" under labels.
 //
-// Lookup is case-insensitive and trims surrounding whitespace, matching the
-// normalization applied by [Metadata.Record]. The boolean reports whether the key
-// is known. A nil receiver returns false.
-func (m *Metadata) Where(key string) (Origin, bool) {
-	if m == nil {
+// An exactly recorded key matches first. Otherwise each token that names a
+// declared field may differ in surrounding whitespace, letter case, and
+// underscores, so "dbHost" finds "db_host". Map and inline map entries match
+// only exactly. The boolean reports whether the key is known; a malformed key
+// is never known. A nil receiver returns false.
+func (m *Metadata) Where(dotted string) (Origin, bool) {
+	key, err := keypath.Parse(dotted)
+	if m == nil || err != nil {
 		return Origin{Key: "", Source: "", Path: "", Line: 0, RawValue: ""}, false
 	}
 
 	m.mu.RLock()
 	defer m.mu.RUnlock()
 
-	normalized := normalizeKey(key)
-	if canon, ok := m.canonical[normalized]; ok {
-		normalized = normalizeKey(canon)
-	} else if canon, ok := m.canonical[normalizeKey(toSnakeCaseKey(key))]; ok {
-		normalized = normalizeKey(canon)
-	} else if canon, ok := m.canonical[normalizeKey(strings.ReplaceAll(key, "_", ""))]; ok {
-		normalized = normalizeKey(canon)
+	if origin, ok := m.origins[key]; ok {
+		return origin, true
 	}
 
-	origin, ok := m.origins[normalized]
-	if !ok {
-		origin, ok = m.origins[normalizeKey(key)]
+	if origin, ok := m.origins[m.secretKeys.canonical(key)]; ok {
+		return origin, true
 	}
 
-	return origin, ok
+	return Origin{Key: "", Source: "", Path: "", Line: 0, RawValue: ""}, false
 }
 
 // Record stores the origin for a configuration key.
 //
-// An existing entry for the same normalized key is replaced, so a Metadata
-// always describes the layer whose value won. The key is trimmed and lowercased
-// before storage. A nil receiver is a no-op.
+// An existing entry for the same key is replaced, so a Metadata always
+// describes the layer whose value won. Tokens that name declared fields are
+// spelled as the target type declares them, as [Metadata.Where] matches them;
+// map entries keep their exact spelling. An origin whose key is malformed is
+// ignored. A nil receiver is a no-op.
 func (m *Metadata) Record(origin Origin) {
-	m.record(origin, strings.Split(origin.Key, "."))
+	key, err := keypath.Parse(origin.Key)
+	if m == nil || err != nil {
+		return
+	}
+
+	m.record(key, origin)
 }
 
 // RecordSecret marks a configuration key as secret, ensuring any origin recorded
-// for that key has its raw value redacted.
-func (m *Metadata) RecordSecret(key string) {
-	if m == nil {
+// for that key or below it has its raw value redacted. A malformed key is
+// ignored.
+func (m *Metadata) RecordSecret(dotted string) {
+	key, err := keypath.Parse(dotted)
+	if m == nil || err != nil {
 		return
 	}
 
@@ -104,12 +108,7 @@ func (m *Metadata) RecordSecret(key string) {
 	defer m.mu.Unlock()
 
 	m.initMapsLocked()
-
-	normKey := normalizeKey(key)
-	snakeKey := normalizeKey(toSnakeCaseKey(key))
-	cleanKey := normalizeKey(strings.ReplaceAll(key, "_", ""))
-
-	m.markSecret(secretSubtree, normKey, snakeKey, cleanKey)
+	m.markSecret(secretSubtree, key)
 
 	for recordedKey, origin := range m.origins {
 		if m.isSecretLocked(recordedKey) {
@@ -117,10 +116,6 @@ func (m *Metadata) RecordSecret(key string) {
 			m.origins[recordedKey] = origin
 		}
 	}
-
-	m.canonical[normKey] = key
-	m.canonical[snakeKey] = key
-	m.canonical[cleanKey] = key
 }
 
 // RecordActiveFile records a configuration file that contributed to the result.
@@ -220,70 +215,50 @@ func (m *Metadata) NewConfigError(key string, err error) *ConfigError {
 	}
 }
 
-func (m *Metadata) record(origin Origin, segments []string) {
-	if m == nil {
-		return
-	}
-
+func (m *Metadata) record(key jsontext.Pointer, origin Origin) {
 	m.mu.Lock()
 	defer m.mu.Unlock()
 
 	m.initMapsLocked()
 
-	normKey := normalizeKey(origin.Key)
-	snakeKey := normalizeKey(toSnakeCaseKey(origin.Key))
-	cleanKey := normalizeKey(strings.ReplaceAll(origin.Key, "_", ""))
+	key = m.secretKeys.canonical(key)
+	origin.Key = keypath.Format(key)
 
 	if origin.RawValue == "[REDACTED]" {
-		m.markSecret(secretValue, normKey, snakeKey, cleanKey)
+		m.markSecret(secretValue, key)
 	}
 
-	if origin.Source == SourceDefault {
-		m.canonical[normKey] = origin.Key
-		m.canonical[snakeKey] = origin.Key
-		m.canonical[cleanKey] = origin.Key
-	}
-
-	origin.Key = m.resolveCanonical(normKey, snakeKey, cleanKey, origin.Key)
-
-	if m.isSecretLocked(normalizeKey(origin.Key)) || m.isSecretLocked(snakeKey) || m.isSecretLocked(cleanKey) {
+	if m.isSecretLocked(key) {
 		origin.RawValue = "[REDACTED]"
-		m.markSecret(secretValue, normalizeKey(origin.Key), snakeKey, cleanKey)
 	}
 
-	segments = slices.Clone(segments)
-	for index, segment := range segments {
-		segments[index] = normalizeKey(segment)
+	if m.secretKeys.sequence(key) {
+		m.removeDescendantsLocked(key)
 	}
 
-	if m.secretKeys.sequenceSegments(segments) {
-		m.removeDescendantsLocked(segments)
+	if _, exists := m.origins[key]; !exists {
+		m.order = append(m.order, key)
 	}
 
-	resolved := normalizeKey(origin.Key)
-	if _, exists := m.origins[resolved]; !exists {
-		m.order = append(m.order, resolved)
-	}
-
-	m.origins[resolved] = origin
-	m.paths[resolved] = segments
+	m.origins[key] = origin
 }
 
-func (m *Metadata) removeDescendantsLocked(segments []string) {
-	for key, path := range m.paths {
-		if len(path) > len(segments) && slices.Equal(path[:len(segments)], segments) {
-			delete(m.origins, key)
-			delete(m.paths, key)
+func (m *Metadata) removeDescendantsLocked(key jsontext.Pointer) {
+	for recorded := range m.origins {
+		if recorded != key && key.Contains(recorded) {
+			delete(m.origins, recorded)
 		}
 	}
 
-	m.order = slices.DeleteFunc(m.order, func(key string) bool {
-		_, exists := m.origins[key]
+	m.order = slices.DeleteFunc(m.order, func(recorded jsontext.Pointer) bool {
+		_, exists := m.origins[recorded]
 		return !exists
 	})
 }
 
-func (m *Metadata) orderBy(names []string) {
+// orderBy sorts origins by the declaration order of names; a key below a
+// declared key, such as a map entry, ranks with its nearest declared parent.
+func (m *Metadata) orderBy(names []jsontext.Pointer) {
 	if m == nil {
 		return
 	}
@@ -291,27 +266,20 @@ func (m *Metadata) orderBy(names []string) {
 	m.mu.Lock()
 	defer m.mu.Unlock()
 
-	ranks := make(map[string]int, len(names))
+	ranks := make(map[jsontext.Pointer]int, len(names))
 	for i, name := range names {
-		ranks[normalizeKey(name)] = i
+		ranks[name] = i
 	}
 
-	orderRanks := make(map[string]int, len(m.order))
+	orderRanks := make(map[jsontext.Pointer]int, len(m.order))
 	for _, key := range m.order {
-		current := key
-		for {
+		orderRanks[key] = len(names)
+
+		for current := key; current != ""; current = current.Parent() {
 			if rank, ok := ranks[current]; ok {
 				orderRanks[key] = rank
 				break
 			}
-
-			lastDot := strings.LastIndexByte(current, '.')
-			if lastDot < 0 {
-				orderRanks[key] = len(names)
-				break
-			}
-
-			current = current[:lastDot]
 		}
 	}
 
@@ -320,95 +288,36 @@ func (m *Metadata) orderBy(names []string) {
 
 func (m *Metadata) initMapsLocked() {
 	if m.origins == nil {
-		m.origins = make(map[string]Origin)
-	}
-
-	if m.paths == nil {
-		m.paths = make(map[string][]string)
+		m.origins = make(map[jsontext.Pointer]Origin)
 	}
 
 	if m.secrets == nil {
-		m.secrets = make(map[string]secretScope)
-	}
-
-	if m.canonical == nil {
-		m.canonical = make(map[string]string)
+		m.secrets = make(map[jsontext.Pointer]secretScope)
 	}
 }
 
-func (m *Metadata) isSecretLocked(key string) bool {
-	if m.secretKeys.secret(key) {
+func (m *Metadata) isSecretLocked(key jsontext.Pointer) bool {
+	if m.secretKeys.secret(key) || m.secrets[key] != 0 {
 		return true
 	}
 
-	if m.secrets[key] != 0 {
-		return true
-	}
-
-	for {
-		separator := strings.LastIndexByte(key, '.')
-		if separator < 0 {
-			return false
-		}
-
-		key = key[:separator]
-		if m.secrets[key] == secretSubtree {
+	for current := key; current != ""; {
+		current = current.Parent()
+		if m.secrets[current] == secretSubtree {
 			return true
 		}
 	}
+
+	return false
 }
 
-func (m *Metadata) markSecret(scope secretScope, keys ...string) {
-	for _, key := range keys {
-		m.secrets[key] = max(m.secrets[key], scope)
-	}
+func (m *Metadata) markSecret(scope secretScope, key jsontext.Pointer) {
+	key = m.secretKeys.canonical(key)
+	m.secrets[key] = max(m.secrets[key], scope)
 }
 
-func (m *Metadata) resolveCanonical(normKey, snakeKey, cleanKey, defaultKey string) string {
-	if canon, ok := m.canonical[normKey]; ok {
-		return canon
-	}
-
-	if canon, ok := m.canonical[snakeKey]; ok {
-		return canon
-	}
-
-	if canon, ok := m.canonical[cleanKey]; ok {
-		return canon
-	}
-
-	m.canonical[normKey] = defaultKey
-	m.canonical[snakeKey] = defaultKey
-	m.canonical[cleanKey] = defaultKey
-
-	return defaultKey
-}
-
-func normalizeKey(s string) string {
-	trimmed := strings.TrimSpace(s)
-	hasUpper := false
-
-	for _, r := range trimmed {
-		if unicode.IsUpper(r) || unicode.IsTitle(r) {
-			hasUpper = true
-			break
-		}
-	}
-
-	if !hasUpper {
-		return trimmed
-	}
-
-	return strings.ToLower(trimmed)
-}
-
-func toSnakeCaseKey(s string) string {
-	parts := strings.Split(s, ".")
-	for i, part := range parts {
-		parts[i] = defaulter.ToSnakeCase(part)
-	}
-
-	return strings.Join(parts, ".")
+func foldKey(token string) string {
+	return strings.ToLower(strings.ReplaceAll(strings.TrimSpace(token), "_", ""))
 }
 
 func (m *Metadata) recordUnknown(unknown UnknownKey) {

@@ -71,16 +71,18 @@ func Bind[T any](cfg *T, opts ...strata.Option) *Binding[T] {
 	return &Binding[T]{cfg: cfg, opts: opts, meta: nil, flags: nil, defaults: reflect.ValueOf(defaults), configPath: "", appName: "", skipped: make(map[*cli.Command]bool)}
 }
 
-// Flag returns a typed cli.Flag for key, with its SetDefaults value. Invalid,
-// unsupported, or secret keys panic. The first alias is its shorthand name.
-func (b *Binding[T]) Flag(key, usage string, aliases ...string) cli.Flag {
+// Flag returns a typed cli.Flag for key, a dotted key such as "db.port",
+// with its SetDefaults value. The flag name joins the key's tokens with
+// hyphens, as in --db-port. Invalid, unsupported, or secret keys panic. The
+// first alias is its shorthand name.
+func (b *Binding[T]) Flag(key string, usage string, aliases ...string) cli.Flag {
 	target, err := plan.LeafFor(reflect.TypeFor[T](), key)
 	if err != nil {
 		panic(err)
 	}
 
 	if target.IsSecret {
-		panic(fmt.Sprintf("secret key %q cannot be a flag", key))
+		panic(fmt.Sprintf(`secret key "%s" cannot be a flag`, key))
 	}
 
 	if len(aliases) > 0 {
@@ -247,9 +249,10 @@ func (b *Binding[T]) EditPath() (string, error) {
 	return path, nil
 }
 
-// Set checks key and value against T, then edits EditPath's file. A missing file
-// reports that config init should be run first. It does not run ValidateWith.
-func (b *Binding[T]) Set(key, value string) (string, error) {
+// Set checks key, a dotted key such as "db.port", and value against T, then
+// edits EditPath's file. A missing file reports that config init should be run
+// first. It does not run ValidateWith.
+func (b *Binding[T]) Set(key string, value string) (string, error) {
 	path, err := b.EditPath()
 	if err != nil {
 		return "", err

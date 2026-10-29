@@ -1,11 +1,12 @@
 package origins
 
 import (
+	"encoding/json/jsontext"
 	"fmt"
+	"maps"
 	"reflect"
 	"slices"
 	"strconv"
-	"strings"
 
 	"github.com/pelletier/go-toml/v2"
 )
@@ -18,21 +19,21 @@ func readTOML(data []byte, emit func(Record)) bool {
 		return false
 	}
 
-	walkTOMLValue(document, nil, emit)
+	walkTOMLValue(document, "", emit)
 
 	return true
 }
 
-func walkTOMLValue(value any, segments []string, emit func(Record)) {
+func walkTOMLValue(value any, key jsontext.Pointer, emit func(Record)) {
 	if document, ok := value.(map[string]any); ok && len(document) > 0 {
-		for key, child := range document {
-			walkTOMLValue(child, append(slices.Clone(segments), key), emit)
+		for _, name := range slices.Sorted(maps.Keys(document)) {
+			walkTOMLValue(document[name], key.AppendToken(name), emit)
 		}
 
 		return
 	}
 
-	emit(Record{Key: strings.Join(segments, "."), Segments: segments, Line: 0, RawValue: fmt.Sprintf("%v", value), IsTemplate: false})
+	emit(Record{Key: key, Line: 0, RawValue: fmt.Sprintf("%v", value), IsTemplate: false})
 
 	sequence := reflect.ValueOf(value)
 	if sequence.Kind() != reflect.Slice && sequence.Kind() != reflect.Array {
@@ -44,7 +45,7 @@ func walkTOMLValue(value any, segments []string, emit func(Record)) {
 
 		kind := reflect.TypeOf(item)
 		if kind != nil && (kind.Kind() == reflect.Map || kind.Kind() == reflect.Slice || kind.Kind() == reflect.Array) {
-			walkTOMLValue(item, append(slices.Clone(segments), strconv.Itoa(index)), emit)
+			walkTOMLValue(item, key.AppendToken(strconv.Itoa(index)), emit)
 		}
 	}
 }

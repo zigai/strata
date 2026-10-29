@@ -4,6 +4,7 @@ import (
 	"reflect"
 
 	"github.com/zigai/strata/internal/env"
+	"github.com/zigai/strata/internal/keypath"
 )
 
 // EnvVar is one environment variable a configuration type reads.
@@ -17,8 +18,8 @@ type EnvVar struct {
 	Name string
 
 	// Names lists every variable the load tries for the key, in order. The
-	// first one set wins. A nested key is also read with "__" between
-	// segments, as in MYAPP_DATABASE__PORT, which is tried first.
+	// first one set wins. A nested key is also read with "__" between its
+	// tokens, as in MYAPP_DATABASE__PORT, which is tried first.
 	Names []string
 
 	// IsSecret reports whether the field is tagged secret.
@@ -36,7 +37,7 @@ func EnvVars[T any](prefix string) []EnvVar {
 
 	vars := make([]EnvVar, len(described))
 	for i, v := range described {
-		vars[i] = EnvVar{Key: v.Key, Name: v.Name, Names: v.Names, IsSecret: v.IsSecret}
+		vars[i] = EnvVar{Key: keypath.Format(v.Key), Name: v.Name, Names: v.Names, IsSecret: v.IsSecret}
 	}
 
 	return vars

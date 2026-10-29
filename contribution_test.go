@@ -43,7 +43,7 @@ func TestWithContributionOverridesLowerLayers(t *testing.T) {
 			meta.Record(strata.Origin{
 				Key:      portKey,
 				Source:   strata.SourceFlag,
-				Path:     portKey,
+				Path:     "--port",
 				Line:     0,
 				RawValue: "9090",
 			})
@@ -216,7 +216,7 @@ func TestWithContributionSeesEnvironmentValues(t *testing.T) {
 			seen = cfg.Port
 			cfg.Port++
 
-			meta.Record(strata.Origin{Key: portKey, Source: strata.SourceFlag, Path: portKey, Line: 0, RawValue: "7001"})
+			meta.Record(strata.Origin{Key: portKey, Source: strata.SourceFlag, Path: "--port", Line: 0, RawValue: "7001"})
 
 			return nil
 		}),

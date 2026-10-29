@@ -1,7 +1,7 @@
 package defaulter
 
 import (
-	"encoding"
+	"encoding/json/jsontext"
 	"errors"
 	"fmt"
 	"reflect"
@@ -9,23 +9,15 @@ import (
 	"slices"
 	"strconv"
 	"strings"
-	"time"
-	"unicode"
-)
 
-const (
-	maxASCII       byte = 0x80
-	snakeBufferPad int  = 4
+	"github.com/zigai/strata/internal/keypath"
+	"github.com/zigai/strata/internal/layout"
 )
 
 var (
 	ErrInvalidTarget = errors.New("target must be a non-nil pointer to a struct")
 
 	ErrSetDefaultsPanicked = errors.New("set defaults panicked")
-
-	candidateTags   = [...]string{"strata", "toml", "yaml", "json"}
-	secretTags      = [...]string{"strata", "env"}
-	secretDirective = "secret"
 )
 
 type Defaulter interface {
@@ -39,11 +31,20 @@ type secretVisit struct {
 }
 
 type visitor struct {
-	report func(key, rawVal string)
+	report func(key jsontext.Pointer, rawVal string)
 	apply  bool
 }
 
-func Apply(target any, onDefault func(key, rawVal string)) error {
+// scope is where a struct value sits: the key it is reached by, and the layout
+// whose keys it contributes to, with the index path from that layout's struct.
+// A promoted struct shares the scope of the struct that holds it.
+type scope struct {
+	key    jsontext.Pointer
+	layout *layout.Struct
+	index  []int
+}
+
+func Apply(target any, onDefault func(key jsontext.Pointer, rawVal string)) error {
 	if target == nil {
 		return ErrInvalidTarget
 	}
@@ -66,10 +67,10 @@ func Apply(target any, onDefault func(key, rawVal string)) error {
 		}
 	}
 
-	return recurseDefaults(elem, "", &visitor{report: onDefault, apply: true}, false, nil, nil)
+	return recurseDefaults(elem, rootScope(elem.Type()), &visitor{report: onDefault, apply: true}, false, nil, nil)
 }
 
-func Report(target any, onDefault func(key, rawVal string)) error {
+func Report(target any, onDefault func(key jsontext.Pointer, rawVal string)) error {
 	if target == nil {
 		return ErrInvalidTarget
 	}
@@ -79,117 +80,7 @@ func Report(target any, onDefault func(key, rawVal string)) error {
 		return ErrInvalidTarget
 	}
 
-	return recurseDefaults(val.Elem(), "", &visitor{report: onDefault, apply: false}, false, nil, nil)
-}
-
-func IsNestedStruct(v reflect.Value) bool {
-	if !v.IsValid() || v.Kind() != reflect.Struct {
-		return false
-	}
-
-	return IsNestedStructType(v.Type())
-}
-
-func IsNestedStructType(typ reflect.Type) bool {
-	if typ == nil {
-		return false
-	}
-
-	for typ.Kind() == reflect.Pointer {
-		if typ.Implements(reflect.TypeFor[encoding.TextUnmarshaler]()) {
-			return false
-		}
-
-		typ = typ.Elem()
-	}
-
-	if typ.Kind() != reflect.Struct {
-		return false
-	}
-
-	// Struct types that carry their own text decoding are leaves, as is time.Time.
-	if typ.Implements(reflect.TypeFor[encoding.TextUnmarshaler]()) {
-		return false
-	}
-
-	if reflect.PointerTo(typ).Implements(reflect.TypeFor[encoding.TextUnmarshaler]()) {
-		return false
-	}
-
-	if typ == reflect.TypeFor[time.Time]() {
-		return false
-	}
-
-	return true
-}
-
-func FieldKey(f reflect.StructField) string {
-	for _, tagName := range candidateTags {
-		tag := f.Tag.Get(tagName)
-		if tag != "" {
-			name, _, _ := strings.Cut(tag, ",")
-
-			name = strings.TrimSpace(name)
-			if name != "" {
-				return name
-			}
-		}
-	}
-
-	return ToSnakeCase(f.Name)
-}
-
-func ToSnakeCase(s string) string {
-	if s == "" {
-		return ""
-	}
-
-	hasUpper, isASCII := scanIdentifier(s)
-	if isASCII && !hasUpper {
-		return s
-	}
-
-	if isASCII {
-		return toSnakeCaseASCII(s)
-	}
-
-	return toSnakeCaseUnicode(s)
-}
-
-func IsSecret(f reflect.StructField) bool {
-	if IsSecretType(f.Type) {
-		return true
-	}
-
-	for _, tagName := range secretTags {
-		tag := f.Tag.Get(tagName)
-
-		if !strings.Contains(tag, secretDirective) {
-			continue
-		}
-
-		for opt := range strings.SplitSeq(tag, ",") {
-			if strings.TrimSpace(opt) == secretDirective {
-				return true
-			}
-		}
-	}
-
-	return false
-}
-
-func IsSecretType(typ reflect.Type) bool {
-	var visited []reflect.Type
-	for typ.Kind() == reflect.Pointer || typ.Kind() == reflect.Map || typ.Kind() == reflect.Slice || typ.Kind() == reflect.Array {
-		if slices.Contains(visited, typ) {
-			break
-		}
-
-		visited = append(visited, typ)
-		typ = typ.Elem()
-	}
-
-	return typ.PkgPath() == "github.com/zigai/strata" && typ.Name() == "Secret"
+	return recurseDefaults(val.Elem(), rootScope(val.Elem().Type()), &visitor{report: onDefault, apply: false}, false, nil, nil)
 }
 
 func ContainsSecrets(src reflect.Value) bool {
@@ -197,7 +88,7 @@ func ContainsSecrets(src reflect.Value) bool {
 }
 
 func containsSecrets(src reflect.Value, seen map[secretVisit]bool) bool {
-	if IsSecretType(src.Type()) {
+	if layout.IsSecretType(src.Type()) {
 		return true
 	}
 
@@ -251,102 +142,12 @@ func containsSecretValues(src reflect.Value, seen map[secretVisit]bool) bool {
 
 func containsSecretFields(src reflect.Value, seen map[secretVisit]bool) bool {
 	for field := range src.Type().Fields() {
-		if (field.IsExported() || field.Anonymous) && (IsSecret(field) || containsSecrets(src.Field(field.Index[0]), seen)) {
+		if (field.IsExported() || field.Anonymous) && (layout.IsSecret(field) || containsSecrets(src.Field(field.Index[0]), seen)) {
 			return true
 		}
 	}
 
 	return false
-}
-
-func shouldInsertUnderscore(s string, i, n int) bool {
-	if i <= 0 {
-		return false
-	}
-
-	prev := s[i-1]
-	if isLower(prev) || isDigit(prev) {
-		return true
-	}
-
-	return isUpper(prev) && i+1 < n && isLower(s[i+1])
-}
-
-func isLower(c byte) bool {
-	return c >= 'a' && c <= 'z'
-}
-
-func isUpper(c byte) bool {
-	return c >= 'A' && c <= 'Z'
-}
-
-func isDigit(c byte) bool {
-	return c >= '0' && c <= '9'
-}
-
-func scanIdentifier(s string) (bool, bool) {
-	hasUpper := false
-
-	for i := range len(s) {
-		c := s[i]
-		if c >= maxASCII {
-			return false, false
-		}
-
-		if c >= 'A' && c <= 'Z' {
-			hasUpper = true
-		}
-	}
-
-	return hasUpper, true
-}
-
-func toSnakeCaseASCII(s string) string {
-	var b strings.Builder
-	b.Grow(len(s) + snakeBufferPad)
-	n := len(s)
-
-	for i := range len(s) {
-		c := s[i]
-		if c >= 'A' && c <= 'Z' {
-			if shouldInsertUnderscore(s, i, n) {
-				b.WriteByte('_')
-			}
-
-			b.WriteByte(c + ('a' - 'A'))
-		} else {
-			b.WriteByte(c)
-		}
-	}
-
-	return b.String()
-}
-
-func toSnakeCaseUnicode(s string) string {
-	var b strings.Builder
-
-	runes := []rune(s)
-	n := len(runes)
-
-	for i := range runes {
-		r := runes[i]
-		if unicode.IsUpper(r) {
-			switch {
-			case i > 0 && unicode.IsLower(runes[i-1]):
-				b.WriteRune('_')
-			case i > 0 && unicode.IsDigit(runes[i-1]):
-				b.WriteRune('_')
-			case i > 0 && i+1 < n && unicode.IsUpper(runes[i-1]) && unicode.IsLower(runes[i+1]):
-				b.WriteRune('_')
-			}
-
-			b.WriteRune(unicode.ToLower(r))
-		} else {
-			b.WriteRune(r)
-		}
-	}
-
-	return b.String()
 }
 
 func ensureEmbeddedPointers(val reflect.Value) {
@@ -401,45 +202,72 @@ func callSetDefaults(d Defaulter) (err error) {
 	return nil
 }
 
-func fullFieldKey(prefix, key string, anonymous bool) string {
-	if anonymous {
-		return prefix
-	}
-
-	if prefix != "" {
-		return prefix + "." + key
-	}
-
-	return key
+func rootScope(typ reflect.Type) scope {
+	return scope{key: "", layout: layout.Of(typ), index: nil}
 }
 
-func recurseField(field reflect.Value, sf reflect.StructField, prefix string, v *visitor, inheritedSecret bool, activeTypes []reflect.Type, activePtrs []uintptr) error {
-	if !sf.IsExported() {
+func (at scope) promoted(member layout.Member) scope {
+	return scope{key: at.key, layout: at.layout, index: append(slices.Clone(at.index), member.Field.Index...)}
+}
+
+func (at scope) nested(key string, typ reflect.Type) scope {
+	for typ.Kind() == reflect.Pointer {
+		typ = typ.Elem()
+	}
+
+	return scope{key: at.key.AppendToken(key), layout: layout.Of(typ), index: nil}
+}
+
+// owns reports whether member holds key in this scope; a field that a
+// shallower field shadows contributes nothing.
+func (at scope) owns(member layout.Member) bool {
+	field, ok := at.layout.Field(member.Key)
+
+	return ok && slices.Equal(field.Index, append(slices.Clone(at.index), member.Field.Index...))
+}
+
+func (at scope) ownsRest(member layout.Member) bool {
+	return at.layout.Rest != nil && slices.Equal(at.layout.Rest.Index, append(slices.Clone(at.index), member.Field.Index...))
+}
+
+func recurseMember(field reflect.Value, member layout.Member, at scope, v *visitor, inheritedSecret bool, activeTypes []reflect.Type, activePtrs []uintptr) error {
+	// An unexported embedded struct is left to the promoted SetDefaults of the
+	// struct that holds it.
+	if !member.Field.IsExported() {
 		return nil
 	}
 
-	key := FieldKey(sf)
-	if key == "-" {
+	fieldSecret := inheritedSecret || member.Secret
+
+	switch {
+	case member.Promoted:
+		return recurseStruct(field, at.promoted(member), v, fieldSecret, activeTypes, activePtrs)
+	case member.Rest:
+		if at.ownsRest(member) {
+			recordRestDefaults(field, at.key, v, fieldSecret)
+		}
+
 		return nil
+	case !at.owns(member):
+		return nil
+	case layout.IsNestedStructType(field.Type()):
+		return recurseStruct(field, at.nested(member.Key, field.Type()), v, fieldSecret, activeTypes, activePtrs)
 	}
 
-	fieldSecret := inheritedSecret || IsSecret(sf)
-	fullKey := fullFieldKey(prefix, key, sf.Anonymous)
-
-	if IsNestedStruct(field) {
-		return handleStructField(field, fullKey, v, fieldSecret, activeTypes, activePtrs)
-	}
-
-	if field.Kind() == reflect.Pointer && IsNestedStructType(field.Type().Elem()) {
-		return handlePointerStructField(field, fullKey, v, fieldSecret, activeTypes, activePtrs)
-	}
-
-	recordDefaultLeaf(field, sf, fullKey, v, fieldSecret)
+	recordDefaultLeaf(field, at.key.AppendToken(member.Key), v, fieldSecret)
 
 	return nil
 }
 
-func recurseDefaults(val reflect.Value, prefix string, v *visitor, inheritedSecret bool, activeTypes []reflect.Type, activePtrs []uintptr) error {
+func recurseStruct(field reflect.Value, at scope, v *visitor, inheritedSecret bool, activeTypes []reflect.Type, activePtrs []uintptr) error {
+	if field.Kind() == reflect.Pointer {
+		return handlePointerStructField(field, at, v, inheritedSecret, activeTypes, activePtrs)
+	}
+
+	return handleStructField(field, at, v, inheritedSecret, activeTypes, activePtrs)
+}
+
+func recurseDefaults(val reflect.Value, at scope, v *visitor, inheritedSecret bool, activeTypes []reflect.Type, activePtrs []uintptr) error {
 	typ := val.Type()
 	if slices.Contains(activeTypes, typ) {
 		return nil
@@ -448,8 +276,8 @@ func recurseDefaults(val reflect.Value, prefix string, v *visitor, inheritedSecr
 	activeTypes = append(activeTypes, typ)
 	defer func() { activeTypes = activeTypes[:len(activeTypes)-1] }()
 
-	for i := range val.NumField() {
-		if err := recurseField(val.Field(i), typ.Field(i), prefix, v, inheritedSecret, activeTypes, activePtrs); err != nil {
+	for _, member := range layout.MembersOf(typ) {
+		if err := recurseMember(val.FieldByIndex(member.Field.Index), member, at, v, inheritedSecret, activeTypes, activePtrs); err != nil {
 			return err
 		}
 	}
@@ -457,12 +285,33 @@ func recurseDefaults(val reflect.Value, prefix string, v *visitor, inheritedSecr
 	return nil
 }
 
-func recordDefaultLeaf(field reflect.Value, sf reflect.StructField, fullKey string, v *visitor, isSecret bool) {
+func recordRestDefaults(field reflect.Value, key jsontext.Pointer, v *visitor, isSecret bool) {
+	if v.report == nil || field.Len() == 0 {
+		return
+	}
+
+	entries := field.MapKeys()
+	slices.SortFunc(entries, func(a, b reflect.Value) int { return strings.Compare(a.String(), b.String()) })
+
+	for _, entry := range entries {
+		recordDefaultLeaf(field.MapIndex(entry), key.AppendToken(entry.String()), v, isSecret)
+	}
+}
+
+func scopeError(key jsontext.Pointer, err error) error {
+	if key == "" {
+		return err
+	}
+
+	return fmt.Errorf("%s: %w", keypath.Format(key), err)
+}
+
+func recordDefaultLeaf(field reflect.Value, fullKey jsontext.Pointer, v *visitor, isSecret bool) {
 	if v.report == nil {
 		return
 	}
 
-	if isSecret || IsSecret(sf) || ContainsSecrets(field) {
+	if isSecret || ContainsSecrets(field) {
 		v.report(fullKey, "[REDACTED]")
 		return
 	}
@@ -507,33 +356,33 @@ func formatLeafValue(field reflect.Value) string {
 	}
 }
 
-func handleStructField(field reflect.Value, fullKey string, v *visitor, inheritedSecret bool, activeTypes []reflect.Type, activePtrs []uintptr) error {
+func handleStructField(field reflect.Value, at scope, v *visitor, inheritedSecret bool, activeTypes []reflect.Type, activePtrs []uintptr) error {
 	if field.CanAddr() && v.apply {
 		ensureEmbeddedPointers(field)
 
 		if d, ok := reflect.TypeAssert[Defaulter](field.Addr()); ok && v.apply && !isPromotedSetDefaults(field.Addr().Interface()) {
 			if err := callSetDefaults(d); err != nil {
-				return fmt.Errorf("%s: %w", fullKey, err)
+				return scopeError(at.key, err)
 			}
 		}
 	}
 
-	return recurseDefaults(field, fullKey, v, inheritedSecret, activeTypes, activePtrs)
+	return recurseDefaults(field, at, v, inheritedSecret, activeTypes, activePtrs)
 }
 
-func handlePointerStructField(field reflect.Value, fullKey string, v *visitor, inheritedSecret bool, activeTypes []reflect.Type, activePtrs []uintptr) error {
+func handlePointerStructField(field reflect.Value, at scope, v *visitor, inheritedSecret bool, activeTypes []reflect.Type, activePtrs []uintptr) error {
 	elemType := field.Type().Elem()
 	if slices.Contains(activeTypes, elemType) {
 		return nil
 	}
 
 	if field.IsNil() {
-		if err := initNilStructPointer(field, fullKey, v, inheritedSecret, activeTypes, activePtrs); err != nil {
+		if err := initNilStructPointer(field, at, v, inheritedSecret, activeTypes, activePtrs); err != nil {
 			return err
 		}
 
 		if field.IsNil() && v.report != nil {
-			return recurseDefaults(reflect.New(elemType).Elem(), fullKey, &visitor{report: v.report, apply: false}, inheritedSecret, activeTypes, activePtrs)
+			return recurseDefaults(reflect.New(elemType).Elem(), at, &visitor{report: v.report, apply: false}, inheritedSecret, activeTypes, activePtrs)
 		}
 
 		return nil
@@ -553,14 +402,14 @@ func handlePointerStructField(field reflect.Value, fullKey string, v *visitor, i
 
 	if d, ok := reflect.TypeAssert[Defaulter](field); ok && v.apply && !isPromotedSetDefaults(field.Interface()) {
 		if err := callSetDefaults(d); err != nil {
-			return fmt.Errorf("%s: %w", fullKey, err)
+			return scopeError(at.key, err)
 		}
 	}
 
-	return recurseDefaults(field.Elem(), fullKey, v, inheritedSecret, activeTypes, activePtrs)
+	return recurseDefaults(field.Elem(), at, v, inheritedSecret, activeTypes, activePtrs)
 }
 
-func initNilStructPointer(field reflect.Value, fullKey string, v *visitor, inheritedSecret bool, activeTypes []reflect.Type, activePtrs []uintptr) error {
+func initNilStructPointer(field reflect.Value, at scope, v *visitor, inheritedSecret bool, activeTypes []reflect.Type, activePtrs []uintptr) error {
 	elemType := field.Type().Elem()
 	ptrType := field.Type()
 
@@ -578,13 +427,13 @@ func initNilStructPointer(field reflect.Value, fullKey string, v *visitor, inher
 
 	if d, ok := reflect.TypeAssert[Defaulter](newVal); ok && !isPromotedSetDefaults(newVal.Interface()) {
 		if err := callSetDefaults(d); err != nil {
-			return fmt.Errorf("%s: %w", fullKey, err)
+			return scopeError(at.key, err)
 		}
 	}
 
 	field.Set(newVal)
 
-	return recurseDefaults(field.Elem(), fullKey, v, inheritedSecret, activeTypes, activePtrs)
+	return recurseDefaults(field.Elem(), at, v, inheritedSecret, activeTypes, activePtrs)
 }
 
 // A promoted SetDefaults must not run twice: the field walk calls the embedded

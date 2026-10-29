@@ -6,7 +6,8 @@ import (
 	"encoding/json/v2"
 	"errors"
 	"fmt"
-	"strings"
+
+	"github.com/zigai/strata/internal/keypath"
 
 	"github.com/zigai/strata/codec"
 )
@@ -15,7 +16,11 @@ const defaultJSONIndent = "  "
 
 var ErrPathNotMapping = errors.New("cannot navigate through non-object key")
 
-func UpdateJSON(data []byte, dottedKey string, value any) ([]byte, error) {
+func UpdateJSON(data []byte, parts []string, value any) ([]byte, error) {
+	if len(parts) == 0 {
+		return nil, keypath.ErrEmpty
+	}
+
 	var root map[string]jsontext.Value
 
 	if err := json.Unmarshal(data, &root); err != nil {
@@ -33,7 +38,7 @@ func UpdateJSON(data []byte, dottedKey string, value any) ([]byte, error) {
 
 	indent := jsonSourceIndent(data)
 
-	if err := setNested(root, strings.Split(dottedKey, "."), jsontext.Value(encoded), indent); err != nil {
+	if err := setNested(root, parts, jsontext.Value(encoded), indent); err != nil {
 		return nil, err
 	}
 
@@ -56,7 +61,7 @@ func setNested(obj map[string]jsontext.Value, parts []string, value jsontext.Val
 
 	child := map[string]jsontext.Value{}
 
-	if raw, exists := obj[key]; exists {
+	if raw, exists := obj[key]; exists && raw.Kind() != 'n' {
 		if !isJSONObject(raw) {
 			return fmt.Errorf("%w: %q", ErrPathNotMapping, key)
 		}
