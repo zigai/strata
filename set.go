@@ -46,6 +46,13 @@ type fileEdit struct {
 	secret bool
 }
 
+// Change is one dotted key, such as "db.port", and the value [SetAll] writes
+// to it.
+type Change struct {
+	Key   string
+	Value any
+}
+
 // SetBytes updates one key in raw configuration bytes and returns the result.
 // key is dotted: each dot separates two mapping keys, each spelled exactly.
 // Inside a key, \. is a literal dot and \\ a literal backslash, so
@@ -89,9 +96,17 @@ func SetBytes(format string, data []byte, key string, value any) ([]byte, error)
 }
 
 // Set updates one key in the file at targetPath after checking that T declares
-// the key and the value can decode into its field type. Unknown keys include a
-// close-match suggestion. A key may address an entry of a string-keyed map or
-// an inline map. Set does not run ValidateWith.
+// the key and the value can decode into its field type. It is [SetAll] with one
+// change.
+func Set[T any](targetPath string, key string, value any) error {
+	return SetAll[T](targetPath, Change{Key: key, Value: value})
+}
+
+// SetAll applies changes in order to the file at targetPath as one edit: either
+// every change is written or the file is left as it was. Each key must be
+// declared by T and each value must decode into its field type. Unknown keys
+// include a close-match suggestion. A key may address an entry of a
+// string-keyed map or an inline map. SetAll does not run ValidateWith.
 //
 // Format-specific edits preserve untouched content as described by [SetBytes].
 // A symlink is followed and the file it points to is edited. The file is staged
@@ -99,12 +114,12 @@ func SetBytes(format string, data []byte, key string, value any) ([]byte, error)
 // or new file, never a partial write. Its original permission bits, such as
 // 0600 or 0640, are preserved.
 //
-// Writers through [Set], [Save], and [Init], in this process or another, take
-// an exclusive lock on a ".<name>.lock" file beside the target before reading
-// it, so concurrent edits never overwrite each other. The lock file stays in
-// place. On platforms without file locking the write fails with an error
-// wrapping [errors.ErrUnsupported].
-func Set[T any](targetPath string, key string, value any) error {
+// Writers through [Set], [SetAll], [Save], and [Init], in this process or
+// another, take an exclusive lock on a ".<name>.lock" file beside the target
+// before reading it, so concurrent edits never overwrite each other. The lock
+// file stays in place. On platforms without file locking the write fails with
+// an error wrapping [errors.ErrUnsupported].
+func SetAll[T any](targetPath string, changes ...Change) error {
 	typ := reflect.TypeFor[T]()
 	if typ.Kind() != reflect.Struct {
 		return fmt.Errorf("%w: %s", errInvalidConfigType, typ)
@@ -116,16 +131,21 @@ func Set[T any](targetPath string, key string, value any) error {
 
 	keys := keyTreeFor(typ)
 
-	parsed, err := keypath.Parse(key)
-	if err != nil {
-		return fmt.Errorf("set configuration: %w", err)
-	}
+	parsed := make([]jsontext.Pointer, len(changes))
+	for index, change := range changes {
+		key, err := keypath.Parse(change.Key)
+		if err != nil {
+			return fmt.Errorf("set configuration: %w", err)
+		}
 
-	if !keys.known(parsed) {
-		return &unknownSetKeyError{path: targetPath, unknown: UnknownKey{
-			Origin:     Origin{Key: keypath.Format(parsed), Source: "", Path: "", Line: 0, RawValue: ""},
-			Suggestion: keypath.Format(keys.suggest(parsed)),
-		}}
+		if !keys.known(key) {
+			return &unknownSetKeyError{path: targetPath, unknown: UnknownKey{
+				Origin:     Origin{Key: keypath.Format(key), Source: "", Path: "", Line: 0, RawValue: ""},
+				Suggestion: keypath.Format(keys.suggest(key)),
+			}}
+		}
+
+		parsed[index] = key
 	}
 
 	resolvedPath, err := atomicfile.Resolve(targetPath)
@@ -133,23 +153,30 @@ func Set[T any](targetPath string, key string, value any) error {
 		return fmt.Errorf("set configuration: %w", err)
 	}
 
-	secret := keys.secret(parsed)
+	edits := make([]fileEdit, 0, len(changes))
 
-	fieldType, err := plan.FieldType(typ, parsed)
-	if err != nil {
-		return fmt.Errorf("%s: %w", resolvedPath, err)
-	}
+	for index, change := range changes {
+		key := parsed[index]
+		secret := keys.secret(key)
 
-	typed, err := typedEditValue(fieldType, value)
-	if err != nil {
-		if secret {
-			err = &secretValueError{cause: err}
+		fieldType, err := plan.FieldType(typ, key)
+		if err != nil {
+			return fmt.Errorf("%s: %w", resolvedPath, err)
 		}
 
-		return fmt.Errorf("%s: %s: %w", resolvedPath, keypath.Format(parsed), err)
+		typed, err := typedEditValue(fieldType, change.Value)
+		if err != nil {
+			if secret {
+				err = &secretValueError{cause: err}
+			}
+
+			return fmt.Errorf("%s: %s: %w", resolvedPath, keypath.Format(key), err)
+		}
+
+		edits = append(edits, fileEdit{key: key, value: typed, secret: secret})
 	}
 
-	return editFile(resolvedPath, fileEdit{key: parsed, value: typed, secret: secret})
+	return editFile(resolvedPath, edits)
 }
 
 func (e *unknownSetKeyError) Error() string { return e.path + ": " + e.unknown.String() }
@@ -187,7 +214,11 @@ func setBytes(format string, data []byte, key jsontext.Pointer, val any) ([]byte
 	}
 }
 
-func editFile(targetPath string, change fileEdit) (err error) {
+func editFile(targetPath string, edits []fileEdit) (err error) {
+	if len(edits) == 0 {
+		return nil
+	}
+
 	if _, statErr := os.Stat(targetPath); statErr != nil {
 		return fmt.Errorf("open target configuration %s: %w", targetPath, statErr)
 	}
@@ -208,13 +239,16 @@ func editFile(targetPath string, change fileEdit) (err error) {
 		return err
 	}
 
-	data, err = setBytes(filepath.Ext(targetPath), data, change.key, change.value)
-	if err != nil {
-		if change.secret {
-			return &secretValueError{cause: err}
-		}
+	ext := filepath.Ext(targetPath)
+	for _, change := range edits {
+		data, err = setBytes(ext, data, change.key, change.value)
+		if err != nil {
+			if change.secret {
+				return &secretValueError{cause: err}
+			}
 
-		return fmt.Errorf("update %s in %s: %w", change.key, targetPath, err)
+			return fmt.Errorf("update %s in %s: %w", change.key, targetPath, err)
+		}
 	}
 
 	if err := atomicfile.Write(targetPath, data, mode); err != nil {

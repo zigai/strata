@@ -31,7 +31,7 @@ func WithFileMode(mode os.FileMode) SaveOption {
 // The extension selects a built-in format. Unsupported extensions return
 // [ErrUnsupportedFormat]. A symlink is followed and the file it points to is
 // written. An existing file keeps its permission bits; a new file uses 0o644
-// unless [WithFileMode] changes it. Save takes the same writer lock as [Set].
+// unless [WithFileMode] changes it. Save takes the same writer lock as [SetAll].
 func Save[T any](targetPath string, cfg T, opts ...SaveOption) (err error) {
 	options := &saveOptions{
 		mode: 0o644,

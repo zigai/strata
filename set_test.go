@@ -1403,6 +1403,70 @@ func TestSetKeepsEveryConcurrentEditToOneFile(t *testing.T) {
 	}
 }
 
+func TestSetAllWritesEveryChange(t *testing.T) {
+	t.Parallel()
+
+	type config struct {
+		Host string
+		Port int
+	}
+
+	path := writeFile(t, "config.toml", "host = \"a\"\nport = 1\n")
+
+	if err := strata.SetAll[config](path, strata.Change{Key: "host", Value: "b"}, strata.Change{Key: portKey, Value: 2}); err != nil {
+		t.Fatal(err)
+	}
+
+	got, err := strata.Load[config](strata.WithPath(path), strata.WithFormats("toml"))
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	if want := (config{Host: "b", Port: 2}); got != want {
+		t.Fatalf("configuration = %+v, want %+v", got, want)
+	}
+}
+
+func TestSetAllLeavesTheFileUnchangedWhenAnyChangeFails(t *testing.T) {
+	t.Parallel()
+
+	type config struct {
+		Host string
+		Port int
+	}
+
+	const original = "host = \"a\"\nport = 1\n"
+
+	for _, test := range []struct {
+		name    string
+		changes []strata.Change
+		want    error
+	}{
+		{name: "an unknown key", changes: []strata.Change{{Key: "host", Value: "b"}, {Key: "prot", Value: 2}}, want: strata.ErrUnknownKey},
+		{name: "a value of the wrong type", changes: []strata.Change{{Key: "host", Value: "b"}, {Key: portKey, Value: "high"}}, want: nil},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			t.Parallel()
+
+			path := writeFile(t, "config.toml", original)
+
+			err := strata.SetAll[config](path, test.changes...)
+			if err == nil || test.want != nil && !errors.Is(err, test.want) {
+				t.Fatalf("SetAll error = %v, want %v", err, test.want)
+			}
+
+			data, err := os.ReadFile(path)
+			if err != nil {
+				t.Fatal(err)
+			}
+
+			if string(data) != original {
+				t.Fatalf("file = %q, want it unchanged %q", data, original)
+			}
+		})
+	}
+}
+
 func TestSetEditsInlineKeysAtTheTopLevel(t *testing.T) {
 	t.Parallel()
 
@@ -1503,6 +1567,54 @@ type escapedKeyConfig struct {
 	Name   string
 	Labels map[string]map[string]int
 	Extra  map[string]string `strata:",inline"`
+}
+
+func TestSetAllWritesEscapedKeysThatReloadExactly(t *testing.T) {
+	t.Parallel()
+
+	const spacedLabel = " sp "
+
+	changes := []strata.Change{
+		{Key: `labels.a\.b.c`, Value: 1},
+		{Key: `labels.a\\b.`, Value: 2},
+		{Key: "labels." + spacedLabel + ".0", Value: 3},
+		{Key: "labels.x/y.~1", Value: 4},
+		{Key: `x\.y`, Value: "dotted"},
+		{Key: "HOST", Value: "upper"},
+	}
+	wantLabels := map[string]map[string]int{"a.b": {"c": 1}, `a\b`: {"": 2}, spacedLabel: {"0": 3}, "x/y": {"~1": 4}}
+	wantExtra := map[string]string{"x.y": "dotted", "HOST": "upper"}
+
+	for _, test := range []struct{ name, document string }{
+		{"config.json", "{\"name\": \"n\"}\n"},
+		{"config.toml", "name = 'n'\n"},
+		{"config.yaml", "name: n\n"},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			t.Parallel()
+
+			path := writeFile(t, test.name, test.document)
+
+			if err := strata.SetAll[escapedKeyConfig](path, changes...); err != nil {
+				t.Fatal(err)
+			}
+
+			got, meta, err := strata.LoadWithMetadata[escapedKeyConfig](strata.WithPath(path), strata.WithFormats(filepath.Ext(test.name)), strata.WithStrict())
+			if err != nil {
+				t.Fatal(err)
+			}
+
+			if got.Name != "n" || !reflect.DeepEqual(got.Labels, wantLabels) || !reflect.DeepEqual(got.Extra, wantExtra) {
+				t.Fatalf("reloaded %+v, want labels %v and extra %q", got, wantLabels, wantExtra)
+			}
+
+			for _, change := range changes {
+				if origin, found := meta.Where(change.Key); !found || origin.Key != change.Key || origin.Source != strata.SourceFile {
+					t.Errorf("Where(%q) = %+v, %t; want the file origin under the same key", change.Key, origin, found)
+				}
+			}
+		})
+	}
 }
 
 func TestSetRejectsMalformedKeysWithoutWriting(t *testing.T) {

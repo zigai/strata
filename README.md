@@ -252,7 +252,7 @@ func (c *Config) ValidateWith(meta *strata.Metadata) error {
 err := strata.Set[Config]("config.toml", "database.port", "5433")
 ```
 
-`Set[Config]` checks the key and field type before writing, including custom text decoders. Dots separate keys, so `labels.env` sets a map entry. Inside one key, `\.` is a literal dot and `\\` a literal backslash: `labels.a\.b` sets the entry named `a.b`, and `labels.` the empty one. Any other backslash fails with `ErrInvalidKey`. For slice fields, a string such as `"a,b"` becomes two items. `SetBytes` edits arbitrary documents without a config type. TOML files keep comments, blank lines, and key order. YAML files keep comments but lose blank lines. JSON files keep number text in untouched values and sort keys.
+`Set[Config]` checks the key and field type before writing, including custom text decoders. Dots separate keys, so `labels.env` sets a map entry. Inside one key, `\.` is a literal dot and `\\` a literal backslash: `labels.a\.b` sets the entry named `a.b`, and `labels.` the empty one. Any other backslash fails with `ErrInvalidKey`. For slice fields, a string such as `"a,b"` becomes two items. `SetAll` changes several keys at once, and writes either all of them or none. `SetBytes` edits arbitrary documents without a config type. TOML files keep comments, blank lines, and key order. YAML files keep comments but lose blank lines. JSON files keep number text in untouched values and sort keys.
 
 For files only your program touches, like saved state, `Save` writes the whole struct at once:
 

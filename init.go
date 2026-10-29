@@ -55,7 +55,7 @@ func WithOverwrite(overwrite bool) InitOption {
 // [ErrUnsupportedFormat]. A symlink is followed and the file it points to is
 // written. A replaced file keeps its permission bits; a new file uses 0o644.
 // The write is staged beside the target and renamed atomically under the same
-// writer lock as [Set]; a failure does not leave a partial template.
+// writer lock as [SetAll]; a failure does not leave a partial template.
 // Per-load codecs registered with [WithCodec] do not take part in writing.
 func Init[T any](targetPath string, opts ...InitOption) (err error) {
 	options := &initOptions{
