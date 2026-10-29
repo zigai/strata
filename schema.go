@@ -65,7 +65,7 @@ func WithSchemaComments(packagePath, directory string) SchemaOption {
 
 // Schema returns the JSON Schema for T as indented JSON.
 //
-// Field names use snake_case Go names; field doc comments become descriptions.
+// Property names use configuration keys; field doc comments become descriptions.
 // Sources are located in the caller's module. With -trimpath, the working
 // directory must be inside that module. WithSchemaComments supplies sources for
 // other locations or deployed binaries. Unavailable sources
@@ -129,14 +129,6 @@ func reflectSchema(typ reflect.Type, sourceFile, callerPackage string, sources [
 		return nil, fmt.Errorf("%w: %w", ErrReflectSchema, err)
 	}
 
-	reflector := &jsonschema.Reflector{
-		ExpandedStruct: true,
-		KeyNamer:       layout.ToSnakeCase,
-		// Every key is optional in a config file, so none is required unless its
-		// field says so with a jsonschema:"required" tag.
-		RequiredFromJSONSchemaTags: true,
-	}
-
 	if len(sources) == 0 {
 		var err error
 
@@ -146,9 +138,9 @@ func reflectSchema(typ reflect.Type, sourceFile, callerPackage string, sources [
 		}
 	}
 
-	reflector.CommentMap = make(map[string]string)
+	comments := make(map[string]string)
 	for _, source := range sources {
-		if err := addSchemaComments(reflector.CommentMap, source); err != nil {
+		if err := addSchemaComments(comments, source); err != nil {
 			return nil, fmt.Errorf("%w: read Go comments in %s: %w", ErrReflectSchema, source.directory, err)
 		}
 	}
@@ -165,7 +157,7 @@ func reflectSchema(typ reflect.Type, sourceFile, callerPackage string, sources [
 			}
 		}()
 
-		schema = reflector.ReflectFromType(typ)
+		schema = newSchemaBuilder(comments).root(typ)
 	}()
 
 	if panicErr != nil {

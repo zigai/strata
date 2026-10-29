@@ -270,7 +270,7 @@ Both write atomically, so a crash never leaves a half-written file. Writers take
 err := strata.Init[Config]("config.toml")
 ```
 
-`Schema` generates a JSON Schema from your struct. Field comments become descriptions, so editors can autocomplete and explain each setting:
+`Schema` generates a JSON Schema from your struct, with the same keys your config files use. Field comments become descriptions, so editors can autocomplete and explain each setting:
 
 ```go
 schema, err := strata.Schema[Config]()
