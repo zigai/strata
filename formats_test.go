@@ -1355,3 +1355,42 @@ func TestInlineMapSecretsFollowExactKeys(t *testing.T) {
 		}
 	}
 }
+
+type lowerCaseKey string
+
+var errUpperCaseKey = errors.New("key has upper-case letters")
+
+func (k *lowerCaseKey) UnmarshalText(text []byte) error {
+	if strings.ToLower(string(text)) != string(text) {
+		return fmt.Errorf("%w: %q", errUpperCaseKey, text)
+	}
+
+	*k = lowerCaseKey(text)
+
+	return nil
+}
+
+type lowerCaseKeyConfig struct {
+	Labels map[lowerCaseKey]int
+}
+
+func TestMapKeysDecodeThroughTheirTextUnmarshaler(t *testing.T) {
+	t.Parallel()
+
+	for name, document := range map[string]string{
+		"config.json": `{"labels": {"Upper": 1}}`,
+		"config.toml": "[labels]\nUpper = 1\n",
+		"config.yaml": "labels:\n  Upper: 1\n",
+	} {
+		t.Run(name, func(t *testing.T) {
+			t.Parallel()
+
+			path := writeFile(t, name, document)
+
+			got, err := strata.Load[lowerCaseKeyConfig](strata.WithPath(path), strata.WithFormats(filepath.Ext(name)))
+			if !errors.Is(err, errUpperCaseKey) {
+				t.Fatalf("Load = %+v, %v; want the key rejected by UnmarshalText", got, err)
+			}
+		})
+	}
+}

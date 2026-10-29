@@ -1,6 +1,7 @@
 package codec
 
 import (
+	"encoding"
 	"encoding/json/jsontext"
 	"errors"
 	"fmt"
@@ -346,12 +347,21 @@ func mergeDynamic(current, update map[string]any) map[string]any {
 }
 
 func decodeMapKey(entry overlayEntry, target reflect.Value) error {
-	if target.Kind() == reflect.String {
-		target.SetString(entry.name)
+	if target.Kind() != reflect.String {
+		return entry.key.decode(target)
+	}
+
+	if unmarshaler, ok := reflect.TypeAssert[encoding.TextUnmarshaler](target.Addr()); ok {
+		if err := unmarshaler.UnmarshalText([]byte(entry.name)); err != nil {
+			return fmt.Errorf("decode map key %q: %w", entry.name, err)
+		}
+
 		return nil
 	}
 
-	return entry.key.decode(target)
+	target.SetString(entry.name)
+
+	return nil
 }
 
 // keyFields describes the fields of a struct type that format names: the keys
