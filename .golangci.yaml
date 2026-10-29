@@ -253,3 +253,7 @@ linters:
       # at the scenario's own line rather than at the caller (thelper).
       - path: "internal/bridgetest/"
         linters: [decorder, funcorder, exhaustruct_v5, gocognit, cyclop, gosec, mnd, tagliatelle, tagalign, err113, thelper]
+
+issues:
+  max-issues-per-linter: 0
+  max-same-issues: 0
