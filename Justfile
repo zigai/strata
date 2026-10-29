@@ -51,9 +51,13 @@ mod-check:
 
 # Format Go source files
 format:
+    golangci-lint run --fix --enable-only whitespace --issues-exit-code=0
     golangci-lint fmt
+    cd bridge/cobra && golangci-lint run --fix --enable-only whitespace --issues-exit-code=0
     cd bridge/cobra && golangci-lint fmt
+    cd bridge/urfave && golangci-lint run --fix --enable-only whitespace --issues-exit-code=0
     cd bridge/urfave && golangci-lint fmt
+    cd examples/cli && golangci-lint run --fix --enable-only whitespace --issues-exit-code=0
     cd examples/cli && golangci-lint fmt
 
 # Apply automatic fixes and format code
