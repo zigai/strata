@@ -539,7 +539,7 @@ func convertTOMLTable(src reflect.Value, mode mirrorMode, active map[keyedVisit]
 		return reflect.ValueOf(table), nil
 	}
 
-	if err := addTOMLEntries(table, entries, mode, active); err != nil {
+	if err := addTOMLEntries(table, structLayout, entries, mode, active); err != nil {
 		return reflect.Value{}, err
 	}
 
@@ -574,10 +574,10 @@ func tomlTableFields(src reflect.Value, structLayout *layout.Struct, mode mirror
 	return table, nil
 }
 
-func addTOMLEntries(table map[string]any, entries reflect.Value, mode mirrorMode, active map[keyedVisit]bool) error {
+func addTOMLEntries(table map[string]any, structLayout *layout.Struct, entries reflect.Value, mode mirrorMode, active map[keyedVisit]bool) error {
 	for iter := entries.MapRange(); iter.Next(); {
 		name := iter.Key().String()
-		if _, claimed := table[name]; claimed || mode.OmitSecrets && secretKeyedValue(iter.Value()) {
+		if field, claimed := structLayout.Field(name); claimed && field.Member.Field.Tag.Get("toml") != "-" || mode.OmitSecrets && secretKeyedValue(iter.Value()) {
 			continue
 		}
 

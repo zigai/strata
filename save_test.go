@@ -266,3 +266,26 @@ func TestWritesKeepAFileWithNoPermissionBits(t *testing.T) {
 		})
 	}
 }
+
+type claimedInlineConfig struct {
+	Port  *int
+	Extra map[string]int `strata:",inline"`
+}
+
+func TestSaveTOMLLeavesInlineEntriesOfUnsetFieldsOut(t *testing.T) {
+	t.Parallel()
+
+	path := filepath.Join(t.TempDir(), "config.toml")
+	if err := strata.Save(path, claimedInlineConfig{Port: nil, Extra: map[string]int{"port": 7, "other": 1}}); err != nil {
+		t.Fatal(err)
+	}
+
+	got, err := strata.Load[claimedInlineConfig](strata.WithPath(path), strata.WithFormats(tomlFormat))
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	if got.Port != nil || !reflect.DeepEqual(got.Extra, map[string]int{"other": 1}) {
+		t.Fatalf("reloaded port %v and extra %v, want port unset and only the unclaimed entry", got.Port, got.Extra)
+	}
+}
