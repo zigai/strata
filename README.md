@@ -260,7 +260,7 @@ For files only your program touches, like saved state, `Save` writes the whole s
 err := strata.Save("state.json", cfg)
 ```
 
-Both write atomically, so a crash never leaves a half-written file. They also use the same key names strata reads, so `Set` works on a file that `Save` or `Init` wrote.
+Both write atomically, so a crash never leaves a half-written file. Writers take a lock on a `.config.toml.lock` file next to the target, so two programs editing the same file at once don't lose each other's changes. Writes follow symlinks and keep the file's permissions. They also use the same key names strata reads, so `Set` works on a file that `Save` or `Init` wrote.
 
 ## Starter files and schemas
 

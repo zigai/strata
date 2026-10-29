@@ -11,6 +11,7 @@ import (
 	"slices"
 	"strconv"
 	"strings"
+	"sync"
 	"testing"
 	"time"
 
@@ -1318,5 +1319,45 @@ func TestSetBytesInfersValueTypes(t *testing.T) {
 				t.Fatalf("v = %#v (%T), want %#v (%T)", doc["v"], doc["v"], tc.want, tc.want)
 			}
 		})
+	}
+}
+
+func TestSetKeepsEveryConcurrentEditToOneFile(t *testing.T) {
+	t.Parallel()
+
+	type config struct {
+		Counters map[string]int
+	}
+
+	path := writeFile(t, "config.toml", "[counters]\n")
+
+	const writers = 8
+
+	errs := make([]error, writers)
+
+	var wg sync.WaitGroup
+	for writer := range writers {
+		wg.Go(func() {
+			errs[writer] = strata.Set[config](path, "counters.writer"+strconv.Itoa(writer), writer)
+		})
+	}
+
+	wg.Wait()
+
+	if err := errors.Join(errs...); err != nil {
+		t.Fatalf("Set: %v", err)
+	}
+
+	got, err := strata.Load[config](strata.WithPath(path), strata.WithFormats("toml"))
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	want := map[string]int{
+		"writer0": 0, "writer1": 1, "writer2": 2, "writer3": 3,
+		"writer4": 4, "writer5": 5, "writer6": 6, "writer7": 7,
+	}
+	if !reflect.DeepEqual(got.Counters, want) {
+		t.Fatalf("counters = %v, want every concurrent edit %v", got.Counters, want)
 	}
 }

@@ -187,3 +187,53 @@ func TestFileModesSurviveWrites(t *testing.T) {
 		}
 	}
 }
+
+func TestWritesFollowSymlinksAndKeepTheTargetMode(t *testing.T) {
+	t.Parallel()
+
+	for _, test := range []struct {
+		name  string
+		write func(path string) error
+	}{
+		{name: "Save", write: func(path string) error { return strata.Save(path, narrowConfig{Small: 7}) }},
+		{name: "Init", write: func(path string) error { return strata.Init[narrowConfig](path, strata.WithOverwrite(true)) }},
+		{name: "Set", write: func(path string) error { return strata.Set[narrowConfig](path, "small", 7) }},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			t.Parallel()
+
+			target := writeFile(t, "settings.toml", "small = 1\n")
+
+			link := filepath.Join(filepath.Dir(target), "config.toml")
+			if err := os.Symlink("settings.toml", link); err != nil {
+				t.Fatal(err)
+			}
+
+			if err := test.write(link); err != nil {
+				t.Fatalf("%s: %v", test.name, err)
+			}
+
+			info, err := os.Lstat(link)
+			if err != nil {
+				t.Fatal(err)
+			}
+
+			if info.Mode()&os.ModeSymlink == 0 {
+				t.Fatalf("%s replaced the symlink with a file", test.name)
+			}
+
+			if got := fileMode(t, target); got != 0o600 {
+				t.Fatalf("%s left the target mode %#o, want 0600 kept", test.name, got)
+			}
+
+			data, err := os.ReadFile(target)
+			if err != nil {
+				t.Fatal(err)
+			}
+
+			if string(data) == "small = 1\n" {
+				t.Fatalf("%s did not write the symlink target", test.name)
+			}
+		})
+	}
+}

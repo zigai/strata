@@ -52,10 +52,12 @@ func WithOverwrite(overwrite bool) InitOption {
 //
 // Existing files remain untouched and return [ErrFileExists] unless
 // [WithOverwrite] is set. Unsupported extensions return
-// [ErrUnsupportedFormat]. The write is staged beside the target and renamed
-// atomically; a failure does not leave a partial template. Per-load codecs
-// registered with [WithCodec] do not take part in writing.
-func Init[T any](targetPath string, opts ...InitOption) error {
+// [ErrUnsupportedFormat]. A symlink is followed and the file it points to is
+// written. A replaced file keeps its permission bits; a new file uses 0o644.
+// The write is staged beside the target and renamed atomically under the same
+// writer lock as [Set]; a failure does not leave a partial template.
+// Per-load codecs registered with [WithCodec] do not take part in writing.
+func Init[T any](targetPath string, opts ...InitOption) (err error) {
 	options := &initOptions{
 		schemaURL: "",
 		overwrite: false,
@@ -64,16 +66,14 @@ func Init[T any](targetPath string, opts ...InitOption) error {
 		opt(options)
 	}
 
-	if !options.overwrite {
-		// NB: any stat failure other than "not exist" means the path is there but
-		// unreachable. It must not be taken for a free path.
-		_, statErr := os.Stat(targetPath)
+	resolvedPath, err := atomicfile.Resolve(targetPath)
+	if err != nil {
+		return fmt.Errorf("write template file: %w", err)
+	}
 
-		switch {
-		case statErr == nil:
-			return fmt.Errorf("%w: %s", ErrFileExists, targetPath)
-		case !errors.Is(statErr, fs.ErrNotExist):
-			return fmt.Errorf("stat %s: %w", targetPath, statErr)
+	if !options.overwrite {
+		if err := checkFree(resolvedPath, targetPath); err != nil {
+			return err
 		}
 	}
 
@@ -82,30 +82,57 @@ func Init[T any](targetPath string, opts ...InitOption) error {
 		return fmt.Errorf("apply defaults for template: %w", err)
 	}
 
-	template, err := codec.OmitSecrets(target, formatName(normalizeExt(filepath.Ext(targetPath))))
+	template, err := codec.OmitSecrets(target, formatName(normalizeExt(filepath.Ext(resolvedPath))))
 	if err != nil {
 		return fmt.Errorf("prepare configuration template: %w", err)
 	}
 
-	data, err := formatInitData(template, filepath.Ext(targetPath), options.schemaURL)
+	data, err := formatInitData(template, filepath.Ext(resolvedPath), options.schemaURL)
 	if err != nil {
 		return err
 	}
 
-	return writeInitFile(targetPath, data, options.overwrite)
+	unlock, err := lockForWrite(resolvedPath)
+	if err != nil {
+		return fmt.Errorf("write template file %s: %w", targetPath, err)
+	}
+
+	defer func() { err = errors.Join(err, unlock()) }()
+
+	return writeInitFile(resolvedPath, targetPath, data, options.overwrite)
 }
 
-func writeInitFile(targetPath string, data []byte, overwrite bool) error {
+func checkFree(resolvedPath, targetPath string) error {
+	// NB: any stat failure other than "not exist" means the path is there but
+	// unreachable. It must not be taken for a free path.
+	_, statErr := os.Stat(resolvedPath)
+
+	switch {
+	case statErr == nil:
+		return fmt.Errorf("%w: %s", ErrFileExists, targetPath)
+	case !errors.Is(statErr, fs.ErrNotExist):
+		return fmt.Errorf("stat %s: %w", targetPath, statErr)
+	default:
+		return nil
+	}
+}
+
+func writeInitFile(resolvedPath, targetPath string, data []byte, overwrite bool) error {
 	if overwrite {
-		if err := atomicfile.Write(targetPath, data, 0o644); err != nil {
+		mode, err := existingMode(resolvedPath, 0o644)
+		if err != nil {
+			return fmt.Errorf("write template file %s: %w", targetPath, err)
+		}
+
+		if err := atomicfile.Write(resolvedPath, data, mode); err != nil {
 			return fmt.Errorf("write template file %s: %w", targetPath, err)
 		}
 
 		return nil
 	}
 
-	if err := atomicfile.Create(targetPath, data, 0o644); err != nil {
-		if errors.Is(err, fs.ErrExist) || os.IsExist(err) {
+	if err := atomicfile.Create(resolvedPath, data, 0o644); err != nil {
+		if errors.Is(err, fs.ErrExist) {
 			return fmt.Errorf("%w: %s", ErrFileExists, targetPath)
 		}
 

@@ -72,9 +72,16 @@ func SetBytes(format string, data []byte, dottedKey string, value any) ([]byte, 
 // maps. Set does not run ValidateWith.
 //
 // Format-specific edits preserve untouched content as described by [SetBytes].
-// The file is staged beside the target and replaced atomically, so an
-// interruption leaves the old or new file, never a partial write. Its original
-// permission bits, such as 0600 or 0640, are preserved.
+// A symlink is followed and the file it points to is edited. The file is staged
+// beside the target and replaced atomically, so an interruption leaves the old
+// or new file, never a partial write. Its original permission bits, such as
+// 0600 or 0640, are preserved.
+//
+// Writers through [Set], [Save], and [Init], in this process or another, take
+// an exclusive lock on a ".<name>.lock" file beside the target before reading
+// it, so concurrent edits never overwrite each other. The lock file stays in
+// place. On platforms without file locking the write fails with an error
+// wrapping [errors.ErrUnsupported].
 func Set[T any](targetPath string, dottedKey string, value any) error {
 	typ := reflect.TypeFor[T]()
 	if typ.Kind() != reflect.Struct {
@@ -91,10 +98,12 @@ func Set[T any](targetPath string, dottedKey string, value any) error {
 		return &unknownSetKeyError{path: targetPath, unknown: unknown}
 	}
 
-	resolvedPath, symlinkErr := filepath.EvalSymlinks(targetPath)
-	if symlinkErr == nil {
-		targetPath = resolvedPath
+	resolvedPath, err := atomicfile.Resolve(targetPath)
+	if err != nil {
+		return fmt.Errorf("set configuration: %w", err)
 	}
+
+	targetPath = resolvedPath
 
 	fieldType, fileKey, err := plan.FieldType(typ, dottedKey, formatName(normalizeExt(filepath.Ext(targetPath))))
 	if err != nil {
@@ -152,39 +161,61 @@ func setBytes(format string, data []byte, dottedKey string, val any) ([]byte, er
 	}
 }
 
-func setFile(targetPath string, dottedKey string, value any) error {
-	f, openErr := os.Open(targetPath)
-	if openErr != nil {
-		return fmt.Errorf("open target configuration %s: %w", targetPath, openErr)
+func setFile(targetPath string, dottedKey string, value any) (err error) {
+	if _, statErr := os.Stat(targetPath); statErr != nil {
+		return fmt.Errorf("open target configuration %s: %w", targetPath, statErr)
 	}
 
-	info, statErr := f.Stat()
-	if statErr != nil {
+	lock, err := atomicfile.Acquire(targetPath)
+	if err != nil {
+		return fmt.Errorf("edit configuration %s: %w", targetPath, err)
+	}
+
+	defer func() {
+		if releaseErr := lock.Release(); releaseErr != nil {
+			err = errors.Join(err, fmt.Errorf("edit configuration %s: %w", targetPath, releaseErr))
+		}
+	}()
+
+	data, mode, err := readTarget(targetPath)
+	if err != nil {
+		return err
+	}
+
+	updated, err := setBytes(filepath.Ext(targetPath), data, dottedKey, value)
+	if err != nil {
+		return fmt.Errorf("update %s in %s: %w", dottedKey, targetPath, err)
+	}
+
+	if err := atomicfile.Write(targetPath, updated, mode); err != nil {
+		return fmt.Errorf("write updated configuration to %s: %w", targetPath, err)
+	}
+
+	return nil
+}
+
+func readTarget(targetPath string) ([]byte, os.FileMode, error) {
+	f, err := os.Open(targetPath)
+	if err != nil {
+		return nil, 0, fmt.Errorf("open target configuration %s: %w", targetPath, err)
+	}
+
+	info, err := f.Stat()
+	if err != nil {
 		_ = f.Close()
-		return fmt.Errorf("stat target configuration %s: %w", targetPath, statErr)
+		return nil, 0, fmt.Errorf("stat target configuration %s: %w", targetPath, err)
 	}
 
 	data, readErr := stream.ReadBounded(f, stream.DefaultMaxFileSize)
 	if closeErr := f.Close(); closeErr != nil && readErr == nil {
-		return fmt.Errorf("close target configuration %s: %w", targetPath, closeErr)
+		return nil, 0, fmt.Errorf("close target configuration %s: %w", targetPath, closeErr)
 	}
 
 	if readErr != nil {
-		return fmt.Errorf("read target configuration %s: %w", targetPath, readErr)
+		return nil, 0, fmt.Errorf("read target configuration %s: %w", targetPath, readErr)
 	}
 
-	ext := filepath.Ext(targetPath)
-
-	updated, editErr := setBytes(ext, data, dottedKey, value)
-	if editErr != nil {
-		return fmt.Errorf("update %s in %s: %w", dottedKey, targetPath, editErr)
-	}
-
-	if writeErr := atomicfile.Write(targetPath, updated, info.Mode().Perm()); writeErr != nil {
-		return fmt.Errorf("write updated configuration to %s: %w", targetPath, writeErr)
-	}
-
-	return nil
+	return data, info.Mode().Perm(), nil
 }
 
 func typedEditValue(typ reflect.Type, value any) (any, error) {
