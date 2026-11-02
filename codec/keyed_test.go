@@ -1050,3 +1050,50 @@ func TestYAMLInlineStructErrorsNameTheTopLevelKey(t *testing.T) {
 		t.Fatalf("Decode error = %v, want a KeyError for port on line 2", err)
 	}
 }
+
+func TestEncodersPreserveNilAsNull(t *testing.T) {
+	t.Parallel()
+
+	var pointer *keyedConfig
+	for _, tc := range []struct {
+		codec codec.Codec
+		want  string
+	}{
+		{codec: codec.NewJSON(), want: "null"},
+		{codec: codec.NewYAML(), want: "null\n"},
+	} {
+		for _, value := range []any{nil, pointer} {
+			data, err := tc.codec.Encode(value)
+			if err != nil {
+				t.Fatal(err)
+			}
+
+			if string(data) != tc.want {
+				t.Errorf("%T.Encode(%#v) = %q, want %q", tc.codec, value, data, tc.want)
+			}
+		}
+	}
+}
+
+func TestOmitSecretsPreservesNilRepresentation(t *testing.T) {
+	t.Parallel()
+
+	var pointer *keyedConfig
+	for _, format := range []string{"json", "yaml", "toml"} {
+		for _, value := range []any{nil, pointer} {
+			got, err := codec.OmitSecrets(value, format)
+			if err != nil {
+				t.Fatal(err)
+			}
+
+			if got != value {
+				t.Errorf(
+					"OmitSecrets(%#v, %q) = %#v, want unchanged nil representation",
+					value,
+					format,
+					got,
+				)
+			}
+		}
+	}
+}
