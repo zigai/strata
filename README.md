@@ -290,12 +290,7 @@ type Config struct {
 }
 ```
 
-## More details
-
-<details>
-<summary><b>All loading options</b></summary>
-
-<br>
+## All loading options
 
 | Option | What it does |
 | --- | --- |
@@ -309,12 +304,7 @@ type Config struct {
 | `WithoutFileDiscovery()` | Skip system and user files. A `WithPath` file still loads. |
 | `WithMaxFileSize(bytes)` | Reject bigger files with `ErrFileTooLarge`. The default is 1 MiB. |
 
-</details>
-
-<details>
-<summary><b>Key names and secrets</b></summary>
-
-<br>
+## Key names and secrets
 
 A field's key comes from its `strata`, `toml`, `yaml`, or `json` tag, whichever it finds first, or else its name in snake case. Nested structs use dots: `database.port`. An embedded struct's fields join its parent's keys, unless one of those tags names it, as in `json:"db"`; then its fields sit under that key, such as `db.port`, in every format. `strata:",inline"`, `yaml:",inline"`, or `json:",embed"` inlines a named struct field the same way in every format (`toml:",inline"` does not; go-toml uses it for table style). An inline `map[string]T` collects the keys no field claims, and checks their values as `T`. A field closer to the top owns its key over an inlined one; two inline maps, or two inlined fields claiming one key at the same depth, fail with `ErrInvalidLayout`. Keys match exactly, so `max_conns` sets `MaxConns` but `maxconns` is reported as an unknown key.
 
@@ -329,12 +319,7 @@ type Config struct {
 }
 ```
 
-</details>
-
-<details>
-<summary><b>Other file formats</b></summary>
-
-<br>
+## Other file formats
 
 `WithFormatAlias` reads another extension as a built-in format. Like every format, it has to be listed in `WithFormats`:
 
@@ -348,12 +333,7 @@ cfg, err := strata.Load[Config](
 
 For a format strata doesn't ship, pass a decoder such as `json5.Unmarshal` to `WithDecoder`, or use `WithTypedDecoder` to decode straight into your type. To write the format too, implement `Codec` and register it with `WithCodec`.
 
-</details>
-
-<details>
-<summary><b>Errors</b></summary>
-
-<br>
+## Errors
 
 A missing system or user file is skipped, and so is a missing `WithOptionalPath` file. Anything else that goes wrong is an error, and `Load` returns the zero value with it. Check for a specific failure with `errors.Is`:
 
@@ -366,8 +346,6 @@ A missing system or user file is skipped, and so is a missing `WithOptionalPath`
 | Files are read without `WithFormats` | `strata.ErrNoFormats` |
 
 Validation failures and unknown keys under `WithStrict` are a `*strata.ConfigError`. Use `errors.As` to get its key and origin.
-
-</details>
 
 ## License
 
