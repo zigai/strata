@@ -52,7 +52,11 @@ func newUrfaveApp(_ *testing.T, cfg *bridgetest.Config, app bridgetest.App) brid
 		root.Commands = append(root.Commands, cmd)
 	}
 
-	ping := &cli.Command{Name: "ping", Flags: []cli.Flag{&cli.StringFlag{Name: "port"}}, Action: noop}
+	ping := &cli.Command{
+		Name:   "ping",
+		Flags:  []cli.Flag{&cli.StringFlag{Name: "port"}},
+		Action: noop,
+	}
 	root.Commands = append(root.Commands, ping, b.ConfigCommand())
 
 	return &urfaveApp{Binding: b, root: root}
@@ -92,7 +96,14 @@ func TestUrfaveShowRedactsSecretCollections(t *testing.T) {
 	}
 
 	path := filepath.Join(t.TempDir(), "config.toml")
-	if err := os.WriteFile(path, []byte("tokens = ['private-value']\n[credentials]\nservice = 'private-value'\n[node.next]\ntoken = 'private-value'\n"), 0o600); err != nil {
+	if err := os.WriteFile(
+		path,
+		[]byte(
+			"tokens = ['private-value']\n[credentials]\nservice = 'private-value'\n"+
+				"[node.next]\ntoken = 'private-value'\n",
+		),
+		0o600,
+	); err != nil {
 		t.Fatal(err)
 	}
 
@@ -103,7 +114,13 @@ func TestUrfaveShowRedactsSecretCollections(t *testing.T) {
 
 	binding := strataurfave.Bind(&cfg, strata.WithPath(path), strata.WithFormats("toml"))
 
-	root := &cli.Command{Name: bridgetest.AppName, Before: binding.Before, Writer: &output, ErrWriter: io.Discard, Commands: []*cli.Command{binding.ConfigCommand()}}
+	root := &cli.Command{
+		Name:      bridgetest.AppName,
+		Before:    binding.Before,
+		Writer:    &output,
+		ErrWriter: io.Discard,
+		Commands:  []*cli.Command{binding.ConfigCommand()},
+	}
 	if err := root.Run(t.Context(), []string{bridgetest.AppName, "config", "show"}); err != nil {
 		t.Fatal(err)
 	}
@@ -112,7 +129,10 @@ func TestUrfaveShowRedactsSecretCollections(t *testing.T) {
 		t.Fatalf("secret did not load: %+v", cfg)
 	}
 
-	if text := output.String(); strings.Contains(text, "private-value") || !strings.Contains(text, "credentials.service") || !strings.Contains(text, "node.next.token") || !strings.Contains(text, "[REDACTED]") {
+	if text := output.String(); strings.Contains(text, "private-value") ||
+		!strings.Contains(text, "credentials.service") ||
+		!strings.Contains(text, "node.next.token") ||
+		!strings.Contains(text, "[REDACTED]") {
 		t.Fatalf("show output = %q", text)
 	}
 }
@@ -161,18 +181,33 @@ func TestUrfaveInheritedFlagsBetweenCommands(t *testing.T) {
 
 			var actionPort int
 
-			leaf := &cli.Command{Name: "serve", Flags: []cli.Flag{binding.Flag("port", "Port")}, Action: func(_ context.Context, _ *cli.Command) error {
-				actionPort = cfg.Port
-				return nil
-			}}
+			leaf := &cli.Command{
+				Name:  "serve",
+				Flags: []cli.Flag{binding.Flag("port", "Port")},
+				Action: func(_ context.Context, _ *cli.Command) error {
+					actionPort = cfg.Port
+					return nil
+				},
+			}
 
-			root := &cli.Command{Name: bridgetest.AppName, Before: binding.Before, Flags: []cli.Flag{binding.ConfigFlag()}, Writer: io.Discard, ErrWriter: io.Discard, Commands: []*cli.Command{{Name: "group", Commands: []*cli.Command{leaf}}}}
-			if err := root.Run(t.Context(), append([]string{bridgetest.AppName}, argv...)); err != nil {
+			root := &cli.Command{
+				Name:      bridgetest.AppName,
+				Before:    binding.Before,
+				Flags:     []cli.Flag{binding.ConfigFlag()},
+				Writer:    io.Discard,
+				ErrWriter: io.Discard,
+				Commands:  []*cli.Command{{Name: "group", Commands: []*cli.Command{leaf}}},
+			}
+			if err := root.Run(
+				t.Context(),
+				append([]string{bridgetest.AppName}, argv...),
+			); err != nil {
 				t.Fatal(err)
 			}
 
 			origin, found := binding.Metadata().Where("port")
-			if actionPort != 9001 || !found || origin.Source != strata.SourceFlag || origin.RawValue != "9001" {
+			if actionPort != 9001 || !found || origin.Source != strata.SourceFlag ||
+				origin.RawValue != "9001" {
 				t.Fatalf("action port = %d, origin = %+v, %t", actionPort, origin, found)
 			}
 		})
@@ -191,8 +226,18 @@ func TestUrfaveRepairWithInheritedFlagBetweenCommands(t *testing.T) {
 
 	var output bytes.Buffer
 
-	root := &cli.Command{Name: bridgetest.AppName, Before: binding.Before, Flags: []cli.Flag{binding.ConfigFlag()}, Writer: &output, ErrWriter: io.Discard, Commands: []*cli.Command{binding.ConfigCommand()}}
-	if err := root.Run(t.Context(), []string{bridgetest.AppName, "config", "--config", path, "path"}); err != nil {
+	root := &cli.Command{
+		Name:      bridgetest.AppName,
+		Before:    binding.Before,
+		Flags:     []cli.Flag{binding.ConfigFlag()},
+		Writer:    &output,
+		ErrWriter: io.Discard,
+		Commands:  []*cli.Command{binding.ConfigCommand()},
+	}
+	if err := root.Run(
+		t.Context(),
+		[]string{bridgetest.AppName, "config", "--config", path, "path"},
+	); err != nil {
 		t.Fatal(err)
 	}
 
@@ -207,7 +252,13 @@ func TestUrfaveRequiresFormatsOnRun(t *testing.T) {
 	b := strataurfave.Bind(&cfg)
 	root := &cli.Command{Name: bridgetest.AppName, Before: b.Before, Action: noop}
 
-	if err := root.Run(context.Background(), []string{bridgetest.AppName}); !errors.Is(err, strata.ErrNoFormats) {
+	if err := root.Run(
+		context.Background(),
+		[]string{bridgetest.AppName},
+	); !errors.Is(
+		err,
+		strata.ErrNoFormats,
+	) {
 		t.Fatalf("Run error = %v, want ErrNoFormats", err)
 	}
 }
@@ -225,13 +276,34 @@ func TestUrfaveFlagKinds(t *testing.T) {
 	b := strataurfave.Bind(&cfg, strata.WithFormats("toml"))
 
 	cmd := &cli.Command{Name: bridgetest.AppName, Before: b.Before, Flags: []cli.Flag{
-		b.Flag("enabled", "enabled"), b.Flag("port", "port", "p"), b.Flag("tags", "tags"), b.Flag("timeout", "timeout"),
+		b.Flag(
+			"enabled",
+			"enabled",
+		),
+		b.Flag("port", "port", "p"),
+		b.Flag("tags", "tags"),
+		b.Flag("timeout", "timeout"),
 	}, Action: noop}
-	if err := cmd.Run(context.Background(), []string{bridgetest.AppName, "--enabled", "-p", "9000", "--tags", "a", "--tags", "b", "--timeout", "2d"}); err != nil {
+	if err := cmd.Run(
+		context.Background(),
+		[]string{
+			bridgetest.AppName,
+			"--enabled",
+			"-p",
+			"9000",
+			"--tags",
+			"a",
+			"--tags",
+			"b",
+			"--timeout",
+			"2d",
+		},
+	); err != nil {
 		t.Fatal(err)
 	}
 
-	if !cfg.Enabled || cfg.Port != 9000 || len(cfg.Tags) != 2 || time.Duration(cfg.Timeout) != 48*time.Hour {
+	if !cfg.Enabled || cfg.Port != 9000 || len(cfg.Tags) != 2 ||
+		time.Duration(cfg.Timeout) != 48*time.Hour {
 		t.Fatalf("config = %+v", cfg)
 	}
 }

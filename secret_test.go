@@ -108,7 +108,9 @@ func TestRejectedSecretValuesDoNotLeak(t *testing.T) {
 
 func TestSecretRedactsWhenPrinted(t *testing.T) {
 	secret := strata.Secret("private-value")
-	if secret.String() != "[REDACTED]" || secret.GoString() != "[REDACTED]" || secret.LogValue().String() != "[REDACTED]" || secret.Value() != "private-value" {
+	if secret.String() != "[REDACTED]" || secret.GoString() != "[REDACTED]" ||
+		secret.LogValue().String() != "[REDACTED]" ||
+		secret.Value() != "private-value" {
 		t.Fatal("secret methods")
 	}
 }
@@ -127,7 +129,10 @@ func TestSecretAndDurationRoundTripEveryFormat(t *testing.T) {
 				t.Fatal(err)
 			}
 
-			cfg, meta, err := strata.LoadWithMetadata[primitiveConfig](strata.WithPath(path), strata.WithFormats(ext))
+			cfg, meta, err := strata.LoadWithMetadata[primitiveConfig](
+				strata.WithPath(path),
+				strata.WithFormats(ext),
+			)
 			if err != nil {
 				t.Fatal(err)
 			}
@@ -143,7 +148,10 @@ func TestSecretAndDurationRoundTripEveryFormat(t *testing.T) {
 	}
 
 	path := filepath.Join(t.TempDir(), "saved.json")
-	if err := strata.Save(path, primitiveConfig{Secret: secret, Timeout: 45 * time.Second}); err != nil {
+	if err := strata.Save(
+		path,
+		primitiveConfig{Secret: secret, Timeout: 45 * time.Second},
+	); err != nil {
 		t.Fatal(err)
 	}
 
@@ -152,7 +160,8 @@ func TestSecretAndDurationRoundTripEveryFormat(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	if !strings.Contains(string(saved), "private-value") || !strings.Contains(string(saved), "45s") {
+	if !strings.Contains(string(saved), "private-value") ||
+		!strings.Contains(string(saved), "45s") {
 		t.Fatalf("saved file = %s", saved)
 	}
 }
@@ -174,19 +183,37 @@ func TestSecretCollectionsAndRecursiveOriginsAreRedacted(t *testing.T) {
 	}
 
 	for format, body := range map[string]string{
-		"json": `{"credentials":{"service":"private-value"},"typed":{"service":"private-value"},"tokens":["private-value"],"nodes":[{"token":"private-value"}],"node":{"next":{"token":"private-value"}}}`,
-		"toml": "tokens = ['private-value']\nnodes = [{token = 'private-value'}]\n[credentials]\nservice = 'private-value'\n[typed]\nservice = 'private-value'\n[node.next]\ntoken = 'private-value'\n",
-		"yaml": "credentials:\n  service: private-value\ntyped:\n  service: private-value\ntokens: [private-value]\nnodes:\n  - token: private-value\nnode:\n  next:\n    token: private-value\n",
+		"json": `{"credentials":{"service":"private-value"},"typed":{"service":"private-value"},` +
+			`"tokens":["private-value"],"nodes":[{"token":"private-value"}],` +
+			`"node":{"next":{"token":"private-value"}}}`,
+		"toml": "tokens = ['private-value']\nnodes = [{token = 'private-value'}]\n" +
+			"[credentials]\nservice = 'private-value'\n[typed]\nservice = 'private-value'\n" +
+			"[node.next]\ntoken = 'private-value'\n",
+		"yaml": "credentials:\n  service: private-value\ntyped:\n  service: private-value\n" +
+			"tokens: [private-value]\nnodes:\n  - token: private-value\n" +
+			"node:\n  next:\n    token: private-value\n",
 	} {
 		t.Run(format, func(t *testing.T) {
 			t.Parallel()
 
-			cfg, meta, err := strata.LoadWithMetadata[config](strata.WithPath("-"), strata.WithStdin(strings.NewReader(body)), strata.WithFormats(format))
+			cfg, meta, err := strata.LoadWithMetadata[config](
+				strata.WithPath("-"),
+				strata.WithStdin(strings.NewReader(body)),
+				strata.WithFormats(format),
+			)
 			if err != nil {
 				t.Fatal(err)
 			}
 
-			if cfg.Credentials["service"] != "private-value" || cfg.Typed["service"].Value() != "private-value" || len(cfg.Tokens) != 1 || cfg.Tokens[0].Value() != "private-value" || len(cfg.Nodes) != 1 || cfg.Nodes[0].Token.Value() != "private-value" || cfg.Node == nil || cfg.Node.Next == nil || cfg.Node.Next.Token.Value() != "private-value" {
+			if cfg.Credentials["service"] != "private-value" ||
+				cfg.Typed["service"].Value() != "private-value" ||
+				len(cfg.Tokens) != 1 ||
+				cfg.Tokens[0].Value() != "private-value" ||
+				len(cfg.Nodes) != 1 ||
+				cfg.Nodes[0].Token.Value() != "private-value" ||
+				cfg.Node == nil ||
+				cfg.Node.Next == nil ||
+				cfg.Node.Next.Token.Value() != "private-value" {
 				t.Fatalf("config did not load secrets: %+v", cfg)
 			}
 
@@ -196,7 +223,11 @@ func TestSecretCollectionsAndRecursiveOriginsAreRedacted(t *testing.T) {
 					t.Errorf("Where(%s) = %+v, %t", key, origin, found)
 				}
 
-				if message := meta.NewConfigError(key, errors.New("invalid credential")).Error(); strings.Contains(message, "private-value") {
+				if message := meta.NewConfigError(key, errors.New("invalid credential")).
+					Error(); strings.Contains(
+					message,
+					"private-value",
+				) {
 					t.Errorf("diagnostic leaked secret: %s", message)
 				}
 			}
@@ -232,7 +263,10 @@ func TestDefaultMetadataRedactsSecretsHeldThroughInterfaces(t *testing.T) {
 
 			defaults := config{Value: test.value}
 
-			got, meta, err := strata.LoadWithMetadata[config](strata.WithDefaults(defaults), strata.WithoutFileDiscovery())
+			got, meta, err := strata.LoadWithMetadata[config](
+				strata.WithDefaults(defaults),
+				strata.WithoutFileDiscovery(),
+			)
 			if err != nil {
 				t.Fatal(err)
 			}
@@ -243,7 +277,13 @@ func TestDefaultMetadataRedactsSecretsHeldThroughInterfaces(t *testing.T) {
 
 			origin, found := meta.Where("value")
 
-			want := strata.Origin{Key: "value", Source: strata.SourceDefault, Path: "", Line: 0, RawValue: "[REDACTED]"}
+			want := strata.Origin{
+				Key:      "value",
+				Source:   strata.SourceDefault,
+				Path:     "",
+				Line:     0,
+				RawValue: "[REDACTED]",
+			}
 			if !found || origin != want {
 				t.Fatalf("default origin = %+v, found = %t; want %+v", origin, found, want)
 			}
@@ -265,14 +305,29 @@ func TestMixedSecretCollectionsKeepPublicOrigins(t *testing.T) {
 	}
 
 	for _, test := range []struct{ format, body string }{
-		{"json", `{"services":{"primary":{"token":"private-value","port":9001}},"nodes":[{"token":"private-value","port":9002}]}`},
-		{"yaml", "services:\n  primary: {token: private-value, port: 9001}\nnodes: [{token: private-value, port: 9002}]\n"},
-		{"toml", "nodes = [{token = 'private-value', port = 9002}]\n[services.primary]\ntoken = 'private-value'\nport = 9001\n"},
+		{
+			"json",
+			`{"services":{"primary":{"token":"private-value","port":9001}},` +
+				`"nodes":[{"token":"private-value","port":9002}]}`,
+		},
+		{
+			"yaml",
+			"services:\n  primary: {token: private-value, port: 9001}\nnodes: [{token: private-value, port: 9002}]\n",
+		},
+		{
+			"toml",
+			"nodes = [{token = 'private-value', port = 9002}]\n" +
+				"[services.primary]\ntoken = 'private-value'\nport = 9001\n",
+		},
 	} {
 		t.Run(test.format, func(t *testing.T) {
 			t.Parallel()
 
-			_, meta, err := strata.LoadWithMetadata[config](strata.WithPath("-"), strata.WithFormats(test.format), strata.WithStdin(strings.NewReader(test.body)))
+			_, meta, err := strata.LoadWithMetadata[config](
+				strata.WithPath("-"),
+				strata.WithFormats(test.format),
+				strata.WithStdin(strings.NewReader(test.body)),
+			)
 			if err != nil {
 				t.Fatal(err)
 			}
@@ -296,11 +351,31 @@ func TestRecordSecretRedactsExistingAndDescendantOrigins(t *testing.T) {
 	t.Parallel()
 
 	meta := strata.NewMetadata()
-	meta.Record(strata.Origin{Key: "credentials", Source: strata.SourceDefault, RawValue: "private-value"})
-	meta.Record(strata.Origin{Key: "credentials.service", Source: strata.SourceEnv, RawValue: "private-value"})
+	meta.Record(
+		strata.Origin{Key: "credentials", Source: strata.SourceDefault, RawValue: "private-value"},
+	)
+	meta.Record(
+		strata.Origin{
+			Key:      "credentials.service",
+			Source:   strata.SourceEnv,
+			RawValue: "private-value",
+		},
+	)
 	meta.RecordSecret("credentials")
-	meta.Record(strata.Origin{Key: "credentials.other", Source: strata.SourceFile, RawValue: "private-value"})
-	meta.Record(strata.Origin{Key: "credentials_public", Source: strata.SourceDefault, RawValue: "public-value"})
+	meta.Record(
+		strata.Origin{
+			Key:      "credentials.other",
+			Source:   strata.SourceFile,
+			RawValue: "private-value",
+		},
+	)
+	meta.Record(
+		strata.Origin{
+			Key:      "credentials_public",
+			Source:   strata.SourceDefault,
+			RawValue: "public-value",
+		},
+	)
 
 	for _, key := range []string{"credentials", "credentials.service", "credentials.other"} {
 		origin, found := meta.Where(key)
@@ -344,7 +419,10 @@ func TestFileSecretRedaction(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	_, meta, err := strata.LoadWithMetadata[secretFileConfig](strata.WithPath(filePath), strata.WithFormats("json"))
+	_, meta, err := strata.LoadWithMetadata[secretFileConfig](
+		strata.WithPath(filePath),
+		strata.WithFormats("json"),
+	)
 	if err != nil {
 		t.Fatalf("Load error: %v", err)
 	}
@@ -377,23 +455,34 @@ type redactConfig struct {
 	Typed     strata.Secret     `strata:"typed"`
 	Pointer   *strata.Secret    `strata:"pointer"`
 	Tagged    string            `strata:"tagged,secret"`
-	EnvTagged string            `env:"REDACT_ENV_TAGGED,secret" strata:"env_tagged"`
+	EnvTagged string            `strata:"env_tagged"    env:"REDACT_ENV_TAGGED,secret"`
 	Database  redactDatabase    `strata:"database"`
 	Creds     redactCredentials `strata:"creds,secret"`
 }
 
-var redactKeys = []string{"typed", "pointer", "tagged", "env_tagged", "database.password", "creds.user", "creds.pass"}
+var redactKeys = []string{
+	"typed",
+	"pointer",
+	"tagged",
+	"env_tagged",
+	"database.password",
+	"creds.user",
+	"creds.pass",
+}
 
 // Distinct values per layer ensure a leak cannot hide behind another layer.
 func TestSecretOriginsAreRedactedInEveryLayer(t *testing.T) {
 	const leak = "leak-7f3a"
 
-	toml := "typed = 'toml-" + leak + "'\npointer = 'toml-" + leak + "'\ntagged = 'toml-" + leak + "'\nenv_tagged = 'toml-" + leak +
-		"'\n[database]\npassword = 'toml-" + leak + "'\n[creds]\nuser = 'toml-" + leak + "'\npass = 'toml-" + leak + "'\n"
-	yaml := "typed: yaml-" + leak + "\npointer: yaml-" + leak + "\ntagged: yaml-" + leak + "\nenv_tagged: yaml-" + leak +
-		"\ndatabase:\n  password: yaml-" + leak + "\ncreds:\n  user: yaml-" + leak + "\n  pass: yaml-" + leak + "\n"
-	json := `{"typed": "json-` + leak + `", "pointer": "json-` + leak + `", "tagged": "json-` + leak + `", "env_tagged": "json-` + leak +
-		`", "database": {"password": "json-` + leak + `"}, "creds": {"user": "json-` + leak + `", "pass": "json-` + leak + `"}}`
+	toml := "typed = 'toml-" + leak + "'\npointer = 'toml-" + leak + "'\ntagged = 'toml-" + leak +
+		"'\nenv_tagged = 'toml-" + leak + "'\n[database]\npassword = 'toml-" + leak +
+		"'\n[creds]\nuser = 'toml-" + leak + "'\npass = 'toml-" + leak + "'\n"
+	yaml := "typed: yaml-" + leak + "\npointer: yaml-" + leak + "\ntagged: yaml-" + leak +
+		"\nenv_tagged: yaml-" + leak + "\ndatabase:\n  password: yaml-" + leak +
+		"\ncreds:\n  user: yaml-" + leak + "\n  pass: yaml-" + leak + "\n"
+	json := `{"typed": "json-` + leak + `", "pointer": "json-` + leak + `", "tagged": "json-` + leak +
+		`", "env_tagged": "json-` + leak + `", "database": {"password": "json-` + leak +
+		`"}, "creds": {"user": "json-` + leak + `", "pass": "json-` + leak + `"}}`
 	pointerDefault := strata.Secret("default-" + leak)
 
 	for _, tc := range []struct {
@@ -425,12 +514,24 @@ func TestSecretOriginsAreRedactedInEveryLayer(t *testing.T) {
 			return []strata.Option{strata.WithPath(writeFile(t, "c.json", json)), strata.WithFormats("json")}
 		}},
 		{"stdin", strata.SourceStdin, func(*testing.T) []strata.Option {
-			return []strata.Option{strata.WithPath("-"), strata.WithStdin(strings.NewReader(toml)), strata.WithFormats("toml")}
+			return []strata.Option{
+				strata.WithPath("-"),
+				strata.WithStdin(strings.NewReader(toml)),
+				strata.WithFormats("toml"),
+			}
 		}},
 		{"env", strata.SourceEnv, func(t *testing.T) []strata.Option {
 			t.Helper()
 
-			for _, name := range []string{"REDACT_TYPED", "REDACT_POINTER", "REDACT_TAGGED", "REDACT_ENV_TAGGED", "REDACT_DATABASE_PASSWORD", "REDACT_CREDS_USER", "REDACT_CREDS_PASS"} {
+			for _, name := range []string{
+				"REDACT_TYPED",
+				"REDACT_POINTER",
+				"REDACT_TAGGED",
+				"REDACT_ENV_TAGGED",
+				"REDACT_DATABASE_PASSWORD",
+				"REDACT_CREDS_USER",
+				"REDACT_CREDS_PASS",
+			} {
 				t.Setenv(name, "env-"+leak)
 			}
 
@@ -450,7 +551,13 @@ func TestSecretOriginsAreRedactedInEveryLayer(t *testing.T) {
 			for _, key := range redactKeys {
 				origin, ok := meta.Where(key)
 				if !ok || origin.Source != tc.source || origin.RawValue != "[REDACTED]" {
-					t.Errorf("Where(%s) = %+v, %t; want %s with [REDACTED]", key, origin, ok, tc.source)
+					t.Errorf(
+						"Where(%s) = %+v, %t; want %s with [REDACTED]",
+						key,
+						origin,
+						ok,
+						tc.source,
+					)
 				}
 			}
 
@@ -476,7 +583,11 @@ func TestDecodeErrorsNameKeysWithoutSecretValues(t *testing.T) {
 		wantPort       string
 	}{
 		{name: "config.yaml", document: "port: busy\npin: s3cr3t-pin\n", wantPort: `line 1: key "port"`},
-		{name: "config.json", document: "{\n  \"port\": \"busy\",\n  \"pin\": \"s3cr3t-pin\"\n}", wantPort: `line 2: key "port"`},
+		{
+			name:     "config.json",
+			document: "{\n  \"port\": \"busy\",\n  \"pin\": \"s3cr3t-pin\"\n}",
+			wantPort: `line 2: key "port"`,
+		},
 		{name: "config.toml", document: "port = \"busy\"\npin = \"s3cr3t-pin\"\n", wantPort: `key "port"`},
 	} {
 		t.Run(test.name, func(t *testing.T) {
@@ -484,14 +595,21 @@ func TestDecodeErrorsNameKeysWithoutSecretValues(t *testing.T) {
 
 			path := writeFile(t, test.name, test.document)
 
-			_, err := strata.Load[config](strata.WithPath(path), strata.WithFormats(filepath.Ext(test.name)))
+			_, err := strata.Load[config](
+				strata.WithPath(path),
+				strata.WithFormats(filepath.Ext(test.name)),
+			)
 			if !errors.Is(err, strata.ErrMalformed) {
 				t.Fatalf("err = %v, want ErrMalformed", err)
 			}
 
 			message := err.Error()
-			if strings.Contains(message, "s3cr3t") || !strings.Contains(message, test.wantPort) || !strings.Contains(message, `key "pin": invalid value [REDACTED]`) {
-				t.Fatalf("err = %q, want the port failure in full and the pin value redacted", message)
+			if strings.Contains(message, "s3cr3t") || !strings.Contains(message, test.wantPort) ||
+				!strings.Contains(message, `key "pin": invalid value [REDACTED]`) {
+				t.Fatalf(
+					"err = %q, want the port failure in full and the pin value redacted",
+					message,
+				)
 			}
 		})
 	}
@@ -533,9 +651,16 @@ func TestDecodeErrorsRedactSecretsUnderDottedMapKeys(t *testing.T) {
 
 			path := writeFile(t, name, document)
 
-			_, err := strata.Load[config](strata.WithPath(path), strata.WithFormats(filepath.Ext(name)))
+			_, err := strata.Load[config](
+				strata.WithPath(path),
+				strata.WithFormats(filepath.Ext(name)),
+			)
 
-			if !errors.Is(err, strata.ErrMalformed) || strings.Contains(err.Error(), "s3cr3t") || !strings.Contains(err.Error(), `key "entries.a\.b.password": invalid value [REDACTED]`) {
+			if !errors.Is(err, strata.ErrMalformed) || strings.Contains(err.Error(), "s3cr3t") ||
+				!strings.Contains(
+					err.Error(),
+					`key "entries.a\.b.password": invalid value [REDACTED]`,
+				) {
 				t.Fatalf("err = %v, want a redacted failure at entries.a\\.b.password", err)
 			}
 		})
@@ -557,7 +682,8 @@ func TestInlineSecretStructsStayRedacted(t *testing.T) {
 
 	_, err := strata.Load[config](strata.WithPath(path), strata.WithFormats(yamlFormat))
 
-	if !errors.Is(err, strata.ErrMalformed) || strings.Contains(err.Error(), "s3cr3t") || !strings.Contains(err.Error(), `key "code": invalid value [REDACTED]`) {
+	if !errors.Is(err, strata.ErrMalformed) || strings.Contains(err.Error(), "s3cr3t") ||
+		!strings.Contains(err.Error(), `key "code": invalid value [REDACTED]`) {
 		t.Fatalf("err = %v, want a redacted failure at /code", err)
 	}
 }
@@ -575,13 +701,24 @@ func TestInlineSecretStructOriginsStayRedacted(t *testing.T) {
 
 	path := writeFile(t, "config.yaml", "code: 4321\n")
 
-	got, meta, err := strata.LoadWithMetadata[config](strata.WithPath(path), strata.WithFormats(yamlFormat))
+	got, meta, err := strata.LoadWithMetadata[config](
+		strata.WithPath(path),
+		strata.WithFormats(yamlFormat),
+	)
 	if err != nil {
 		t.Fatal(err)
 	}
 
-	if origin, found := meta.Where("code"); got.Credentials.Code != 4321 || !found || origin.RawValue != "[REDACTED]" {
-		t.Fatalf("code = %d, Where(/code) = %+v, %t; want the value loaded and its origin redacted", got.Credentials.Code, origin, found)
+	if origin, found := meta.Where(
+		"code",
+	); got.Credentials.Code != 4321 || !found ||
+		origin.RawValue != "[REDACTED]" {
+		t.Fatalf(
+			"code = %d, Where(/code) = %+v, %t; want the value loaded and its origin redacted",
+			got.Credentials.Code,
+			origin,
+			found,
+		)
 	}
 }
 
@@ -598,18 +735,35 @@ func TestSecretMapEntriesWithEscapedKeysStayRedacted(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	got, meta, err := strata.LoadWithMetadata[config](strata.WithPath(path), strata.WithFormats(yamlFormat))
+	got, meta, err := strata.LoadWithMetadata[config](
+		strata.WithPath(path),
+		strata.WithFormats(yamlFormat),
+	)
 	if err != nil {
 		t.Fatal(err)
 	}
 
-	if want := map[string]string{"a.b": "s3cr3t-pin", "c.d": "s3cr3t-new"}; !maps.Equal(got.Tokens, want) {
+	if want := map[string]string{
+		"a.b": "s3cr3t-pin",
+		"c.d": "s3cr3t-new",
+	}; !maps.Equal(
+		got.Tokens,
+		want,
+	) {
 		t.Fatalf("tokens = %q, want %q", got.Tokens, want)
 	}
 
 	for _, key := range []string{`tokens.a\.b`, `tokens.c\.d`} {
-		if origin, found := meta.Where(key); !found || origin.Key != key || origin.RawValue != "[REDACTED]" {
-			t.Errorf("Where(%q) = %+v, %t; want a redacted origin under the same key", key, origin, found)
+		if origin, found := meta.Where(
+			key,
+		); !found || origin.Key != key ||
+			origin.RawValue != "[REDACTED]" {
+			t.Errorf(
+				"Where(%q) = %+v, %t; want a redacted origin under the same key",
+				key,
+				origin,
+				found,
+			)
 		}
 	}
 }

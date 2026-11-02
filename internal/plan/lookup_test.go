@@ -24,7 +24,7 @@ type lookupRoot struct {
 	Enabled bool
 	Server  lookupServer      `strata:",inline"`
 	Labels  map[string]int    `strata:"labels"`
-	Extra   map[string]string `yaml:",inline"`
+	Extra   map[string]string `                 yaml:",inline"`
 }
 
 func TestLeafFor(t *testing.T) {
@@ -44,7 +44,8 @@ func TestLeafFor(t *testing.T) {
 			t.Fatal(err)
 		}
 
-		if target.FlagName != test.name || target.Kind != test.kind || target.IsSecret != test.secret {
+		if target.FlagName != test.name || target.Kind != test.kind ||
+			target.IsSecret != test.secret {
 			t.Fatalf("%s: %+v", test.key, target)
 		}
 	}

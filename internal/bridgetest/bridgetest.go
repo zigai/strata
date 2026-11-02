@@ -98,14 +98,20 @@ func layersFlagsAndShow(t *testing.T, bridge Bridge) {
 	var cfg Config
 
 	app := bridge(t, &cfg, App{
-		Options:  []strata.Option{strata.WithPath(path), strata.WithEnvPrefix("APP_")},
-		Commands: map[string][]Flag{"serve": {{Key: "port", Short: "p"}, {Key: "db.port"}, {Key: "timeout"}}},
+		Options: []strata.Option{strata.WithPath(path), strata.WithEnvPrefix("APP_")},
+		Commands: map[string][]Flag{
+			"serve": {{Key: "port", Short: "p"}, {Key: "db.port"}, {Key: "timeout"}},
+		},
 	})
 
 	mustRun(t, app, "serve")
 
 	if cfg.Port != 8200 || cfg.DB.Port != 6000 {
-		t.Fatalf("without flags: port = %d, db.port = %d, want 8200 from env and 6000 from the file", cfg.Port, cfg.DB.Port)
+		t.Fatalf(
+			"without flags: port = %d, db.port = %d, want 8200 from env and 6000 from the file",
+			cfg.Port,
+			cfg.DB.Port,
+		)
 	}
 
 	expectSource(t, app, "port", strata.SourceEnv)
@@ -126,7 +132,11 @@ func layersFlagsAndShow(t *testing.T, bridge Bridge) {
 
 	out := mustRun(t, app, "config", "show")
 
-	for _, row := range []string{`(?m)^port\s+8200\s+env APP_PORT`, `(?m)^db\.port\s+6000\s+file ` + regexp.QuoteMeta(path), `(?m)^token\s+\(unset\)\s+default`} {
+	for _, row := range []string{
+		`(?m)^port\s+8200\s+env APP_PORT`,
+		`(?m)^db\.port\s+6000\s+file ` + regexp.QuoteMeta(path),
+		`(?m)^token\s+\(unset\)\s+default`,
+	} {
 		if !regexp.MustCompile(row).MatchString(out) {
 			t.Errorf("config show lacks a row matching %q:\n%s", row, out)
 		}
@@ -186,7 +196,19 @@ func editsSkipLoadingABrokenFile(t *testing.T, bridge Bridge) {
 		t.Fatalf("edited file = %q", data)
 	}
 
-	if out := mustRun(t, app, "--config", path, "config", "set", "token", "private-value"); strings.Contains(out, "private-value") {
+	if out := mustRun(
+		t,
+		app,
+		"--config",
+		path,
+		"config",
+		"set",
+		"token",
+		"private-value",
+	); strings.Contains(
+		out,
+		"private-value",
+	) {
 		t.Fatalf("config set echoed the secret: %q", out)
 	}
 
@@ -202,7 +224,14 @@ func builtInsSkipLoadingABrokenFile(t *testing.T, bridge Bridge) {
 
 	var cfg Config
 
-	app := bridge(t, &cfg, App{Options: []strata.Option{strata.WithPath(path)}, Commands: map[string][]Flag{"serve": nil}})
+	app := bridge(
+		t,
+		&cfg,
+		App{
+			Options:  []strata.Option{strata.WithPath(path)},
+			Commands: map[string][]Flag{"serve": nil},
+		},
+	)
 
 	for _, args := range [][]string{{"help"}, {"completion", "bash"}} {
 		mustRun(t, app, args...)
@@ -216,7 +245,11 @@ func builtInsSkipLoadingABrokenFile(t *testing.T, bridge Bridge) {
 func userCommandsNamedLikeEditsLoad(t *testing.T, bridge Bridge) {
 	var cfg Config
 
-	app := bridge(t, &cfg, App{Options: nil, Commands: map[string][]Flag{"set": nil, "init": nil, "path": nil}})
+	app := bridge(
+		t,
+		&cfg,
+		App{Options: nil, Commands: map[string][]Flag{"set": nil, "init": nil, "path": nil}},
+	)
 
 	for _, name := range []string{"set", "init", "path"} {
 		cfg.Port = 0
@@ -281,7 +314,11 @@ func secretKeyCannotBeAFlag(t *testing.T, bridge Bridge) {
 func flagValueMustFitTheField(t *testing.T, bridge Bridge) {
 	var cfg Config
 
-	app := bridge(t, &cfg, App{Options: nil, Commands: map[string][]Flag{"serve": {{Key: "narrow"}}}})
+	app := bridge(
+		t,
+		&cfg,
+		App{Options: nil, Commands: map[string][]Flag{"serve": {{Key: "narrow"}}}},
+	)
 
 	if _, err := app.Run("serve", "--narrow", "200"); err == nil {
 		t.Fatalf("--narrow 200 was accepted: narrow = %d", cfg.Narrow)
@@ -351,7 +388,11 @@ func setReportsThePathAndNeedsAFile(t *testing.T, bridge Bridge) {
 func helpShowsTheDefault(t *testing.T, bridge Bridge) {
 	var cfg Config
 
-	app := bridge(t, &cfg, App{Options: nil, Commands: map[string][]Flag{"serve": {{Key: "db.port"}}}})
+	app := bridge(
+		t,
+		&cfg,
+		App{Options: nil, Commands: map[string][]Flag{"serve": {{Key: "db.port"}}}},
+	)
 
 	out := mustRun(t, app, "serve", "--help")
 	if !regexp.MustCompile(`--db-port[^\n]*5432`).MatchString(out) {

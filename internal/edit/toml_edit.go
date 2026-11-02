@@ -54,7 +54,12 @@ func UpdateTOML(data []byte, parts []string, value any) ([]byte, error) {
 	return UpdateTOMLFormatted(data, parts, value, formattedVal)
 }
 
-func UpdateTOMLFormatted(data []byte, parts []string, value any, formattedVal string) ([]byte, error) {
+func UpdateTOMLFormatted(
+	data []byte,
+	parts []string,
+	value any,
+	formattedVal string,
+) ([]byte, error) {
 	crlf := bytes.Contains(data, []byte("\r\n"))
 	rawLines := strings.Split(string(data), "\n")
 
@@ -220,7 +225,13 @@ func (lx *tomlLexer) scan(line string, stop byte) int {
 			return -1
 		case '"', '\'':
 			lx.quote = line[i : i+1]
-			if tripled := strings.Repeat(lx.quote, tripleQuoteLen); strings.HasPrefix(line[i:], tripled) {
+			if tripled := strings.Repeat(
+				lx.quote,
+				tripleQuoteLen,
+			); strings.HasPrefix(
+				line[i:],
+				tripled,
+			) {
 				lx.quote = tripled
 			}
 
@@ -308,19 +319,26 @@ func collectAssignments(lines []string, scanned []tomlLine) []tomlAssignment {
 	return candidates
 }
 
-func removeTOMLSubtree(lines []string, scanned []tomlLine, candidates []tomlAssignment, targetParts []string) ([]string, bool) {
+func removeTOMLSubtree(
+	lines []string,
+	scanned []tomlLine,
+	candidates []tomlAssignment,
+	targetParts []string,
+) ([]string, bool) {
 	removed := make([]bool, len(lines))
 	replaced := false
 
 	for index, line := range scanned {
-		if line.header != nil && len(line.header) >= len(targetParts) && partsEqual(line.header[:len(targetParts)], targetParts) {
+		if line.header != nil && len(line.header) >= len(targetParts) &&
+			partsEqual(line.header[:len(targetParts)], targetParts) {
 			removed[index] = true
 			replaced = true
 		}
 	}
 
 	for _, candidate := range candidates {
-		if len(candidate.fullKey) > len(targetParts) && partsEqual(candidate.fullKey[:len(targetParts)], targetParts) {
+		if len(candidate.fullKey) > len(targetParts) &&
+			partsEqual(candidate.fullKey[:len(targetParts)], targetParts) {
 			for index := candidate.lineIdx; index <= candidate.endIdx; index++ {
 				removed[index] = true
 			}
@@ -353,9 +371,15 @@ func findMatchingCandidate(candidates []tomlAssignment, targetParts []string) in
 	return -1
 }
 
-func handleInlineTableUpdate(lines []string, candidates []tomlAssignment, targetParts []string, value any) ([]string, bool, error) {
+func handleInlineTableUpdate(
+	lines []string,
+	candidates []tomlAssignment,
+	targetParts []string,
+	value any,
+) ([]string, bool, error) {
 	for _, cand := range candidates {
-		if len(cand.fullKey) >= len(targetParts) || !partsEqual(cand.fullKey, targetParts[:len(cand.fullKey)]) {
+		if len(cand.fullKey) >= len(targetParts) ||
+			!partsEqual(cand.fullKey, targetParts[:len(cand.fullKey)]) {
 			continue
 		}
 
@@ -381,7 +405,11 @@ func handleInlineTableUpdate(lines []string, candidates []tomlAssignment, target
 			key = key.AppendToken(part)
 		}
 
-		return nil, false, fmt.Errorf(`%w: key "%s" is not a table`, ErrPathNotMapping, keypath.Format(key))
+		return nil, false, fmt.Errorf(
+			`%w: key "%s" is not a table`,
+			ErrPathNotMapping,
+			keypath.Format(key),
+		)
 	}
 
 	return lines, false, nil
@@ -531,7 +559,7 @@ func stripInlineComment(s string) string {
 	return s
 }
 
-func partsEqual(a, b []string) bool {
+func partsEqual(a []string, b []string) bool {
 	if len(a) != len(b) {
 		return false
 	}
@@ -574,7 +602,8 @@ func formatTOMLValue(value any) (string, error) {
 		return "", fmt.Errorf("%w: nil has no toml value", codec.ErrMalformed)
 	}
 
-	if reflected.Kind() == reflect.Map || reflected.Kind() == reflect.Slice || reflected.Kind() == reflect.Array {
+	if reflected.Kind() == reflect.Map || reflected.Kind() == reflect.Slice ||
+		reflected.Kind() == reflect.Array {
 		return formatCompositeTOML(reflected)
 	}
 
@@ -600,7 +629,8 @@ func formatDecodedTOMLValue(value any) (string, error) {
 	}
 
 	reflected := reflect.ValueOf(value)
-	if reflected.IsValid() && (reflected.Kind() == reflect.Map || reflected.Kind() == reflect.Slice || reflected.Kind() == reflect.Array) {
+	if reflected.IsValid() &&
+		(reflected.Kind() == reflect.Map || reflected.Kind() == reflect.Slice || reflected.Kind() == reflect.Array) {
 		return formatCompositeTOML(reflected)
 	}
 
@@ -677,7 +707,13 @@ func replaceLineValue(line string, eqIdx int, newVal string) string {
 	return beforeVal + spaces + newVal
 }
 
-func appendTOMLKey(lines []string, scanned []tomlLine, candidates []tomlAssignment, targetParts []string, formattedVal string) []byte {
+func appendTOMLKey(
+	lines []string,
+	scanned []tomlLine,
+	candidates []tomlAssignment,
+	targetParts []string,
+	formattedVal string,
+) []byte {
 	if len(targetParts) == 1 {
 		return appendRootKey(lines, scanned, targetParts[0], formattedVal)
 	}
@@ -688,7 +724,7 @@ func appendTOMLKey(lines []string, scanned []tomlLine, candidates []tomlAssignme
 	return appendTableKey(lines, scanned, candidates, tableParts, leaf, formattedVal)
 }
 
-func appendRootKey(lines []string, scanned []tomlLine, key, formattedVal string) []byte {
+func appendRootKey(lines []string, scanned []tomlLine, key string, formattedVal string) []byte {
 	insertIdx := len(lines)
 
 	for i, info := range scanned {
@@ -704,7 +740,14 @@ func appendRootKey(lines []string, scanned []tomlLine, key, formattedVal string)
 	return []byte(strings.Join(lines, "\n"))
 }
 
-func appendTableKey(lines []string, scanned []tomlLine, candidates []tomlAssignment, tableParts []string, leaf, formattedVal string) []byte {
+func appendTableKey(
+	lines []string,
+	scanned []tomlLine,
+	candidates []tomlAssignment,
+	tableParts []string,
+	leaf string,
+	formattedVal string,
+) []byte {
 	tableIdx := -1
 
 	for i, info := range scanned {
@@ -802,7 +845,8 @@ func isBareTOMLKey(s string) bool {
 }
 
 func isBareTOMLKeyByte(c byte) bool {
-	return (c >= 'a' && c <= 'z') || (c >= 'A' && c <= 'Z') || (c >= '0' && c <= '9') || c == '_' || c == '-'
+	return (c >= 'a' && c <= 'z') || (c >= 'A' && c <= 'Z') || (c >= '0' && c <= '9') || c == '_' ||
+		c == '-'
 }
 
 func updateInlineTable(inlineText string, parts []string, value any) (string, error) {

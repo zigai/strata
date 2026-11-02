@@ -67,7 +67,14 @@ func Apply(target any, onDefault func(key jsontext.Pointer, rawVal string)) erro
 		}
 	}
 
-	return recurseDefaults(elem, rootScope(elem.Type()), &visitor{report: onDefault, apply: true}, false, nil, nil)
+	return recurseDefaults(
+		elem,
+		rootScope(elem.Type()),
+		&visitor{report: onDefault, apply: true},
+		false,
+		nil,
+		nil,
+	)
 }
 
 func Report(target any, onDefault func(key jsontext.Pointer, rawVal string)) error {
@@ -80,7 +87,14 @@ func Report(target any, onDefault func(key jsontext.Pointer, rawVal string)) err
 		return ErrInvalidTarget
 	}
 
-	return recurseDefaults(val.Elem(), rootScope(val.Elem().Type()), &visitor{report: onDefault, apply: false}, false, nil, nil)
+	return recurseDefaults(
+		val.Elem(),
+		rootScope(val.Elem().Type()),
+		&visitor{report: onDefault, apply: false},
+		false,
+		nil,
+		nil,
+	)
 }
 
 func ContainsSecrets(src reflect.Value) bool {
@@ -130,10 +144,27 @@ func containsSecretValues(src reflect.Value, seen map[secretVisit]bool) bool {
 				return true
 			}
 		}
-	case reflect.Invalid, reflect.Bool, reflect.Int, reflect.Int8, reflect.Int16, reflect.Int32, reflect.Int64,
-		reflect.Uint, reflect.Uint8, reflect.Uint16, reflect.Uint32, reflect.Uint64, reflect.Uintptr,
-		reflect.Float32, reflect.Float64, reflect.Complex64, reflect.Complex128, reflect.Chan, reflect.Func,
-		reflect.String, reflect.UnsafePointer:
+	case reflect.Invalid,
+		reflect.Bool,
+		reflect.Int,
+		reflect.Int8,
+		reflect.Int16,
+		reflect.Int32,
+		reflect.Int64,
+		reflect.Uint,
+		reflect.Uint8,
+		reflect.Uint16,
+		reflect.Uint32,
+		reflect.Uint64,
+		reflect.Uintptr,
+		reflect.Float32,
+		reflect.Float64,
+		reflect.Complex64,
+		reflect.Complex128,
+		reflect.Chan,
+		reflect.Func,
+		reflect.String,
+		reflect.UnsafePointer:
 		return false
 	}
 
@@ -142,7 +173,8 @@ func containsSecretValues(src reflect.Value, seen map[secretVisit]bool) bool {
 
 func containsSecretFields(src reflect.Value, seen map[secretVisit]bool) bool {
 	for field := range src.Type().Fields() {
-		if (field.IsExported() || field.Anonymous) && (layout.IsSecret(field) || containsSecrets(src.Field(field.Index[0]), seen)) {
+		if (field.IsExported() || field.Anonymous) &&
+			(layout.IsSecret(field) || containsSecrets(src.Field(field.Index[0]), seen)) {
 			return true
 		}
 	}
@@ -175,7 +207,8 @@ func ensureEmbeddedPointersVisited(val reflect.Value, visited map[reflect.Type]b
 		sf := typ.Field(i)
 		field := val.Field(i)
 
-		if sf.Anonymous && field.CanSet() && field.Kind() == reflect.Pointer && field.Type().Elem().Kind() == reflect.Struct {
+		if sf.Anonymous && field.CanSet() && field.Kind() == reflect.Pointer &&
+			field.Type().Elem().Kind() == reflect.Struct {
 			elemType := field.Type().Elem()
 			if visited[elemType] {
 				continue
@@ -207,7 +240,11 @@ func rootScope(typ reflect.Type) scope {
 }
 
 func (at scope) promoted(member layout.Member) scope {
-	return scope{key: at.key, layout: at.layout, index: append(slices.Clone(at.index), member.Field.Index...)}
+	return scope{
+		key:    at.key,
+		layout: at.layout,
+		index:  append(slices.Clone(at.index), member.Field.Index...),
+	}
 }
 
 func (at scope) nested(key string, typ reflect.Type) scope {
@@ -227,10 +264,19 @@ func (at scope) owns(member layout.Member) bool {
 }
 
 func (at scope) ownsRest(member layout.Member) bool {
-	return at.layout.Rest != nil && slices.Equal(at.layout.Rest.Index, append(slices.Clone(at.index), member.Field.Index...))
+	return at.layout.Rest != nil &&
+		slices.Equal(at.layout.Rest.Index, append(slices.Clone(at.index), member.Field.Index...))
 }
 
-func recurseMember(field reflect.Value, member layout.Member, at scope, v *visitor, inheritedSecret bool, activeTypes []reflect.Type, activePtrs []uintptr) error {
+func recurseMember(
+	field reflect.Value,
+	member layout.Member,
+	at scope,
+	v *visitor,
+	inheritedSecret bool,
+	activeTypes []reflect.Type,
+	activePtrs []uintptr,
+) error {
 	// An unexported embedded struct is left to the promoted SetDefaults of the
 	// struct that holds it.
 	if !member.Field.IsExported() {
@@ -251,7 +297,14 @@ func recurseMember(field reflect.Value, member layout.Member, at scope, v *visit
 	case !at.owns(member):
 		return nil
 	case layout.IsNestedStructType(field.Type()):
-		return recurseStruct(field, at.nested(member.Key, field.Type()), v, fieldSecret, activeTypes, activePtrs)
+		return recurseStruct(
+			field,
+			at.nested(member.Key, field.Type()),
+			v,
+			fieldSecret,
+			activeTypes,
+			activePtrs,
+		)
 	}
 
 	recordDefaultLeaf(field, at.key.AppendToken(member.Key), v, fieldSecret)
@@ -259,7 +312,14 @@ func recurseMember(field reflect.Value, member layout.Member, at scope, v *visit
 	return nil
 }
 
-func recurseStruct(field reflect.Value, at scope, v *visitor, inheritedSecret bool, activeTypes []reflect.Type, activePtrs []uintptr) error {
+func recurseStruct(
+	field reflect.Value,
+	at scope,
+	v *visitor,
+	inheritedSecret bool,
+	activeTypes []reflect.Type,
+	activePtrs []uintptr,
+) error {
 	if field.Kind() == reflect.Pointer {
 		return handlePointerStructField(field, at, v, inheritedSecret, activeTypes, activePtrs)
 	}
@@ -267,7 +327,14 @@ func recurseStruct(field reflect.Value, at scope, v *visitor, inheritedSecret bo
 	return handleStructField(field, at, v, inheritedSecret, activeTypes, activePtrs)
 }
 
-func recurseDefaults(val reflect.Value, at scope, v *visitor, inheritedSecret bool, activeTypes []reflect.Type, activePtrs []uintptr) error {
+func recurseDefaults(
+	val reflect.Value,
+	at scope,
+	v *visitor,
+	inheritedSecret bool,
+	activeTypes []reflect.Type,
+	activePtrs []uintptr,
+) error {
 	typ := val.Type()
 	if slices.Contains(activeTypes, typ) {
 		return nil
@@ -277,7 +344,15 @@ func recurseDefaults(val reflect.Value, at scope, v *visitor, inheritedSecret bo
 	defer func() { activeTypes = activeTypes[:len(activeTypes)-1] }()
 
 	for _, member := range layout.MembersOf(typ) {
-		if err := recurseMember(val.FieldByIndex(member.Field.Index), member, at, v, inheritedSecret, activeTypes, activePtrs); err != nil {
+		if err := recurseMember(
+			val.FieldByIndex(member.Field.Index),
+			member,
+			at,
+			v,
+			inheritedSecret,
+			activeTypes,
+			activePtrs,
+		); err != nil {
 			return err
 		}
 	}
@@ -291,7 +366,10 @@ func recordRestDefaults(field reflect.Value, key jsontext.Pointer, v *visitor, i
 	}
 
 	entries := field.MapKeys()
-	slices.SortFunc(entries, func(a, b reflect.Value) int { return strings.Compare(a.String(), b.String()) })
+	slices.SortFunc(
+		entries,
+		func(a, b reflect.Value) int { return strings.Compare(a.String(), b.String()) },
+	)
 
 	for _, entry := range entries {
 		recordDefaultLeaf(field.MapIndex(entry), key.AppendToken(entry.String()), v, isSecret)
@@ -345,7 +423,12 @@ func formatLeafValue(field reflect.Value) string {
 		return strconv.FormatBool(field.Bool())
 	case reflect.Int, reflect.Int8, reflect.Int16, reflect.Int32, reflect.Int64:
 		return strconv.FormatInt(field.Int(), 10)
-	case reflect.Uint, reflect.Uint8, reflect.Uint16, reflect.Uint32, reflect.Uint64, reflect.Uintptr:
+	case reflect.Uint,
+		reflect.Uint8,
+		reflect.Uint16,
+		reflect.Uint32,
+		reflect.Uint64,
+		reflect.Uintptr:
 		return strconv.FormatUint(field.Uint(), 10)
 	case reflect.Float32, reflect.Float64:
 		// NB: Bits, not 64. Float widens to float64, and formatting a float32
@@ -356,11 +439,21 @@ func formatLeafValue(field reflect.Value) string {
 	}
 }
 
-func handleStructField(field reflect.Value, at scope, v *visitor, inheritedSecret bool, activeTypes []reflect.Type, activePtrs []uintptr) error {
+func handleStructField(
+	field reflect.Value,
+	at scope,
+	v *visitor,
+	inheritedSecret bool,
+	activeTypes []reflect.Type,
+	activePtrs []uintptr,
+) error {
 	if field.CanAddr() && v.apply {
 		ensureEmbeddedPointers(field)
 
-		if d, ok := reflect.TypeAssert[Defaulter](field.Addr()); ok && v.apply && !isPromotedSetDefaults(field.Addr().Interface()) {
+		if d, ok := reflect.TypeAssert[Defaulter](
+			field.Addr(),
+		); ok && v.apply &&
+			!isPromotedSetDefaults(field.Addr().Interface()) {
 			if err := callSetDefaults(d); err != nil {
 				return scopeError(at.key, err)
 			}
@@ -370,19 +463,40 @@ func handleStructField(field reflect.Value, at scope, v *visitor, inheritedSecre
 	return recurseDefaults(field, at, v, inheritedSecret, activeTypes, activePtrs)
 }
 
-func handlePointerStructField(field reflect.Value, at scope, v *visitor, inheritedSecret bool, activeTypes []reflect.Type, activePtrs []uintptr) error {
+func handlePointerStructField(
+	field reflect.Value,
+	at scope,
+	v *visitor,
+	inheritedSecret bool,
+	activeTypes []reflect.Type,
+	activePtrs []uintptr,
+) error {
 	elemType := field.Type().Elem()
 	if slices.Contains(activeTypes, elemType) {
 		return nil
 	}
 
 	if field.IsNil() {
-		if err := initNilStructPointer(field, at, v, inheritedSecret, activeTypes, activePtrs); err != nil {
+		if err := initNilStructPointer(
+			field,
+			at,
+			v,
+			inheritedSecret,
+			activeTypes,
+			activePtrs,
+		); err != nil {
 			return err
 		}
 
 		if field.IsNil() && v.report != nil {
-			return recurseDefaults(reflect.New(elemType).Elem(), at, &visitor{report: v.report, apply: false}, inheritedSecret, activeTypes, activePtrs)
+			return recurseDefaults(
+				reflect.New(elemType).Elem(),
+				at,
+				&visitor{report: v.report, apply: false},
+				inheritedSecret,
+				activeTypes,
+				activePtrs,
+			)
 		}
 
 		return nil
@@ -400,7 +514,10 @@ func handlePointerStructField(field reflect.Value, at scope, v *visitor, inherit
 		ensureEmbeddedPointers(field.Elem())
 	}
 
-	if d, ok := reflect.TypeAssert[Defaulter](field); ok && v.apply && !isPromotedSetDefaults(field.Interface()) {
+	if d, ok := reflect.TypeAssert[Defaulter](
+		field,
+	); ok && v.apply &&
+		!isPromotedSetDefaults(field.Interface()) {
 		if err := callSetDefaults(d); err != nil {
 			return scopeError(at.key, err)
 		}
@@ -409,7 +526,14 @@ func handlePointerStructField(field reflect.Value, at scope, v *visitor, inherit
 	return recurseDefaults(field.Elem(), at, v, inheritedSecret, activeTypes, activePtrs)
 }
 
-func initNilStructPointer(field reflect.Value, at scope, v *visitor, inheritedSecret bool, activeTypes []reflect.Type, activePtrs []uintptr) error {
+func initNilStructPointer(
+	field reflect.Value,
+	at scope,
+	v *visitor,
+	inheritedSecret bool,
+	activeTypes []reflect.Type,
+	activePtrs []uintptr,
+) error {
 	elemType := field.Type().Elem()
 	ptrType := field.Type()
 
@@ -425,7 +549,10 @@ func initNilStructPointer(field reflect.Value, at scope, v *visitor, inheritedSe
 	newVal := reflect.New(elemType)
 	ensureEmbeddedPointers(newVal.Elem())
 
-	if d, ok := reflect.TypeAssert[Defaulter](newVal); ok && !isPromotedSetDefaults(newVal.Interface()) {
+	if d, ok := reflect.TypeAssert[Defaulter](
+		newVal,
+	); ok &&
+		!isPromotedSetDefaults(newVal.Interface()) {
 		if err := callSetDefaults(d); err != nil {
 			return scopeError(at.key, err)
 		}
@@ -461,7 +588,7 @@ func isPromotedSetDefaults(target any) bool {
 	return true
 }
 
-func declaresPromotedSetDefaults(t, elem reflect.Type) bool {
+func declaresPromotedSetDefaults(t reflect.Type, elem reflect.Type) bool {
 	if elem.Kind() == reflect.Struct && elem.Name() == "" {
 		return true
 	}

@@ -89,7 +89,8 @@ func (n yamlNode) decode(target reflect.Value) error {
 	errs := make([]error, 0, len(typeErr.Errors))
 	for _, message := range typeErr.Errors {
 		line, text := splitYAMLLine(message, n.node.Line)
-		errs = append(errs, &KeyError{Key: "", Line: line, Err: errors.New(text)}) //nolint:err113 // yaml.v3 reports failures as text
+		//nolint:err113 // yaml.v3 reports failures as text
+		errs = append(errs, &KeyError{Key: "", Line: line, Err: errors.New(text)})
 	}
 
 	return errors.Join(errs...)
@@ -107,7 +108,8 @@ func (n yamlNode) entries(o *overlay, key jsontext.Pointer) []overlayEntry {
 		keyNode := newYAMLNode(n.node.Content[index])
 		value := newYAMLNode(n.node.Content[index+1])
 
-		if keyNode.node.Kind == yaml.ScalarNode && keyNode.node.Value == "<<" && keyNode.node.ShortTag() == "!!merge" {
+		if keyNode.node.Kind == yaml.ScalarNode && keyNode.node.Value == "<<" &&
+			keyNode.node.ShortTag() == "!!merge" {
 			merged = append(merged, value.mergeSources(o, key)...)
 			continue
 		}
@@ -119,7 +121,12 @@ func (n yamlNode) entries(o *overlay, key jsontext.Pointer) []overlayEntry {
 
 		name := keyNode.node.Value
 		if line, seen := defined[name]; seen {
-			o.fail(key, keyNode.node.Line, fmt.Errorf("%w: %q at line %d", errYAMLDuplicateKey, name, line))
+			o.fail(
+				key,
+				keyNode.node.Line,
+				fmt.Errorf("%w: %q at line %d", errYAMLDuplicateKey, name, line),
+			)
+
 			continue
 		}
 

@@ -83,7 +83,14 @@ func TestCobraShowRedactsSecretCollections(t *testing.T) {
 	}
 
 	path := filepath.Join(t.TempDir(), "config.toml")
-	if err := os.WriteFile(path, []byte("tokens = ['private-value']\n[credentials]\nservice = 'private-value'\n[node.next]\ntoken = 'private-value'\n"), 0o600); err != nil {
+	if err := os.WriteFile(
+		path,
+		[]byte(
+			"tokens = ['private-value']\n[credentials]\nservice = 'private-value'\n"+
+				"[node.next]\ntoken = 'private-value'\n",
+		),
+		0o600,
+	); err != nil {
 		t.Fatal(err)
 	}
 
@@ -107,7 +114,10 @@ func TestCobraShowRedactsSecretCollections(t *testing.T) {
 		t.Fatalf("secret did not load: %+v", cfg)
 	}
 
-	if text := output.String(); strings.Contains(text, "private-value") || !strings.Contains(text, "credentials.service") || !strings.Contains(text, "node.next.token") || !strings.Contains(text, "[REDACTED]") {
+	if text := output.String(); strings.Contains(text, "private-value") ||
+		!strings.Contains(text, "credentials.service") ||
+		!strings.Contains(text, "node.next.token") ||
+		!strings.Contains(text, "[REDACTED]") {
 		t.Fatalf("show output = %q", text)
 	}
 }
@@ -135,7 +145,12 @@ func TestCobraSecretCollectionFlagPanics(t *testing.T) {
 func TestCobraRequiresFormatsOnExecute(t *testing.T) {
 	var cfg bridgetest.Config
 
-	root := &cobra.Command{Use: bridgetest.AppName, SilenceErrors: true, SilenceUsage: true, RunE: noop}
+	root := &cobra.Command{
+		Use:           bridgetest.AppName,
+		SilenceErrors: true,
+		SilenceUsage:  true,
+		RunE:          noop,
+	}
 	stratacobra.Bind(root, &cfg)
 	root.SetArgs(nil)
 
@@ -193,7 +208,11 @@ func TestCobraLoadFromChildHook(t *testing.T) {
 
 	root := &cobra.Command{Use: bridgetest.AppName}
 	b := stratacobra.Bind(root, &cfg, strata.WithFormats("toml"), strata.WithEnvPrefix("CHILD_"))
-	child := &cobra.Command{Use: "child", PersistentPreRunE: func(cmd *cobra.Command, _ []string) error { return b.Load(cmd) }, RunE: noop}
+	child := &cobra.Command{
+		Use:               "child",
+		PersistentPreRunE: func(cmd *cobra.Command, _ []string) error { return b.Load(cmd) },
+		RunE:              noop,
+	}
 	b.Flag(child.Flags(), "port", "port")
 	root.AddCommand(child)
 	t.Setenv("CHILD_PORT", "8100")
@@ -231,13 +250,36 @@ func TestCobraFlagKinds(t *testing.T) {
 		b.Flag(root.Flags(), key, key)
 	}
 
-	root.SetArgs([]string{"--name", "demo", "--enabled", "--narrow", "100", "--unsigned", "65000", "--ratio", "1.25", "--tags", "a,b", "--numbers", "3,4", "--timeout", "2d"})
+	root.SetArgs(
+		[]string{
+			"--name",
+			"demo",
+			"--enabled",
+			"--narrow",
+			"100",
+			"--unsigned",
+			"65000",
+			"--ratio",
+			"1.25",
+			"--tags",
+			"a,b",
+			"--numbers",
+			"3,4",
+			"--timeout",
+			"2d",
+		},
+	)
 
 	if err := root.Execute(); err != nil {
 		t.Fatal(err)
 	}
 
-	if cfg.Name != "demo" || !cfg.Enabled || cfg.Narrow != 100 || cfg.Unsigned != 65000 || cfg.Ratio != 1.25 || len(cfg.Tags) != 2 || len(cfg.Numbers) != 2 || cfg.Numbers[1] != 4 || time.Duration(cfg.Timeout) != 48*time.Hour {
+	if cfg.Name != "demo" || !cfg.Enabled || cfg.Narrow != 100 || cfg.Unsigned != 65000 ||
+		cfg.Ratio != 1.25 ||
+		len(cfg.Tags) != 2 ||
+		len(cfg.Numbers) != 2 ||
+		cfg.Numbers[1] != 4 ||
+		time.Duration(cfg.Timeout) != 48*time.Hour {
 		t.Fatalf("config = %+v", cfg)
 	}
 }

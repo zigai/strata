@@ -35,7 +35,8 @@ func (n tomlNode) kind() nodeKind {
 func (n tomlNode) line() int { return 0 }
 
 func (n tomlNode) decodesItself(typ reflect.Type) bool {
-	return typ.Implements(textUnmarshalerType) || reflect.PointerTo(typ).Implements(textUnmarshalerType)
+	return typ.Implements(textUnmarshalerType) ||
+		reflect.PointerTo(typ).Implements(textUnmarshalerType)
 }
 
 func (n tomlNode) items() []overlayNode {
@@ -62,7 +63,11 @@ func (n tomlNode) entries(_ *overlay, _ jsontext.Pointer) []overlayEntry {
 	entries := make([]overlayEntry, len(names))
 	for index, name := range names {
 		value := tomlNode{value: table[name]}
-		entries[index] = overlayEntry{name: name, key: textKey{name: name, parent: value}, value: value}
+		entries[index] = overlayEntry{
+			name:  name,
+			key:   textKey{name: name, parent: value},
+			value: value,
+		}
 	}
 
 	return entries
@@ -73,7 +78,8 @@ func (n tomlNode) entries(_ *overlay, _ jsontext.Pointer) []overlayEntry {
 func (n tomlNode) decode(target reflect.Value) error {
 	typ := target.Type()
 
-	if typ.Kind() == reflect.Interface && (n.value == nil || reflect.TypeOf(n.value).AssignableTo(typ)) {
+	if typ.Kind() == reflect.Interface &&
+		(n.value == nil || reflect.TypeOf(n.value).AssignableTo(typ)) {
 		if n.value == nil {
 			target.SetZero()
 		} else {

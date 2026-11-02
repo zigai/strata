@@ -35,7 +35,11 @@ func EnsureField(root reflect.Value, indexPath []int) (reflect.Value, error) {
 		for current.Kind() == reflect.Pointer {
 			if current.IsNil() {
 				if !current.CanSet() {
-					return reflect.Value{}, fmt.Errorf("%w: %s is not addressable", ErrNotStruct, formatIndexPath(indexPath[:i]))
+					return reflect.Value{}, fmt.Errorf(
+						"%w: %s is not addressable",
+						ErrNotStruct,
+						formatIndexPath(indexPath[:i]),
+					)
 				}
 
 				current.Set(reflect.New(current.Type().Elem()))
@@ -45,7 +49,11 @@ func EnsureField(root reflect.Value, indexPath []int) (reflect.Value, error) {
 		}
 
 		if current.Kind() != reflect.Struct {
-			return reflect.Value{}, fmt.Errorf("%w: %s is not a struct", ErrNotStruct, formatIndexPath(indexPath[:i]))
+			return reflect.Value{}, fmt.Errorf(
+				"%w: %s is not a struct",
+				ErrNotStruct,
+				formatIndexPath(indexPath[:i]),
+			)
 		}
 
 		current = current.Field(index)

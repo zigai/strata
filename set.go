@@ -140,7 +140,13 @@ func SetAll[T any](targetPath string, changes ...Change) error {
 
 		if !keys.known(key) {
 			return &unknownSetKeyError{path: targetPath, unknown: UnknownKey{
-				Origin:     Origin{Key: keypath.Format(key), Source: "", Path: "", Line: 0, RawValue: ""},
+				Origin: Origin{
+					Key:      keypath.Format(key),
+					Source:   "",
+					Path:     "",
+					Line:     0,
+					RawValue: "",
+				},
 				Suggestion: keypath.Format(keys.suggest(key)),
 			}}
 		}
@@ -300,7 +306,9 @@ func typedEditValue(typ reflect.Type, value any) (any, error) {
 		return nil, fmt.Errorf("%w: cannot decode %T as %s", errInvalidEditValue, value, typ)
 	}
 
-	if typ == reflect.TypeFor[time.Duration]() || reflect.PointerTo(typ).Implements(reflect.TypeFor[encoding.TextUnmarshaler]()) || isScalarKind(typ.Kind()) {
+	if typ == reflect.TypeFor[time.Duration]() ||
+		reflect.PointerTo(typ).Implements(reflect.TypeFor[encoding.TextUnmarshaler]()) ||
+		isScalarKind(typ.Kind()) {
 		return typedEditString(typ, fmt.Sprint(value))
 	}
 
@@ -325,7 +333,9 @@ func typedEditStringValue(typ reflect.Type, value any) (any, error) {
 }
 
 func isScalarKind(kind reflect.Kind) bool {
-	return kind == reflect.Bool || kind >= reflect.Int && kind <= reflect.Uint64 || kind == reflect.Float32 || kind == reflect.Float64
+	return kind == reflect.Bool || kind >= reflect.Int && kind <= reflect.Uint64 ||
+		kind == reflect.Float32 ||
+		kind == reflect.Float64
 }
 
 func typedEditString(typ reflect.Type, raw string) (any, error) {
@@ -383,7 +393,11 @@ func parseTypedSlice(typ reflect.Type, raw string) (any, error) {
 
 	preserveElements := false
 
-	for _, marshaler := range []reflect.Type{reflect.TypeFor[encoding.TextMarshaler](), reflect.TypeFor[json.Marshaler](), reflect.TypeFor[yaml.Marshaler]()} {
+	for _, marshaler := range []reflect.Type{
+		reflect.TypeFor[encoding.TextMarshaler](),
+		reflect.TypeFor[json.Marshaler](),
+		reflect.TypeFor[yaml.Marshaler](),
+	} {
 		if typ.Implements(marshaler) || reflect.PointerTo(typ).Implements(marshaler) {
 			preserveElements = true
 			break
@@ -393,7 +407,9 @@ func parseTypedSlice(typ reflect.Type, raw string) (any, error) {
 	parts := strings.Split(raw, ",")
 	result := reflect.MakeSlice(typ, len(parts), len(parts))
 	encoded := make([]any, len(parts))
-	typedResult := preserveElements || typ.Elem() != reflect.TypeFor[time.Duration]() && !reflect.PointerTo(typ.Elem()).Implements(reflect.TypeFor[encoding.TextUnmarshaler]())
+	typedResult := preserveElements ||
+		typ.Elem() != reflect.TypeFor[time.Duration]() &&
+			!reflect.PointerTo(typ.Elem()).Implements(reflect.TypeFor[encoding.TextUnmarshaler]())
 
 	for index, part := range parts {
 		value, err := parseTypedEditString(typ.Elem(), strings.TrimSpace(part), preserveElements)

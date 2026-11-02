@@ -37,7 +37,12 @@ func EnvVars[T any](prefix string) []EnvVar {
 
 	vars := make([]EnvVar, len(described))
 	for i, v := range described {
-		vars[i] = EnvVar{Key: keypath.Format(v.Key), Name: v.Name, Names: v.Names, IsSecret: v.IsSecret}
+		vars[i] = EnvVar{
+			Key:      keypath.Format(v.Key),
+			Name:     v.Name,
+			Names:    v.Names,
+			IsSecret: v.IsSecret,
+		}
 	}
 
 	return vars

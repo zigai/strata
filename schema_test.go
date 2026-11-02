@@ -103,8 +103,13 @@ func TestSchemaCommentsWorkingDirectoryDependsOnSourcePaths(t *testing.T) {
 
 	data, err := strata.Schema[DescribedSchemaConfig]()
 	if !filepath.IsAbs(sourceFile) {
-		if !errors.Is(err, strata.ErrReflectSchema) || !strings.Contains(err.Error(), "WithSchemaComments") {
-			t.Fatalf("Schema from outside the module of a trimmed build: err = %v, want ErrReflectSchema naming WithSchemaComments", err)
+		if !errors.Is(err, strata.ErrReflectSchema) ||
+			!strings.Contains(err.Error(), "WithSchemaComments") {
+			t.Fatalf(
+				"Schema from outside the module of a trimmed build: err = %v, "+
+					"want ErrReflectSchema naming WithSchemaComments",
+				err,
+			)
 		}
 
 		return
@@ -130,7 +135,9 @@ func TestSchemaCommentsFromExplicitSourceDirectory(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	data, err := strata.Schema[DescribedSchemaConfig](strata.WithSchemaComments("github.com/zigai/strata_test", directory))
+	data, err := strata.Schema[DescribedSchemaConfig](
+		strata.WithSchemaComments("github.com/zigai/strata_test", directory),
+	)
 	if err != nil {
 		t.Fatalf("Schema: %v", err)
 	}
@@ -165,7 +172,7 @@ func TestSchemaIgnoredFieldsDoNotRequireCommentSources(t *testing.T) {
 	type config struct {
 		Port       int
 		JSONHidden *http.Server `json:"-"`
-		Hidden     *http.Server `jsonschema:"-"`
+		Hidden     *http.Server `         jsonschema:"-"`
 	}
 
 	data, err := strata.Schema[config]()
@@ -184,7 +191,12 @@ func TestSchemaIgnoredFieldsDoNotRequireCommentSources(t *testing.T) {
 func TestSchemaReportsUnavailableCommentSource(t *testing.T) {
 	t.Parallel()
 
-	_, err := strata.Schema[DescribedSchemaConfig](strata.WithSchemaComments("github.com/zigai/strata_test", filepath.Join(t.TempDir(), "missing")))
+	_, err := strata.Schema[DescribedSchemaConfig](
+		strata.WithSchemaComments(
+			"github.com/zigai/strata_test",
+			filepath.Join(t.TempDir(), "missing"),
+		),
+	)
 	if !errors.Is(err, strata.ErrReflectSchema) {
 		t.Fatalf("Schema error = %v, want ErrReflectSchema", err)
 	}
@@ -260,8 +272,8 @@ func TestSchemaGeneration(t *testing.T) {
 
 type schemaKeysConfig struct {
 	ListenAddr string `strata:"listen"`
-	TOMLName   int    `toml:"tname"`
-	YAMLName   int    `yaml:"yname"`
+	TOMLName   int    `                toml:"tname"`
+	YAMLName   int    `                             yaml:"yname"`
 	Hidden     int    `strata:"-"`
 	Plain      int
 	Nested     struct {
@@ -307,7 +319,17 @@ func TestSchemaPropertiesAreConfigurationKeys(t *testing.T) {
 	props := schemaProperties(t, data)
 
 	got := slices.Sorted(maps.Keys(props))
-	if want := []string{"$schema", "listen", "nested", "plain", "tname", "yname"}; !slices.Equal(got, want) {
+	if want := []string{
+		"$schema",
+		"listen",
+		"nested",
+		"plain",
+		"tname",
+		"yname",
+	}; !slices.Equal(
+		got,
+		want,
+	) {
 		t.Fatalf("properties = %v, want %v", got, want)
 	}
 
@@ -359,7 +381,10 @@ func TestSchemaDefaultIDAndDeterminism(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	if id, _ := parsed["$id"].(string); !strings.HasPrefix(id, "https://github.com/zigai/strata_test/") {
+	if id, _ := parsed["$id"].(string); !strings.HasPrefix(
+		id,
+		"https://github.com/zigai/strata_test/",
+	) {
 		t.Fatalf("$id = %q, want it under the package path github.com/zigai/strata_test", id)
 	}
 }
@@ -394,7 +419,10 @@ func TestSchemaDescribesInitTemplates(t *testing.T) {
 	properties := schemaProperties(t, data)
 
 	path := filepath.Join(t.TempDir(), "config.json")
-	if err := strata.Init[schemaTemplateConfig](path, strata.WithSchemaURL("https://example.invalid/config.schema.json")); err != nil {
+	if err := strata.Init[schemaTemplateConfig](
+		path,
+		strata.WithSchemaURL("https://example.invalid/config.schema.json"),
+	); err != nil {
 		t.Fatalf("Init: %v", err)
 	}
 
@@ -408,7 +436,14 @@ func TestSchemaDescribesInitTemplates(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	if got, want := slices.Sorted(maps.Keys(document)), slices.Sorted(maps.Keys(properties)); !slices.Equal(got, want) {
+	if got, want := slices.Sorted(
+		maps.Keys(document),
+	), slices.Sorted(
+		maps.Keys(properties),
+	); !slices.Equal(
+		got,
+		want,
+	) {
 		t.Fatalf("template keys = %v, schema properties = %v", got, want)
 	}
 
@@ -494,11 +529,30 @@ func TestSchemaUsesTypesOwnSchemaMethods(t *testing.T) {
 		t.Errorf("token = %v, want %v", got, token)
 	}
 
-	if got, want := schemaObject(t, properties, "pointer"), map[string]any{"anyOf": []any{token, map[string]any{"type": "null"}}}; !reflect.DeepEqual(got, want) {
+	if got, want := schemaObject(
+		t,
+		properties,
+		"pointer",
+	), map[string]any{
+		"anyOf": []any{token, map[string]any{"type": "null"}},
+	}; !reflect.DeepEqual(
+		got,
+		want,
+	) {
 		t.Errorf("pointer = %v, want %v", got, want)
 	}
 
-	if got, want := schemaObject(t, properties, "receiver"), map[string]any{"type": "string", "minLength": float64(2)}; !reflect.DeepEqual(got, want) {
+	if got, want := schemaObject(
+		t,
+		properties,
+		"receiver",
+	), map[string]any{
+		"type":      "string",
+		"minLength": float64(2),
+	}; !reflect.DeepEqual(
+		got,
+		want,
+	) {
 		t.Errorf("receiver = %v, want %v", got, want)
 	}
 
@@ -510,7 +564,7 @@ func TestSchemaUsesTypesOwnSchemaMethods(t *testing.T) {
 
 type inlineSchemaConfig struct {
 	Server inlineServer    `yaml:",inline"`
-	Extra  map[string]bool `strata:",inline"`
+	Extra  map[string]bool `               strata:",inline"`
 	Name   string
 }
 
@@ -528,11 +582,30 @@ func TestSchemaDescribesInlineFieldsAtTheParentLevel(t *testing.T) {
 	}
 
 	properties := schemaObject(t, document, "properties")
-	if got, want := slices.Sorted(maps.Keys(properties)), []string{"$schema", "host", "name", "port"}; !slices.Equal(got, want) {
+	if got, want := slices.Sorted(
+		maps.Keys(properties),
+	), []string{
+		"$schema",
+		"host",
+		"name",
+		"port",
+	}; !slices.Equal(
+		got,
+		want,
+	) {
 		t.Fatalf("properties = %v, want %v", got, want)
 	}
 
-	if got, want := schemaObject(t, document, "additionalProperties"), map[string]any{"type": "boolean"}; !reflect.DeepEqual(got, want) {
+	if got, want := schemaObject(
+		t,
+		document,
+		"additionalProperties",
+	), map[string]any{
+		"type": "boolean",
+	}; !reflect.DeepEqual(
+		got,
+		want,
+	) {
 		t.Fatalf("additionalProperties = %v, want %v from the inline map", got, want)
 	}
 }
@@ -543,10 +616,10 @@ type schemaPayload struct {
 
 type schemaAliasConfig struct {
 	Payload any              `json:"wire_payload" strata:"wire_payload"`
-	Ref     *any             `strata:"ref"`
-	Name    string           `jsonschema:"description=tag description"`
-	Cleared string           `jsonschema:"description=cleared description"`
-	Owned   schemaOwnedHooks `strata:",inline"`
+	Ref     *any             `                    strata:"ref"`
+	Name    string           `                                          jsonschema:"description=tag description"`
+	Cleared string           `                                          jsonschema:"description=cleared description"`
+	Owned   schemaOwnedHooks `                    strata:",inline"`
 }
 
 func (schemaAliasConfig) JSONSchemaProperty(name string) any {
@@ -618,7 +691,11 @@ func TestSchemaHonorsPropertyHooksOnTheDeclaringType(t *testing.T) {
 		}
 	}
 
-	payload := schemaObject(t, schemaObject(t, schemaObject(t, document, "$defs"), "schemaPayload"), "properties")
+	payload := schemaObject(
+		t,
+		schemaObject(t, schemaObject(t, document, "$defs"), "schemaPayload"),
+		"properties",
+	)
 	if _, ok := payload["port"]; !ok {
 		t.Errorf("schemaPayload properties = %v, want the port key", payload)
 	}

@@ -27,25 +27,27 @@ var (
 		reflect.TypeFor[encoding.TextUnmarshaler](),
 	}
 
-	jsonDurationUnmarshalers = json.WithUnmarshalers(json.UnmarshalFunc(func(data []byte, value *time.Duration) error {
-		if jsontext.Value(data).Kind() != '"' {
-			return errDurationString
-		}
+	jsonDurationUnmarshalers = json.WithUnmarshalers(
+		json.UnmarshalFunc(func(data []byte, value *time.Duration) error {
+			if jsontext.Value(data).Kind() != '"' {
+				return errDurationString
+			}
 
-		var raw string
-		if err := json.Unmarshal(data, &raw); err != nil {
-			return fmt.Errorf("decode duration string: %w", err)
-		}
+			var raw string
+			if err := json.Unmarshal(data, &raw); err != nil {
+				return fmt.Errorf("decode duration string: %w", err)
+			}
 
-		parsed, err := duration.Parse(raw)
-		if err != nil {
-			return fmt.Errorf("parse duration: %w", err)
-		}
+			parsed, err := duration.Parse(raw)
+			if err != nil {
+				return fmt.Errorf("parse duration: %w", err)
+			}
 
-		*value = parsed
+			*value = parsed
 
-		return nil
-	}))
+			return nil
+		}),
+	)
 )
 
 type jsonNode struct {
@@ -86,7 +88,8 @@ func (n jsonNode) line() int {
 func (n jsonNode) decodesItself(typ reflect.Type) bool { return jsonDecodesItself(typ) }
 
 func (n jsonNode) decode(target reflect.Value) error {
-	return json.Unmarshal(n.value, target.Addr().Interface(), jsonDurationUnmarshalers) //nolint:wrapcheck // the overlay attributes it to a key
+	//nolint:wrapcheck // the overlay attributes it to a key
+	return json.Unmarshal(n.value, target.Addr().Interface(), jsonDurationUnmarshalers)
 }
 
 // decodeWithOptions decodes the value as a struct field carrying the json tag
@@ -98,7 +101,11 @@ func (n jsonNode) decodeWithOptions(target reflect.Value, options string) error 
 	document := make([]byte, 0, len(n.value)+len(`{"value":}`))
 	document = append(append(append(document, `{"value":`...), n.value...), '}')
 
-	if err := json.Unmarshal(document, holder.Addr().Interface(), jsonDurationUnmarshalers); err != nil {
+	if err := json.Unmarshal(
+		document,
+		holder.Addr().Interface(),
+		jsonDurationUnmarshalers,
+	); err != nil {
 		semantic, ok := errors.AsType[*json.SemanticError](err)
 		if !ok {
 			return fmt.Errorf("decode with %q option: %w", options, err)
@@ -107,10 +114,23 @@ func (n jsonNode) decodeWithOptions(target reflect.Value, options string) error 
 		// The holder's field is an implementation detail, so the message is
 		// rebuilt from what the value and the field's type were.
 		if semantic.Err == nil {
-			return fmt.Errorf("%w: JSON %s into %s with %q option", errOptionValue, semantic.JSONKind, target.Type(), options)
+			return fmt.Errorf(
+				"%w: JSON %s into %s with %q option",
+				errOptionValue,
+				semantic.JSONKind,
+				target.Type(),
+				options,
+			)
 		}
 
-		return fmt.Errorf("%w: JSON %s into %s with %q option: %w", errOptionValue, semantic.JSONKind, target.Type(), options, semantic.Err)
+		return fmt.Errorf(
+			"%w: JSON %s into %s with %q option: %w",
+			errOptionValue,
+			semantic.JSONKind,
+			target.Type(),
+			options,
+			semantic.Err,
+		)
 	}
 
 	target.Set(holder.Field(0))
@@ -130,7 +150,10 @@ func (n jsonNode) entries(_ *overlay, _ jsontext.Pointer) []overlayEntry {
 	var entries []overlayEntry
 
 	n.walk(func(name string, value jsonNode) {
-		entries = append(entries, overlayEntry{name: name, key: textKey{name: name, parent: value}, value: value})
+		entries = append(
+			entries,
+			overlayEntry{name: name, key: textKey{name: name, parent: value}, value: value},
+		)
 	})
 
 	return entries
@@ -166,7 +189,10 @@ func (n jsonNode) walk(visit func(name string, value jsonNode)) {
 		// The decoder reuses its buffer, so the value is sliced from the input.
 		end := decoder.InputOffset()
 		start := end - int64(len(value))
-		visit(name, jsonNode{document: n.document, offset: n.offset + start, value: n.value[start:end]})
+		visit(
+			name,
+			jsonNode{document: n.document, offset: n.offset + start, value: n.value[start:end]},
+		)
 	}
 }
 

@@ -47,12 +47,22 @@ func Parse(key string) (jsontext.Pointer, error) {
 		case '\\':
 			index++
 			if index == len(key) {
-				return "", fmt.Errorf(`%w "%s": it ends in a backslash; write \\ for a literal one`, ErrInvalid, key)
+				return "", fmt.Errorf(
+					`%w "%s": it ends in a backslash; write \\ for a literal one`,
+					ErrInvalid,
+					key,
+				)
 			}
 
 			if next := key[index]; next != '.' && next != '\\' {
 				escaped, _ := utf8.DecodeRuneInString(key[index:])
-				return "", fmt.Errorf(`%w "%s": \%c is not an escape; write \. for a literal dot and \\ for a backslash`, ErrInvalid, key, escaped)
+
+				return "", fmt.Errorf(
+					`%w "%s": \%c is not an escape; write \. for a literal dot and \\ for a backslash`,
+					ErrInvalid,
+					key,
+					escaped,
+				)
 			}
 
 			token.WriteByte(key[index])

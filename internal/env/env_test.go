@@ -30,7 +30,7 @@ type envTestConfig struct {
 	Debug       bool     `strata:"debug"`
 	Features    []string `strata:"features"`
 	IP          customIP `strata:"ip"`
-	CustomAlias string   `env:"OVERRIDE_ALIAS"`
+	CustomAlias string   `                  env:"OVERRIDE_ALIAS"`
 }
 
 func (e *envTestConfig) SetDefaults() {
@@ -269,7 +269,9 @@ func TestEnvironmentRecursiveType(t *testing.T) {
 		_ = env.Apply(&cfg, env.Options{Lookup: func(name string) (string, bool) {
 			lookups++
 			if lookups == 40 {
-				panic("probe safety guard: 40 lookups reached with no matching environment variables")
+				panic(
+					"probe safety guard: 40 lookups reached with no matching environment variables",
+				)
 			}
 
 			return "", false
@@ -288,7 +290,12 @@ func TestExplicitEnvExclusion(t *testing.T) {
 		Token string `env:"-"`
 	}{Token: "original"}
 
-	err := env.Apply(&cfg, env.Options{Lookup: func(name string) (string, bool) { return "unexpected", name == "TOKEN" }})
+	err := env.Apply(
+		&cfg,
+		env.Options{
+			Lookup: func(name string) (string, bool) { return "unexpected", name == "TOKEN" },
+		},
+	)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -316,15 +323,31 @@ func TestApplyBindsInlineFieldsUnderTheirOwnKeys(t *testing.T) {
 
 	bound := make(map[jsontext.Pointer]string)
 
-	if err := env.Apply(&cfg, env.Options{Prefix: "TAPP_", Lookup: nil, OnBind: func(key jsontext.Pointer, _, raw string) { bound[key] = raw }}); err != nil {
+	if err := env.Apply(
+		&cfg,
+		env.Options{
+			Prefix: "TAPP_",
+			Lookup: nil,
+			OnBind: func(key jsontext.Pointer, _, raw string) { bound[key] = raw },
+		},
+	); err != nil {
 		t.Fatal(err)
 	}
 
 	if cfg.Server.Host != "inline" || cfg.Plain.Host != "nested" {
-		t.Fatalf("config = %+v, want the inline host from TAPP_HOST and the nested one from TAPP_PLAIN__HOST", cfg)
+		t.Fatalf(
+			"config = %+v, want the inline host from TAPP_HOST and the nested one from TAPP_PLAIN__HOST",
+			cfg,
+		)
 	}
 
-	if want := map[jsontext.Pointer]string{"/host": "inline", "/plain/host": "nested"}; !maps.Equal(bound, want) {
+	if want := map[jsontext.Pointer]string{
+		"/host":       "inline",
+		"/plain/host": "nested",
+	}; !maps.Equal(
+		bound,
+		want,
+	) {
 		t.Fatalf("bound keys = %v, want %v", bound, want)
 	}
 }

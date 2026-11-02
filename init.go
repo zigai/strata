@@ -102,7 +102,7 @@ func Init[T any](targetPath string, opts ...InitOption) (err error) {
 	return writeInitFile(resolvedPath, targetPath, data, options.overwrite)
 }
 
-func checkFree(resolvedPath, targetPath string) error {
+func checkFree(resolvedPath string, targetPath string) error {
 	// NB: any stat failure other than "not exist" means the path is there but
 	// unreachable. It must not be taken for a free path.
 	_, statErr := os.Stat(resolvedPath)
@@ -117,7 +117,7 @@ func checkFree(resolvedPath, targetPath string) error {
 	}
 }
 
-func writeInitFile(resolvedPath, targetPath string, data []byte, overwrite bool) error {
+func writeInitFile(resolvedPath string, targetPath string, data []byte, overwrite bool) error {
 	if overwrite {
 		mode, err := existingMode(resolvedPath, 0o644)
 		if err != nil {

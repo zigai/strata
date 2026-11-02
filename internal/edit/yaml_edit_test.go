@@ -170,7 +170,11 @@ func TestUpdateYAMLAnchorPreserved(t *testing.T) {
 func TestUpdateYAMLKeepsIndentationOfAnchoredMappings(t *testing.T) {
 	t.Parallel()
 
-	updated, err := edit.UpdateYAML([]byte("base: &b\n  host: a\nprod: *b\n"), []string{"prod", "host"}, "z")
+	updated, err := edit.UpdateYAML(
+		[]byte("base: &b\n  host: a\nprod: *b\n"),
+		[]string{"prod", "host"},
+		"z",
+	)
 	if err != nil {
 		t.Fatalf("UpdateYAML error: %v", err)
 	}
@@ -195,7 +199,8 @@ server: *default
 	}
 
 	result := string(updated)
-	if strings.Contains(result, "val: 999") && strings.Contains(result, "default:\n  nested:\n    val: 999") {
+	if strings.Contains(result, "val: 999") &&
+		strings.Contains(result, "default:\n  nested:\n    val: 999") {
 		t.Errorf("mutating server.nested.val corrupted default.nested.val:\n%s", result)
 	}
 }
@@ -275,6 +280,11 @@ production:
 	}
 
 	if before.Server.Block != "text\n" || after.Server.Block != "text\n" {
-		t.Errorf("block scalar before = %q, after = %q; want %q", before.Server.Block, after.Server.Block, "text\n")
+		t.Errorf(
+			"block scalar before = %q, after = %q; want %q",
+			before.Server.Block,
+			after.Server.Block,
+			"text\n",
+		)
 	}
 }

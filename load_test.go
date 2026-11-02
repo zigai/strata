@@ -61,7 +61,11 @@ func FuzzLoadConfiguration(f *testing.F) {
 			Nodes      []struct{ Token strata.Secret }
 		}
 
-		_, metadata, err := strata.LoadWithMetadata[config](strata.WithPath("-"), strata.WithStdin(bytes.NewReader(data)), strata.WithFormats(format))
+		_, metadata, err := strata.LoadWithMetadata[config](
+			strata.WithPath("-"),
+			strata.WithStdin(bytes.NewReader(data)),
+			strata.WithFormats(format),
+		)
 		if err == nil {
 			for _, unknown := range metadata.UnknownKeys() {
 				if unknown.RawValue != "" {
@@ -209,7 +213,11 @@ func TestSliceReplacementSemantics(t *testing.T) {
 
 	wantPaths := []string{"/custom/build"}
 	if !reflect.DeepEqual(cfg.IgnorePaths, wantPaths) {
-		t.Fatalf("IgnorePaths = %v, want %v (Slice replacement failed!)", cfg.IgnorePaths, wantPaths)
+		t.Fatalf(
+			"IgnorePaths = %v, want %v (Slice replacement failed!)",
+			cfg.IgnorePaths,
+			wantPaths,
+		)
 	}
 }
 
@@ -218,7 +226,11 @@ func TestExplicitPathOutranksWithoutFileDiscovery(t *testing.T) {
 
 	path := writeFile(t, "cfg.toml", "small = 42\n")
 
-	got, err := strata.Load[narrowConfig](strata.WithPath(path), strata.WithoutFileDiscovery(), strata.WithFormats("toml"))
+	got, err := strata.Load[narrowConfig](
+		strata.WithPath(path),
+		strata.WithoutFileDiscovery(),
+		strata.WithFormats("toml"),
+	)
 	if err != nil {
 		t.Fatalf("Load: %v", err)
 	}
@@ -253,7 +265,11 @@ func TestMaxFileSizeAcceptsMaxInt64(t *testing.T) {
 
 	path := writeFile(t, "cfg.toml", "small = 7\n")
 
-	got, err := strata.Load[narrowConfig](strata.WithPath(path), strata.WithMaxFileSize(math.MaxInt64), strata.WithFormats("toml"))
+	got, err := strata.Load[narrowConfig](
+		strata.WithPath(path),
+		strata.WithMaxFileSize(math.MaxInt64),
+		strata.WithFormats("toml"),
+	)
 	if err != nil {
 		t.Fatalf("Load: %v", err)
 	}
@@ -268,7 +284,11 @@ func TestFileTooLargeIsClassifiable(t *testing.T) {
 
 	path := writeFile(t, "cfg.toml", "small = 7\n")
 
-	_, err := strata.Load[narrowConfig](strata.WithPath(path), strata.WithMaxFileSize(4), strata.WithFormats("toml"))
+	_, err := strata.Load[narrowConfig](
+		strata.WithPath(path),
+		strata.WithMaxFileSize(4),
+		strata.WithFormats("toml"),
+	)
 	if !errors.Is(err, strata.ErrFileTooLarge) {
 		t.Fatalf("err = %v, want it to wrap ErrFileTooLarge", err)
 	}
@@ -302,7 +322,11 @@ func TestUserLayerDotConfigEndToEnd(t *testing.T) {
 	}
 
 	configFile := filepath.Join(appConfigDir, "config.toml")
-	if err := os.WriteFile(configFile, []byte("port = 8181\nhost = \"dot-config-host\"\n"), 0o600); err != nil {
+	if err := os.WriteFile(
+		configFile,
+		[]byte("port = 8181\nhost = \"dot-config-host\"\n"),
+		0o600,
+	); err != nil {
 		t.Fatalf("WriteFile: %v", err)
 	}
 
@@ -379,10 +403,23 @@ func TestYAMLMergeLoadsValueAndOrigin(t *testing.T) {
 		data string
 		want string
 	}{
-		{name: "alias", data: "base: &base\n  dbHost: merged.example\ndatabase:\n  <<: *base\n", want: "merged.example"},
+		{
+			name: "alias",
+			data: "base: &base\n  dbHost: merged.example\ndatabase:\n  <<: *base\n",
+			want: "merged.example",
+		},
 		{name: "inline", data: "database: {<<: {dbHost: inline.example}}\n", want: "inline.example"},
-		{name: "sequence", data: "first: &first {dbHost: first.example}\nsecond: &second {dbHost: second.example}\ndatabase:\n  <<: [*first, *second]\n", want: "first.example"},
-		{name: "override", data: "base: &base {dbHost: merged.example}\ndatabase:\n  <<: *base\n  dbHost: explicit.example\n", want: "explicit.example"},
+		{
+			name: "sequence",
+			data: "first: &first {dbHost: first.example}\nsecond: &second {dbHost: second.example}\n" +
+				"database:\n  <<: [*first, *second]\n",
+			want: "first.example",
+		},
+		{
+			name: "override",
+			data: "base: &base {dbHost: merged.example}\ndatabase:\n  <<: *base\n  dbHost: explicit.example\n",
+			want: "explicit.example",
+		},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			path := filepath.Join(t.TempDir(), "config.yaml")
@@ -390,7 +427,10 @@ func TestYAMLMergeLoadsValueAndOrigin(t *testing.T) {
 				t.Fatal(err)
 			}
 
-			cfg, meta, err := strata.LoadWithMetadata[yamlMergeConfig](strata.WithPath(path), strata.WithFormats("yaml"))
+			cfg, meta, err := strata.LoadWithMetadata[yamlMergeConfig](
+				strata.WithPath(path),
+				strata.WithFormats("yaml"),
+			)
 			if err != nil {
 				t.Fatal(err)
 			}
@@ -412,12 +452,21 @@ func TestOptionalPath(t *testing.T) {
 
 	missing := filepath.Join(t.TempDir(), "absent.toml")
 
-	cfg, err := strata.Load[typoConfig](strata.WithOptionalPath(missing), strata.WithFormats("toml"))
+	cfg, err := strata.Load[typoConfig](
+		strata.WithOptionalPath(missing),
+		strata.WithFormats("toml"),
+	)
 	if err != nil || cfg.Port != 8080 {
 		t.Fatalf("optional missing file: cfg=%+v err=%v, want defaults", cfg, err)
 	}
 
-	if _, err := strata.Load[typoConfig](strata.WithPath(missing), strata.WithFormats("toml")); !errors.Is(err, os.ErrNotExist) {
+	if _, err := strata.Load[typoConfig](
+		strata.WithPath(missing),
+		strata.WithFormats("toml"),
+	); !errors.Is(
+		err,
+		os.ErrNotExist,
+	) {
 		t.Fatalf("required missing file: err = %v, want os.ErrNotExist", err)
 	}
 
@@ -429,7 +478,13 @@ func TestOptionalPath(t *testing.T) {
 	}
 
 	broken := writeFile(t, "broken.toml", "port = = 1\n")
-	if _, err := strata.Load[typoConfig](strata.WithOptionalPath(broken), strata.WithFormats("toml")); !errors.Is(err, strata.ErrMalformed) {
+	if _, err := strata.Load[typoConfig](
+		strata.WithOptionalPath(broken),
+		strata.WithFormats("toml"),
+	); !errors.Is(
+		err,
+		strata.ErrMalformed,
+	) {
 		t.Fatalf("optional malformed file: err = %v, want ErrMalformed", err)
 	}
 }
@@ -437,7 +492,9 @@ func TestOptionalPath(t *testing.T) {
 func TestWithDefaultsOverridesSetDefaults(t *testing.T) {
 	t.Parallel()
 
-	cfg, meta, err := strata.LoadWithMetadata[typoConfig](strata.WithDefaults(typoConfig{Host: "example", Port: 7000}))
+	cfg, meta, err := strata.LoadWithMetadata[typoConfig](
+		strata.WithDefaults(typoConfig{Host: "example", Port: 7000}),
+	)
 	if err != nil {
 		t.Fatalf("Load: %v", err)
 	}
@@ -446,7 +503,10 @@ func TestWithDefaultsOverridesSetDefaults(t *testing.T) {
 		t.Fatalf("cfg = %+v, want WithDefaults to win over SetDefaults", cfg)
 	}
 
-	if origin, ok := meta.Where(portKey); !ok || origin.Source != strata.SourceDefault || origin.RawValue != "7000" {
+	if origin, ok := meta.Where(
+		portKey,
+	); !ok || origin.Source != strata.SourceDefault ||
+		origin.RawValue != "7000" {
 		t.Fatalf("port origin = %+v, want default 7000", origin)
 	}
 }
@@ -498,7 +558,11 @@ func TestLayerPrecedenceAcrossEveryLayerSubset(t *testing.T) {
 		t.Run(fmt.Sprintf("%+v", tc.layers), func(t *testing.T) {
 			systemBase, userBase := isolateLayers(t)
 
-			opts := []strata.Option{strata.WithAppName("myapp"), strata.WithFormats("toml"), strata.WithEnvPrefix("MYAPP_")}
+			opts := []strata.Option{
+				strata.WithAppName("myapp"),
+				strata.WithFormats("toml"),
+				strata.WithEnvPrefix("MYAPP_"),
+			}
 
 			if tc.layers.system {
 				writeLayerFile(t, systemBase, "port = 2\nnote = \"system\"\n")
@@ -542,7 +606,11 @@ func TestLoadIntoKeepsSeededValues(t *testing.T) {
 	target := seededConfig{Host: "seeded.example", Port: 1111, Tags: []string{"a"}, Debug: true}
 
 	path := writeFile(t, "sparse.toml", "port = 2222\n")
-	if _, err := strata.LoadInto(&target, strata.WithPath(path), strata.WithFormats("toml")); err != nil {
+	if _, err := strata.LoadInto(
+		&target,
+		strata.WithPath(path),
+		strata.WithFormats("toml"),
+	); err != nil {
 		t.Fatalf("LoadInto: %v", err)
 	}
 
@@ -562,7 +630,11 @@ func TestLoadWithoutOptionsReadsOnlyDefaults(t *testing.T) {
 			t.Fatal(err)
 		}
 
-		if err := os.WriteFile(filepath.Join(dir, "config.toml"), []byte("port = 9\n"), 0o600); err != nil {
+		if err := os.WriteFile(
+			filepath.Join(dir, "config.toml"),
+			[]byte("port = 9\n"),
+			0o600,
+		); err != nil {
 			t.Fatal(err)
 		}
 	}
@@ -615,7 +687,10 @@ func TestBrokenLayerFilesFailTheLoad(t *testing.T) {
 			systemBase, userBase := isolateLayers(t)
 			tc.setup(t, systemBase, userBase)
 
-			got, err := strata.Load[layerConfig](strata.WithAppName("myapp"), strata.WithFormats("toml"))
+			got, err := strata.Load[layerConfig](
+				strata.WithAppName("myapp"),
+				strata.WithFormats("toml"),
+			)
 			if !errors.Is(err, tc.want) {
 				t.Fatalf("err = %v, want it to wrap %v", err, tc.want)
 			}
@@ -634,7 +709,12 @@ func TestWithoutFileDiscoverySkipsPopulatedLayers(t *testing.T) {
 	path := writeFile(t, "explicit.toml", "port = 4\n")
 
 	got, meta, err := strata.LoadWithMetadata[layerConfig](
-		strata.WithAppName("myapp"), strata.WithFormats("toml"), strata.WithoutFileDiscovery(), strata.WithPath(path),
+		strata.WithAppName(
+			"myapp",
+		),
+		strata.WithFormats("toml"),
+		strata.WithoutFileDiscovery(),
+		strata.WithPath(path),
 	)
 	if err != nil {
 		t.Fatalf("Load: %v", err)
@@ -676,7 +756,13 @@ func TestLoadRejectsBadTargetsAndDirectoryPaths(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	if _, err := strata.Load[layerConfig](strata.WithPath(dir), strata.WithFormats("toml")); !errors.Is(err, strata.ErrPathIsDirectory) {
+	if _, err := strata.Load[layerConfig](
+		strata.WithPath(dir),
+		strata.WithFormats("toml"),
+	); !errors.Is(
+		err,
+		strata.ErrPathIsDirectory,
+	) {
 		t.Errorf("directory path: err = %v, want ErrPathIsDirectory", err)
 	}
 }
@@ -687,8 +773,12 @@ func TestWithDefaultsRanksBelowFilesAndEnv(t *testing.T) {
 	path := writeFile(t, "config.toml", "port = 9000\n")
 
 	got, meta, err := strata.LoadWithMetadata[typoConfig](
-		strata.WithDefaults(typoConfig{Host: "defaults.example", Port: 7000, Database: typoDatabase{Port: 5432}}),
-		strata.WithPath(path), strata.WithFormats("toml"), strata.WithEnvPrefix("WD_"),
+		strata.WithDefaults(
+			typoConfig{Host: "defaults.example", Port: 7000, Database: typoDatabase{Port: 5432}},
+		),
+		strata.WithPath(path),
+		strata.WithFormats("toml"),
+		strata.WithEnvPrefix("WD_"),
 	)
 	if err != nil {
 		t.Fatalf("Load: %v", err)
@@ -699,7 +789,11 @@ func TestWithDefaultsRanksBelowFilesAndEnv(t *testing.T) {
 		t.Fatalf("got %+v, want %+v", got, want)
 	}
 
-	for key, source := range map[string]strata.SourceKind{"host": strata.SourceEnv, portKey: strata.SourceFile, "database.port": strata.SourceDefault} {
+	for key, source := range map[string]strata.SourceKind{
+		"host":          strata.SourceEnv,
+		portKey:         strata.SourceFile,
+		"database.port": strata.SourceDefault,
+	} {
 		if origin, ok := meta.Where(key); !ok || origin.Source != source {
 			t.Errorf("%s origin = %+v, want %s", key, origin, source)
 		}
@@ -753,7 +847,11 @@ func TestStdinOriginIsStdin(t *testing.T) {
 	t.Parallel()
 
 	got, meta, err := strata.LoadWithMetadata[formatsTestConfig](
-		strata.WithPath("-"), strata.WithStdin(strings.NewReader("port: 9000\nhost: h\n")), strata.WithFormats("yaml", "toml"),
+		strata.WithPath(
+			"-",
+		),
+		strata.WithStdin(strings.NewReader("port: 9000\nhost: h\n")),
+		strata.WithFormats("yaml", "toml"),
 	)
 	if err != nil {
 		t.Fatalf("Load: %v", err)
@@ -763,7 +861,13 @@ func TestStdinOriginIsStdin(t *testing.T) {
 		t.Fatalf("got %+v", got)
 	}
 
-	want := strata.Origin{Key: portKey, Source: strata.SourceStdin, Path: "-", Line: 1, RawValue: "9000"}
+	want := strata.Origin{
+		Key:      portKey,
+		Source:   strata.SourceStdin,
+		Path:     "-",
+		Line:     1,
+		RawValue: "9000",
+	}
 	if origin, _ := meta.Where(portKey); origin != want {
 		t.Fatalf("port origin = %+v, want %+v", origin, want)
 	}
@@ -806,7 +910,13 @@ func TestMaxFileSizeBoundary(t *testing.T) {
 			t.Run(tc.name+" "+source, func(t *testing.T) {
 				t.Parallel()
 
-				got, err := strata.Load[formatsTestConfig](append(opts(t), strata.WithFormats("toml"), strata.WithMaxFileSize(tc.limit))...)
+				got, err := strata.Load[formatsTestConfig](
+					append(
+						opts(t),
+						strata.WithFormats("toml"),
+						strata.WithMaxFileSize(tc.limit),
+					)...,
+				)
 				if !errors.Is(err, tc.want) || tc.want == nil && err != nil {
 					t.Fatalf("err = %v, want %v", err, tc.want)
 				}
@@ -872,7 +982,7 @@ func TestInvalidLayoutsAreRejected(t *testing.T) {
 
 	type twoInlineMaps struct {
 		A map[string]int `strata:",inline"`
-		B map[string]int `yaml:",inline"`
+		B map[string]int `                 yaml:",inline"`
 	}
 
 	type inlineScalar struct {
@@ -899,8 +1009,12 @@ func TestInvalidLayoutsAreRejected(t *testing.T) {
 		"same depth duplicates": func() error { _, err := strata.Load[sameDepthKeys](); return err },
 		"inline self encoder":   func() error { _, err := strata.Load[inlineSelfEncoder](); return err },
 		"schema":                func() error { _, err := strata.Schema[sameDepthKeys](); return err },
-		"save":                  func() error { return strata.Save(filepath.Join(t.TempDir(), "c.json"), twoInlineMaps{}) },
-		"set":                   func() error { return strata.Set[inlineScalar](writeFile(t, "c.yaml", "n: 1\n"), "n", 2) },
+		"save": func() error {
+			return strata.Save(filepath.Join(t.TempDir(), "c.json"), twoInlineMaps{})
+		},
+		"set": func() error {
+			return strata.Set[inlineScalar](writeFile(t, "c.yaml", "n: 1\n"), "n", 2)
+		},
 	} {
 		t.Run(name, func(t *testing.T) {
 			t.Parallel()
@@ -933,12 +1047,19 @@ func TestShallowerFieldsOwnTheirKeys(t *testing.T) {
 
 	path := writeFile(t, "config.yaml", "port: 9\nhost: h\n")
 
-	got, err := strata.Load[shadowingConfig](strata.WithPath(path), strata.WithFormats(yamlFormat), strata.WithStrict())
+	got, err := strata.Load[shadowingConfig](
+		strata.WithPath(path),
+		strata.WithFormats(yamlFormat),
+		strata.WithStrict(),
+	)
 	if err != nil {
 		t.Fatal(err)
 	}
 
 	if got.Port != 9 || got.shadowingInner.Port != 1 || got.Host != "h" {
-		t.Fatalf("loaded %+v, want the outer port from the file and the shadowed one left at its default", got)
+		t.Fatalf(
+			"loaded %+v, want the outer port from the file and the shadowed one left at its default",
+			got,
+		)
 	}
 }

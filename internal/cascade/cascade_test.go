@@ -125,7 +125,11 @@ func TestCascadeUserLayerDiscovery(t *testing.T) {
 		}
 
 		configPath := filepath.Join(appDir, "config.toml")
-		if err := os.WriteFile(configPath, []byte("host = \"dot-config-host\"\n"), 0o600); err != nil {
+		if err := os.WriteFile(
+			configPath,
+			[]byte("host = \"dot-config-host\"\n"),
+			0o600,
+		); err != nil {
 			t.Fatalf("WriteFile: %v", err)
 		}
 
@@ -162,7 +166,7 @@ func isolateLayers(t *testing.T) (string, string) {
 	return systemBase, userBase
 }
 
-func writeLayerFile(t *testing.T, base, name string) string {
+func writeLayerFile(t *testing.T, base string, name string) string {
 	t.Helper()
 
 	dir := filepath.Join(base, "testapp")
@@ -183,7 +187,9 @@ func TestDiscoverOrdersSystemBelowUser(t *testing.T) {
 	systemPath := writeLayerFile(t, systemBase, "config.toml")
 	userPath := writeLayerFile(t, userBase, "config.toml")
 
-	layers, err := cascade.Discover(cascade.DiscoverOptions{AppName: "testapp", Extensions: []string{".toml"}})
+	layers, err := cascade.Discover(
+		cascade.DiscoverOptions{AppName: "testapp", Extensions: []string{".toml"}},
+	)
 	if err != nil {
 		t.Fatalf("Discover: %v", err)
 	}
@@ -206,7 +212,9 @@ func TestDiscoverSystemLayerSearchesConfigDirsInOrder(t *testing.T) {
 
 	t.Setenv("XDG_CONFIG_DIRS", withoutFile+": :"+first+":"+second)
 
-	layers, err := cascade.Discover(cascade.DiscoverOptions{AppName: "testapp", Extensions: []string{".toml"}})
+	layers, err := cascade.Discover(
+		cascade.DiscoverOptions{AppName: "testapp", Extensions: []string{".toml"}},
+	)
 	if err != nil {
 		t.Fatalf("Discover: %v", err)
 	}

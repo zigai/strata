@@ -92,7 +92,7 @@ func readOneYAMLDocument(data []byte) (*yaml.Node, bool, error) {
 	}
 }
 
-func hasYAMLAliasCycle(node *yaml.Node, active, done map[*yaml.Node]bool) bool {
+func hasYAMLAliasCycle(node *yaml.Node, active map[*yaml.Node]bool, done map[*yaml.Node]bool) bool {
 	if node == nil || done[node] {
 		return false
 	}
@@ -154,5 +154,10 @@ func (value yamlString) MarshalYAML() (any, error) {
 		return text, nil
 	}
 
-	return &yaml.Node{Kind: yaml.ScalarNode, Tag: "!!str", Value: text, Style: yaml.DoubleQuotedStyle}, nil
+	return &yaml.Node{
+		Kind:  yaml.ScalarNode,
+		Tag:   "!!str",
+		Value: text,
+		Style: yaml.DoubleQuotedStyle,
+	}, nil
 }

@@ -93,7 +93,12 @@ type overlay struct {
 func decodeOverlay(format string, root overlayNode, target any) error {
 	val := reflect.ValueOf(target)
 	if val.Kind() != reflect.Pointer {
-		return fmt.Errorf("%w: %s unmarshal: decode target %T is not a pointer", ErrMalformed, format, target)
+		return fmt.Errorf(
+			"%w: %s unmarshal: decode target %T is not a pointer",
+			ErrMalformed,
+			format,
+			target,
+		)
 	}
 
 	if err := layout.Validate(val.Elem().Type()); err != nil {
@@ -242,7 +247,12 @@ func (o *overlay) applyArray(node overlayNode, target reflect.Value, key jsontex
 
 	nodes := node.items()
 	if len(nodes) != target.Len() {
-		o.fail(key, node.line(), fmt.Errorf("%w: want %d, got %d", errArrayLength, target.Len(), len(nodes)))
+		o.fail(
+			key,
+			node.line(),
+			fmt.Errorf("%w: want %d, got %d", errArrayLength, target.Len(), len(nodes)),
+		)
+
 		return
 	}
 
@@ -281,7 +291,11 @@ func (o *overlay) applyInterface(node overlayNode, target reflect.Value, key jso
 // applyImplementation decodes onto a copy of the value an interface with
 // methods holds and stores it back, as encoding/json does. Nothing names a
 // concrete type for a nil interface, so a value other than null fails.
-func (o *overlay) applyImplementation(node overlayNode, target reflect.Value, key jsontext.Pointer) {
+func (o *overlay) applyImplementation(
+	node overlayNode,
+	target reflect.Value,
+	key jsontext.Pointer,
+) {
 	if target.IsNil() {
 		o.fail(key, node.line(), fmt.Errorf("%w %s", errNilInterface, target.Type()))
 		return
@@ -311,7 +325,12 @@ func (o *overlay) decodeLeaf(node overlayNode, target reflect.Value, key jsontex
 	return true
 }
 
-func (o *overlay) decodeWithOptions(node overlayNode, target reflect.Value, options string, key jsontext.Pointer) {
+func (o *overlay) decodeWithOptions(
+	node overlayNode,
+	target reflect.Value,
+	options string,
+	key jsontext.Pointer,
+) {
 	decoder, ok := node.(optionDecoder)
 	if !ok {
 		o.apply(node, target, key)
@@ -327,7 +346,7 @@ func (o *overlay) fail(key jsontext.Pointer, line int, err error) {
 	o.errs = append(o.errs, &KeyError{Key: keypath.Format(key), Line: line, Err: err})
 }
 
-func mergeDynamic(current, update map[string]any) map[string]any {
+func mergeDynamic(current map[string]any, update map[string]any) map[string]any {
 	merged := make(map[string]any, len(current)+len(update))
 	maps.Copy(merged, current)
 
@@ -374,7 +393,11 @@ func keyFields(typ reflect.Type, format string) *structFields {
 	}
 
 	structLayout := layout.Of(typ)
-	fields := &structFields{byKey: make(map[string]keyField), folded: make(map[string]string), inline: nil}
+	fields := &structFields{
+		byKey:  make(map[string]keyField),
+		folded: make(map[string]string),
+		inline: nil,
+	}
 
 	for _, field := range structLayout.Fields {
 		tag := field.Member.Field.Tag.Get(format)

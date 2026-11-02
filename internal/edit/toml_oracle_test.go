@@ -14,7 +14,7 @@ import (
 	"github.com/zigai/strata/internal/edit"
 )
 
-func requireTOMLEdit(t *testing.T, input, output []byte, path []string, value any) {
+func requireTOMLEdit(t *testing.T, input []byte, output []byte, path []string, value any) {
 	t.Helper()
 
 	var before, after map[string]any
@@ -28,8 +28,14 @@ func requireTOMLEdit(t *testing.T, input, output []byte, path []string, value an
 
 	want := setDecoded(t, before, path, decodedTOMLValue(t, value))
 	if !reflect.DeepEqual(after, want) {
-		t.Fatalf("edit of %q changed the document wrongly\ninput:\n%s\noutput:\n%s\ndecoded: %#v\nwant:    %#v",
-			strings.Join(path, "."), input, output, after, want)
+		t.Fatalf(
+			"edit of %q changed the document wrongly\ninput:\n%s\noutput:\n%s\ndecoded: %#v\nwant:    %#v",
+			strings.Join(path, "."),
+			input,
+			output,
+			after,
+			want,
+		)
 	}
 }
 
@@ -77,21 +83,75 @@ func TestUpdateTOMLChangesOnlyTheNamedKey(t *testing.T) {
 		path  []string
 		value any
 	}{
-		{"nested table value", "# top\n[server]\nhost = \"127.0.0.1\" # local\nport = 8080\n\n[database]\nport = 5432 # pg\n", "database.port", []string{"database", portKey}, 5433},
-		{"append to existing table", "[server]\nport = 8080\n\n[database]\nport = 5432\n", "server.timeout", []string{"server", "timeout"}, 30},
+		{
+			"nested table value",
+			"# top\n[server]\nhost = \"127.0.0.1\" # local\nport = 8080\n\n[database]\nport = 5432 # pg\n",
+			"database.port",
+			[]string{"database", portKey},
+			5433,
+		},
+		{
+			"append to existing table",
+			"[server]\nport = 8080\n\n[database]\nport = 5432\n",
+			"server.timeout",
+			[]string{"server", "timeout"},
+			30,
+		},
 		{"append new table", "[server]\nport = 8080\n", "metrics.enabled", []string{"metrics", "enabled"}, true},
 		{"append root key after tables", "# c\n[server]\nport = 8080\n", "version", []string{"version"}, 2},
-		{"header with inline comment", "[server] # settings\nport = 8080\nhost = \"h\"\n", "server.port", []string{"server", portKey}, 9000},
-		{"multi-line string replaced", "val = \"\"\"\nline 1\nline 2\n\"\"\"\nother = \"keep\"\n", "val", []string{"val"}, "single line"},
-		{"quoted table header", "[table.\"sub.key\"]\nfoo = \"bar\"\nkeep = 1\n", `table."sub.key".foo`, []string{"table", "sub.key", "foo"}, "updated"},
-		{"array of tables after the table", "[server]\nport = 8080\n\n[[items]]\nname = \"first\"\n\n[[items]]\nname = \"second\"\n", "server.port", []string{"server", portKey}, 9000},
-		{"inline table", "server = { port = 8080, host = \"localhost\" }\nother = 1\n", "server.port", []string{"server", portKey}, 9090},
-		{"multi-line array in table", "[server]\nmatrix = [\n  [1, 2],\n  [3, 4]\n]\n", "server.port", []string{"server", portKey}, 8080},
+		{
+			"header with inline comment",
+			"[server] # settings\nport = 8080\nhost = \"h\"\n",
+			"server.port",
+			[]string{"server", portKey},
+			9000,
+		},
+		{
+			"multi-line string replaced",
+			"val = \"\"\"\nline 1\nline 2\n\"\"\"\nother = \"keep\"\n",
+			"val",
+			[]string{"val"},
+			"single line",
+		},
+		{
+			"quoted table header",
+			"[table.\"sub.key\"]\nfoo = \"bar\"\nkeep = 1\n",
+			`table."sub.key".foo`,
+			[]string{"table", "sub.key", "foo"},
+			"updated",
+		},
+		{
+			"array of tables after the table",
+			"[server]\nport = 8080\n\n[[items]]\nname = \"first\"\n\n[[items]]\nname = \"second\"\n",
+			"server.port",
+			[]string{"server", portKey},
+			9000,
+		},
+		{
+			"inline table",
+			"server = { port = 8080, host = \"localhost\" }\nother = 1\n",
+			"server.port",
+			[]string{"server", portKey},
+			9090,
+		},
+		{
+			"multi-line array in table",
+			"[server]\nmatrix = [\n  [1, 2],\n  [3, 4]\n]\n",
+			"server.port",
+			[]string{"server", portKey},
+			8080,
+		},
 		{"quoted key", "name = \"app\"\n", "\"foo.bar\"", []string{"foo.bar"}, 2},
 		{"single-quoted backslash", "path = 'C:\\dir\\' # comment\nname = 'x'\n", portKey, []string{portKey}, 8080},
 		{"slice of maps", "app = \"test\"\n", "routes", []string{"routes"}, []map[string]any{{"path": "/api"}}},
 		{"case-different sibling", "Port = 1\nport = 2\n", portKey, []string{portKey}, 3},
-		{"string mentioning the key", "banner = \"\"\"\nport = 123\n\"\"\"\nport = 8080\n", portKey, []string{portKey}, 9000},
+		{
+			"string mentioning the key",
+			"banner = \"\"\"\nport = 123\n\"\"\"\nport = 8080\n",
+			portKey,
+			[]string{portKey},
+			9000,
+		},
 		{"dotted keys at root", "a.b = 1\na.c = 2\n", "a.b", []string{"a", "b"}, 5},
 		{"crlf line endings", "[s]\r\nx = 1\r\ny = 2\r\n", "s.y", []string{"s", "y"}, 7},
 	} {
@@ -120,7 +180,10 @@ func FuzzUpdateTOML(f *testing.F) {
 	for _, seed := range []struct {
 		doc, key string
 	}{
-		{"# top\n[server]\nhost = \"127.0.0.1\" # local\nport = 8080\n\n[database]\nport = 5432 # pg\n", "database.port"},
+		{
+			"# top\n[server]\nhost = \"127.0.0.1\" # local\nport = 8080\n\n[database]\nport = 5432 # pg\n",
+			"database.port",
+		},
 		{"[server]\nport = 8080\n\n[database]\nport = 5432\n", "server.timeout"},
 		{"[server] # settings\nport = 8080\n", "server.port"},
 		{"val = \"\"\"\nline 1\nline 2\n\"\"\"\nother = \"keep\"\n", "val"},
@@ -160,8 +223,10 @@ func FuzzUpdateTOML(f *testing.F) {
 
 	f.Fuzz(func(t *testing.T, doc, key string, n int64, s string, useInt bool) {
 		var before map[string]any
-		if toml.Unmarshal([]byte(doc), &before) != nil || !bareTOMLKey.MatchString(key) || !utf8.ValidString(s) ||
-			multilineInlineTable.MatchString(doc) || mixedLineEndings(doc) {
+		if toml.Unmarshal([]byte(doc), &before) != nil || !bareTOMLKey.MatchString(key) ||
+			!utf8.ValidString(s) ||
+			multilineInlineTable.MatchString(doc) ||
+			mixedLineEndings(doc) {
 			t.Skip()
 		}
 
@@ -177,11 +242,23 @@ func FuzzUpdateTOML(f *testing.F) {
 		switch tomlPathReach(before, path) {
 		case pathReachThroughScalar:
 			if !errors.Is(err, edit.ErrPathNotMapping) {
-				t.Fatalf("path %q runs through a scalar: err = %v, want ErrPathNotMapping\ninput:\n%s\noutput:\n%s", key, err, doc, out)
+				t.Fatalf(
+					"path %q runs through a scalar: err = %v, want ErrPathNotMapping\ninput:\n%s\noutput:\n%s",
+					key,
+					err,
+					doc,
+					out,
+				)
 			}
 		case pathReachThroughArray:
 			if !errors.Is(err, edit.ErrPathNotMapping) {
-				t.Fatalf("path %q runs through an array: err = %v, want ErrPathNotMapping\ninput:\n%s\noutput:\n%s", key, err, doc, out)
+				t.Fatalf(
+					"path %q runs through an array: err = %v, want ErrPathNotMapping\ninput:\n%s\noutput:\n%s",
+					key,
+					err,
+					doc,
+					out,
+				)
 			}
 		case pathReachLeafIsTable:
 			if err == nil {
@@ -198,7 +275,8 @@ func FuzzUpdateTOML(f *testing.F) {
 }
 
 func mixedLineEndings(doc string) bool {
-	return strings.Contains(doc, "\r\n") && strings.Contains(strings.ReplaceAll(doc, "\r\n", ""), "\n")
+	return strings.Contains(doc, "\r\n") &&
+		strings.Contains(strings.ReplaceAll(doc, "\r\n", ""), "\n")
 }
 
 type pathReach int

@@ -116,7 +116,11 @@ type savedNode struct {
 func TestSaveReloadsRecursiveConfigurationKeys(t *testing.T) {
 	t.Parallel()
 
-	want := savedNode{HTTPPort: 8080, Timeout: 2 * time.Second, Next: &savedNode{HTTPPort: 9000, Timeout: time.Second}}
+	want := savedNode{
+		HTTPPort: 8080,
+		Timeout:  2 * time.Second,
+		Next:     &savedNode{HTTPPort: 9000, Timeout: time.Second},
+	}
 
 	for _, format := range []string{jsonFormat, yamlFormat, tomlFormat} {
 		t.Run(format, func(t *testing.T) {
@@ -196,7 +200,12 @@ func TestWritesFollowSymlinksAndKeepTheTargetMode(t *testing.T) {
 		write func(path string) error
 	}{
 		{name: "Save", write: func(path string) error { return strata.Save(path, narrowConfig{Small: 7}) }},
-		{name: "Init", write: func(path string) error { return strata.Init[narrowConfig](path, strata.WithOverwrite(true)) }},
+		{
+			name: "Init",
+			write: func(path string) error {
+				return strata.Init[narrowConfig](path, strata.WithOverwrite(true))
+			},
+		},
 		{name: "Set", write: func(path string) error { return strata.Set[narrowConfig](path, "small", 7) }},
 	} {
 		t.Run(test.name, func(t *testing.T) {
@@ -246,7 +255,12 @@ func TestWritesKeepAFileWithNoPermissionBits(t *testing.T) {
 		write func(path string) error
 	}{
 		{name: "Save", write: func(path string) error { return strata.Save(path, narrowConfig{Small: 7}) }},
-		{name: "Init", write: func(path string) error { return strata.Init[narrowConfig](path, strata.WithOverwrite(true)) }},
+		{
+			name: "Init",
+			write: func(path string) error {
+				return strata.Init[narrowConfig](path, strata.WithOverwrite(true))
+			},
+		},
 	} {
 		t.Run(test.name, func(t *testing.T) {
 			t.Parallel()
@@ -276,16 +290,26 @@ func TestSaveTOMLLeavesInlineEntriesOfUnsetFieldsOut(t *testing.T) {
 	t.Parallel()
 
 	path := filepath.Join(t.TempDir(), "config.toml")
-	if err := strata.Save(path, claimedInlineConfig{Port: nil, Extra: map[string]int{"port": 7, "other": 1}}); err != nil {
+	if err := strata.Save(
+		path,
+		claimedInlineConfig{Port: nil, Extra: map[string]int{"port": 7, "other": 1}},
+	); err != nil {
 		t.Fatal(err)
 	}
 
-	got, err := strata.Load[claimedInlineConfig](strata.WithPath(path), strata.WithFormats(tomlFormat))
+	got, err := strata.Load[claimedInlineConfig](
+		strata.WithPath(path),
+		strata.WithFormats(tomlFormat),
+	)
 	if err != nil {
 		t.Fatal(err)
 	}
 
 	if got.Port != nil || !reflect.DeepEqual(got.Extra, map[string]int{"other": 1}) {
-		t.Fatalf("reloaded port %v and extra %v, want port unset and only the unclaimed entry", got.Port, got.Extra)
+		t.Fatalf(
+			"reloaded port %v and extra %v, want port unset and only the unclaimed entry",
+			got.Port,
+			got.Extra,
+		)
 	}
 }

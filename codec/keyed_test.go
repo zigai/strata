@@ -80,8 +80,16 @@ func TestYAMLMergeKeepsAliasedConfigurationKeys(t *testing.T) {
 	}{
 		{data: "base: &base\n  dbHost: merged.example\ndatabase:\n  <<: *base\n", wantDatabase: "merged.example"},
 		{data: "base: &base\n  dbHost: merged.example\ndatabase: *base\n", wantDatabase: "merged.example"},
-		{data: "database: &base\n  dbHost: merged.example\nreplica: *base\n", wantDatabase: "merged.example", wantReplica: "merged.example"},
-		{data: "database: &base\n  dbHost: merged.example\nreplica:\n  <<: *base\n", wantDatabase: "merged.example", wantReplica: "merged.example"},
+		{
+			data:         "database: &base\n  dbHost: merged.example\nreplica: *base\n",
+			wantDatabase: "merged.example",
+			wantReplica:  "merged.example",
+		},
+		{
+			data:         "database: &base\n  dbHost: merged.example\nreplica:\n  <<: *base\n",
+			wantDatabase: "merged.example",
+			wantReplica:  "merged.example",
+		},
 	} {
 		var cfg mergeConfig
 
@@ -103,12 +111,17 @@ func TestYAMLRecursiveConfigurationResolvesAliases(t *testing.T) {
 		Replica  *keyedNode
 	}
 
-	data := "base: &base\n  http_port: 9000\n  timeout: 1s\n  next: &next {http_port: 7000, timeout: 2s}\ndatabase: *base\nreplica: {<<: *base}\n"
+	data := "base: &base\n  http_port: 9000\n  timeout: 1s\n" +
+		"  next: &next {http_port: 7000, timeout: 2s}\ndatabase: *base\nreplica: {<<: *base}\n"
 	if err := codec.NewYAML().Decode([]byte(data), &got); err != nil {
 		t.Fatal(err)
 	}
 
-	want := &keyedNode{HTTPPort: 9000, Timeout: time.Second, Next: &keyedNode{HTTPPort: 7000, Timeout: 2 * time.Second}}
+	want := &keyedNode{
+		HTTPPort: 9000,
+		Timeout:  time.Second,
+		Next:     &keyedNode{HTTPPort: 7000, Timeout: 2 * time.Second},
+	}
 	if !reflect.DeepEqual(got.Database, want) || !reflect.DeepEqual(got.Replica, want) {
 		t.Fatalf("aliases = %+v, want both nodes %+v", got, want)
 	}
@@ -159,7 +172,18 @@ func TestEncodersWriteConfigurationKeys(t *testing.T) {
 			}
 
 			text := string(encoded)
-			for _, want := range []string{"log_level", "http_port", "max_conns", "hostname", "replicas", "primary", "optional", "started_at", "30s", "debug"} {
+			for _, want := range []string{
+				"log_level",
+				"http_port",
+				"max_conns",
+				"hostname",
+				"replicas",
+				"primary",
+				"optional",
+				"started_at",
+				"30s",
+				"debug",
+			} {
 				if !strings.Contains(text, want) {
 					t.Errorf("encoded document lacks key %q:\n%s", want, text)
 				}
@@ -190,7 +214,12 @@ func TestEncodersWriteConfigurationKeys(t *testing.T) {
 func TestEncodersKeepRecursiveTypes(t *testing.T) {
 	t.Parallel()
 
-	value := keyedNode{HTTPPort: 8080, Timeout: 2 * time.Second, Next: &keyedNode{HTTPPort: 9000, Timeout: time.Second}, Children: []keyedNode{{HTTPPort: 7000, Timeout: 3 * time.Second}}}
+	value := keyedNode{
+		HTTPPort: 8080,
+		Timeout:  2 * time.Second,
+		Next:     &keyedNode{HTTPPort: 9000, Timeout: time.Second},
+		Children: []keyedNode{{HTTPPort: 7000, Timeout: 3 * time.Second}},
+	}
 
 	for _, tc := range []struct {
 		name  string
@@ -228,7 +257,11 @@ func TestEncodersHandleRecursiveAnonymousPointers(t *testing.T) {
 	if format := os.Getenv("STRATA_TEST_RECURSIVE_EMBED"); format != "" {
 		debug.SetMaxStack(128 << 10)
 
-		encoder := map[string]codec.Codec{"json": codec.NewJSON(), "toml": codec.NewTOML(), "yaml": codec.NewYAML()}[format]
+		encoder := map[string]codec.Codec{
+			"json": codec.NewJSON(),
+			"toml": codec.NewTOML(),
+			"yaml": codec.NewYAML(),
+		}[format]
 		for _, value := range []recursiveEmbeddedNode{
 			{HTTPPort: 8080},
 			{recursiveEmbeddedNode: &recursiveEmbeddedNode{HTTPPort: 9000}, HTTPPort: 8080},
@@ -253,7 +286,11 @@ func TestEncodersHandleRecursiveAnonymousPointers(t *testing.T) {
 
 	for _, format := range []string{"json", "toml", "yaml"} {
 		t.Run(format, func(t *testing.T) {
-			command := exec.CommandContext(t.Context(), os.Args[0], "-test.run=^TestEncodersHandleRecursiveAnonymousPointers$")
+			command := exec.CommandContext(
+				t.Context(),
+				os.Args[0],
+				"-test.run=^TestEncodersHandleRecursiveAnonymousPointers$",
+			)
 
 			command.Env = append(os.Environ(), "STRATA_TEST_RECURSIVE_EMBED="+format)
 
@@ -310,9 +347,17 @@ func TestRecursiveEncodersHonorCustomIsZero(t *testing.T) {
 					want:  map[string]any{"value": "root", "http_port": 8080},
 				},
 				{
-					name:  "keep custom nonzero pointer",
-					value: zeroKeyedNode{Value: "root", HTTPPort: 8080, Next: &zeroKeyedNode{Value: "child", HTTPPort: 9000}},
-					want:  map[string]any{"value": "root", "http_port": 8080, "next": map[string]any{"value": "child", "http_port": 9000}},
+					name: "keep custom nonzero pointer",
+					value: zeroKeyedNode{
+						Value:    "root",
+						HTTPPort: 8080,
+						Next:     &zeroKeyedNode{Value: "child", HTTPPort: 9000},
+					},
+					want: map[string]any{
+						"value":     "root",
+						"http_port": 8080,
+						"next":      map[string]any{"value": "child", "http_port": 9000},
+					},
 				},
 				{
 					name: "keep custom nonzero value",
@@ -381,7 +426,9 @@ func TestYAMLEncoderRejectsMultilineInlineMapKeys(t *testing.T) {
 	}{Extras: map[string]int{"\nextra": 1}}
 
 	data, err := codec.NewYAML().Encode(value)
-	if err == nil || !strings.Contains(err.Error(), "inline YAML map keys cannot contain newlines") || data != nil {
+	if err == nil ||
+		!strings.Contains(err.Error(), "inline YAML map keys cannot contain newlines") ||
+		data != nil {
 		t.Fatalf("Encode = %q, %v; want no document and unsupported inline key", data, err)
 	}
 }
@@ -504,9 +551,21 @@ func TestDecodersAcceptOnlyConfigurationKeys(t *testing.T) {
 		codec    codec.Codec
 		document string
 	}{
-		{name: "toml", codec: codec.NewTOML(), document: "http_port = 1\nHTTPPort = 2\nhttpport = 3\n[database]\nmax_conns = 4\nMaxConns = 5\n"},
-		{name: "yaml", codec: codec.NewYAML(), document: "http_port: 1\nHTTPPort: 2\nhttpport: 3\ndatabase:\n  max_conns: 4\n  MaxConns: 5\n"},
-		{name: "json", codec: codec.NewJSON(), document: `{"http_port": 1, "HTTPPort": 2, "httpport": 3, "database": {"max_conns": 4, "MaxConns": 5}}`},
+		{
+			name:     "toml",
+			codec:    codec.NewTOML(),
+			document: "http_port = 1\nHTTPPort = 2\nhttpport = 3\n[database]\nmax_conns = 4\nMaxConns = 5\n",
+		},
+		{
+			name:     "yaml",
+			codec:    codec.NewYAML(),
+			document: "http_port: 1\nHTTPPort: 2\nhttpport: 3\ndatabase:\n  max_conns: 4\n  MaxConns: 5\n",
+		},
+		{
+			name:     "json",
+			codec:    codec.NewJSON(),
+			document: `{"http_port": 1, "HTTPPort": 2, "httpport": 3, "database": {"max_conns": 4, "MaxConns": 5}}`,
+		},
 	}
 
 	for _, tt := range tests {
@@ -519,7 +578,11 @@ func TestDecodersAcceptOnlyConfigurationKeys(t *testing.T) {
 			}
 
 			if target.HTTPPort != 1 || target.Database.MaxConns != 4 {
-				t.Fatalf("got http_port=%d max_conns=%d, want 1 and 4 from the configuration keys", target.HTTPPort, target.Database.MaxConns)
+				t.Fatalf(
+					"got http_port=%d max_conns=%d, want 1 and 4 from the configuration keys",
+					target.HTTPPort,
+					target.Database.MaxConns,
+				)
 			}
 		})
 	}
@@ -527,7 +590,7 @@ func TestDecodersAcceptOnlyConfigurationKeys(t *testing.T) {
 
 type formatExcludedConfig struct {
 	Name string `toml:"name" yaml:"-"`
-	Port int    `strata:"port" json:"-"`
+	Port int    `                     strata:"port" json:"-"`
 }
 
 func TestFormatTagDashExcludesFieldFromThatFormat(t *testing.T) {
@@ -539,8 +602,18 @@ func TestFormatTagDashExcludesFieldFromThatFormat(t *testing.T) {
 		document string
 		want     formatExcludedConfig
 	}{
-		{name: "yaml", codec: codec.NewYAML(), document: "name: fromyaml\nport: 2\n", want: formatExcludedConfig{Name: "keep", Port: 2}},
-		{name: "json", codec: codec.NewJSON(), document: `{"name": "fromjson", "port": 2}`, want: formatExcludedConfig{Name: "fromjson", Port: 1}},
+		{
+			name:     "yaml",
+			codec:    codec.NewYAML(),
+			document: "name: fromyaml\nport: 2\n",
+			want:     formatExcludedConfig{Name: "keep", Port: 2},
+		},
+		{
+			name:     "json",
+			codec:    codec.NewJSON(),
+			document: `{"name": "fromjson", "port": 2}`,
+			want:     formatExcludedConfig{Name: "fromjson", Port: 1},
+		},
 	}
 
 	for _, tt := range tests {
@@ -597,11 +670,19 @@ func TestYAMLKeepsStructDecoderMethods(t *testing.T) {
 		Items   []textDecodedStruct
 		Named   map[string]yamlDecodedStruct
 	}
-	if err := codec.NewYAML().Decode([]byte("text: one\nyaml: two\npointer: three\nitems: [four]\nnamed: {entry: five}\n"), &got); err != nil {
+	if err := codec.NewYAML().
+		Decode([]byte("text: one\nyaml: two\npointer: three\n"+
+			"items: [four]\nnamed: {entry: five}\n"), &got); err != nil {
 		t.Fatal(err)
 	}
 
-	if got.Text.Address != "text:one" || got.YAML.Address != "yaml:two" || got.Pointer == nil || got.Pointer.Address != "text:three" || !reflect.DeepEqual(got.Items, []textDecodedStruct{{Address: "text:four"}}) || !reflect.DeepEqual(got.Named, map[string]yamlDecodedStruct{"entry": {Address: "yaml:five"}}) {
+	if got.Text.Address != "text:one" || got.YAML.Address != "yaml:two" || got.Pointer == nil ||
+		got.Pointer.Address != "text:three" ||
+		!reflect.DeepEqual(got.Items, []textDecodedStruct{{Address: "text:four"}}) ||
+		!reflect.DeepEqual(
+			got.Named,
+			map[string]yamlDecodedStruct{"entry": {Address: "yaml:five"}},
+		) {
 		t.Fatalf("custom decoders were not honored: %+v", got)
 	}
 }
@@ -657,7 +738,12 @@ func TestYAMLPassesCompoundKeysToCustomDecoders(t *testing.T) {
 		node     *yaml.Node
 	}{
 		{name: "root", document: "? [x, y]\n: value\n", target: root, node: &root.Node},
-		{name: "field alias", document: "ignored: &raw {? [x, y]: value}\ncustom: *raw\n", target: nested, node: &nested.Custom.Node},
+		{
+			name:     "field alias",
+			document: "ignored: &raw {? [x, y]: value}\ncustom: *raw\n",
+			target:   nested,
+			node:     &nested.Custom.Node,
+		},
 	} {
 		t.Run(test.name, func(t *testing.T) {
 			if err := codec.NewYAML().Decode([]byte(test.document), test.target); err != nil {
@@ -669,7 +755,10 @@ func TestYAMLPassesCompoundKeysToCustomDecoders(t *testing.T) {
 			}
 
 			key, value := test.node.Content[0], test.node.Content[1]
-			if key.Kind != yaml.SequenceNode || len(key.Content) != 2 || key.Content[0].Value != "x" || key.Content[1].Value != "y" || value.Value != "value" {
+			if key.Kind != yaml.SequenceNode || len(key.Content) != 2 ||
+				key.Content[0].Value != "x" ||
+				key.Content[1].Value != "y" ||
+				value.Value != "value" {
 				t.Fatalf("custom decoder mapping = %+v: %+v, want [x, y]: value", key, value)
 			}
 		})
@@ -686,7 +775,11 @@ func TestYAMLRejectsCompoundMergeKeysWithoutPanic(t *testing.T) {
 	} {
 		t.Run(data, func(t *testing.T) {
 			var got mergeConfig
-			if err := codec.NewYAML().Decode([]byte(data), &got); !errors.Is(err, codec.ErrMalformed) {
+			if err := codec.NewYAML().
+				Decode([]byte(data), &got); !errors.Is(
+				err,
+				codec.ErrMalformed,
+			) {
 				t.Fatalf("Decode error = %v, want ErrMalformed", err)
 			}
 		})
@@ -694,7 +787,13 @@ func TestYAMLRejectsCompoundMergeKeysWithoutPanic(t *testing.T) {
 }
 
 func FuzzYAMLDecode(f *testing.F) {
-	for _, data := range []string{"", "database: {dbHost: example}", "database: {<<, [x]}", "base: &base {dbHost: example}\ndatabase: *base", "database: &base {<<: *base}"} {
+	for _, data := range []string{
+		"",
+		"database: {dbHost: example}",
+		"database: {<<, [x]}",
+		"base: &base {dbHost: example}\ndatabase: *base",
+		"database: &base {<<: *base}",
+	} {
 		f.Add(data)
 	}
 
@@ -727,7 +826,12 @@ func TestYAMLDecodeKeepsIdentityAndMergesMapEntries(t *testing.T) {
 
 	db := &restoreInner{Host: "db", Port: 1}
 	named := map[string]restoreItem{"keep": {N: 1, hidden: 7}, "replace": {N: 2, hidden: 8}}
-	target := restoreConfig{Items: []restoreItem{{N: 1, hidden: 7}}, DB: db, Other: db, Named: named}
+	target := restoreConfig{
+		Items: []restoreItem{{N: 1, hidden: 7}},
+		DB:    db,
+		Other: db,
+		Named: named,
+	}
 
 	document := "items:\n  - n: 9\nnamed:\n  replace:\n    n: 3\n"
 	if err := codec.NewYAML().Decode([]byte(document), &target); err != nil {
@@ -735,7 +839,11 @@ func TestYAMLDecodeKeepsIdentityAndMergesMapEntries(t *testing.T) {
 	}
 
 	if want := []restoreItem{{N: 9, hidden: 0}}; !reflect.DeepEqual(target.Items, want) {
-		t.Errorf("items = %+v, want %+v with no state from the replaced element", target.Items, want)
+		t.Errorf(
+			"items = %+v, want %+v with no state from the replaced element",
+			target.Items,
+			want,
+		)
 	}
 
 	if target.DB != db || target.Other != db {
@@ -743,9 +851,14 @@ func TestYAMLDecodeKeepsIdentityAndMergesMapEntries(t *testing.T) {
 	}
 
 	wantNamed := map[string]restoreItem{"keep": {N: 1, hidden: 7}, "replace": {N: 3, hidden: 8}}
-	if !reflect.DeepEqual(named, wantNamed) || reflect.ValueOf(target.Named).UnsafePointer() != reflect.ValueOf(named).UnsafePointer() {
-		t.Errorf("named = %+v (same map: %t), want %+v written into the original map",
-			target.Named, reflect.ValueOf(target.Named).UnsafePointer() == reflect.ValueOf(named).UnsafePointer(), wantNamed)
+	if !reflect.DeepEqual(named, wantNamed) ||
+		reflect.ValueOf(target.Named).UnsafePointer() != reflect.ValueOf(named).UnsafePointer() {
+		t.Errorf(
+			"named = %+v (same map: %t), want %+v written into the original map",
+			target.Named,
+			reflect.ValueOf(target.Named).UnsafePointer() == reflect.ValueOf(named).UnsafePointer(),
+			wantNamed,
+		)
 	}
 
 	if err := codec.NewYAML().Decode([]byte("db:\n  port: 2\n"), &target); err != nil {
@@ -753,7 +866,11 @@ func TestYAMLDecodeKeepsIdentityAndMergesMapEntries(t *testing.T) {
 	}
 
 	if target.DB != db || db.Port != 2 || db.Host != "db" || target.Other.Port != 2 {
-		t.Errorf("db = %+v (same pointer: %t), want port 2 written through the original pointer", target.DB, target.DB == db)
+		t.Errorf(
+			"db = %+v (same pointer: %t), want port 2 written through the original pointer",
+			target.DB,
+			target.DB == db,
+		)
 	}
 }
 
@@ -774,7 +891,10 @@ func TestYAMLInlineMapsMergeUndeclaredKeysAcrossLayers(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	want := catchAllConfig{Name: "top", Extra: map[string]string{"custom": "kept", "other": "added"}}
+	want := catchAllConfig{
+		Name:  "top",
+		Extra: map[string]string{"custom": "kept", "other": "added"},
+	}
 	if !reflect.DeepEqual(got, want) {
 		t.Fatalf("decoded = %#v, want %#v", got, want)
 	}
@@ -873,7 +993,7 @@ func TestJSONFieldOptionErrorsNameTheKey(t *testing.T) {
 type sizer interface{ Size() int }
 
 type sizedBox struct {
-	Width  int `json:"width" toml:"width" yaml:"width"`
+	Width  int `json:"width"  toml:"width"  yaml:"width"`
 	Height int `json:"height" toml:"height" yaml:"height"`
 }
 
@@ -943,7 +1063,10 @@ func TestDecodersFillTheConfiguredInterfaceImplementation(t *testing.T) {
 			}
 
 			if got.Value != box || *box != (sizedBox{Width: 3, Height: 2}) {
-				t.Fatalf("Value = %#v, want the configured box with width 3 and height 2", got.Value)
+				t.Fatalf(
+					"Value = %#v, want the configured box with width 3 and height 2",
+					got.Value,
+				)
 			}
 
 			length := interfaceConfig{Value: sizedLength(1)}
@@ -1024,15 +1147,21 @@ func TestYAMLInlineStructsReadTopLevelKeysAndMergeLayers(t *testing.T) {
 	t.Parallel()
 
 	var got inlineStructConfig
-	if err := codec.NewYAML().Decode([]byte("name: base\nhost: one\nport: 1\ndeep:\n  level: 3\n"), &got); err != nil {
+	if err := codec.NewYAML().
+		Decode([]byte("name: base\nhost: one\nport: 1\ndeep:\n  level: 3\n"), &got); err != nil {
 		t.Fatal(err)
 	}
 
-	if err := codec.NewYAML().Decode([]byte("port: 2\nserver:\n  host: ignored\n"), &got); err != nil {
+	if err := codec.NewYAML().
+		Decode([]byte("port: 2\nserver:\n  host: ignored\n"), &got); err != nil {
 		t.Fatal(err)
 	}
 
-	want := inlineStructConfig{Name: "base", Server: inlineServer{Host: "one", Port: 2, Deep: inlineLevel{Level: 3}}, Mode: nil}
+	want := inlineStructConfig{
+		Name:   "base",
+		Server: inlineServer{Host: "one", Port: 2, Deep: inlineLevel{Level: 3}},
+		Mode:   nil,
+	}
 	if !reflect.DeepEqual(got, want) {
 		t.Fatalf("decoded = %+v, want %+v with the inline pointer left nil", got, want)
 	}

@@ -25,9 +25,9 @@ type bindingConfig struct {
 	*BindingPointer
 
 	StrataKey  string `strata:"strata_key"`
-	TOMLKey    string `toml:"toml_key"`
-	YAMLKey    string `yaml:"yaml_key"`
-	JSONKey    string `json:"json_key"`
+	TOMLKey    string `                     toml:"toml_key"`
+	YAMLKey    string `                                     yaml:"yaml_key"`
+	JSONKey    string `                                                     json:"json_key"`
 	Untagged   int
 	Skipped    int                      `strata:"-"`
 	HTTPServer string                   `strata:"http_server"`
@@ -35,7 +35,7 @@ type bindingConfig struct {
 	Nested     bindingNested            `strata:"nested"`
 	Items      []bindingNested          `strata:"items"`
 	Lookup     map[string]bindingNested `strata:"lookup"`
-	Excluded   int                      `json:"-"`
+	Excluded   int                      `                                                     json:"-"`
 }
 
 // Regression: key rewriting once recorded an origin without setting the field.
@@ -174,7 +174,8 @@ func TestJSONIgnoresOtherSpellings(t *testing.T) {
 
 	var target bindingNested
 
-	if err := codec.NewJSON().Decode([]byte(`{"max_conns": 1, "MaxConns": 2, "maxconns": 3}`), &target); err != nil {
+	if err := codec.NewJSON().
+		Decode([]byte(`{"max_conns": 1, "MaxConns": 2, "maxconns": 3}`), &target); err != nil {
 		t.Fatalf("Decode error: %v", err)
 	}
 

@@ -25,7 +25,12 @@ func TestEditPathUsesLoadingOptions(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	if _, err := strata.EditPath(strata.WithAppName("sample")); !errors.Is(err, strata.ErrNoFormats) {
+	if _, err := strata.EditPath(
+		strata.WithAppName("sample"),
+	); !errors.Is(
+		err,
+		strata.ErrNoFormats,
+	) {
 		t.Fatalf("edit path without formats error = %v, want ErrNoFormats", err)
 	}
 
@@ -41,7 +46,11 @@ func TestEditPathUsesLoadingOptions(t *testing.T) {
 
 	explicit := filepath.Join(base, "explicit.toml")
 
-	path, err = strata.EditPath(strata.WithAppName("sample"), strata.WithPath(explicit), strata.WithFormats("toml"))
+	path, err = strata.EditPath(
+		strata.WithAppName("sample"),
+		strata.WithPath(explicit),
+		strata.WithFormats("toml"),
+	)
 	if err != nil || path != explicit {
 		t.Fatalf("explicit path = %q, %v", path, err)
 	}
@@ -50,11 +59,20 @@ func TestEditPathUsesLoadingOptions(t *testing.T) {
 		t.Fatalf("explicit path without formats error = %v, want ErrNoFormats", err)
 	}
 
-	if _, err := strata.EditPath(strata.WithPath(filepath.Join(base, "config.txt")), strata.WithFormats("toml")); !errors.Is(err, strata.ErrUnsupportedFormat) {
+	if _, err := strata.EditPath(
+		strata.WithPath(filepath.Join(base, "config.txt")),
+		strata.WithFormats("toml"),
+	); !errors.Is(
+		err,
+		strata.ErrUnsupportedFormat,
+	) {
 		t.Fatalf("unsupported edit path error = %v, want ErrUnsupportedFormat", err)
 	}
 
-	if _, err := strata.EditPath(strata.WithPath("-")); err == nil || !strings.Contains(err.Error(), "standard input cannot be edited") || errors.Is(err, strata.ErrNoFormats) {
+	if _, err := strata.EditPath(
+		strata.WithPath("-"),
+	); err == nil || !strings.Contains(err.Error(), "standard input cannot be edited") ||
+		errors.Is(err, strata.ErrNoFormats) {
 		t.Fatalf("stdin edit path error = %v", err)
 	}
 }

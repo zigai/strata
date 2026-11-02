@@ -45,7 +45,10 @@ func (c *multiFailureConfig) ValidateWith(meta *strata.Metadata) error {
 	var errs []error
 
 	if c.Port > 9000 {
-		errs = append(errs, meta.NewConfigError(portKey, errors.New("above the privileged ceiling")))
+		errs = append(
+			errs,
+			meta.NewConfigError(portKey, errors.New("above the privileged ceiling")),
+		)
 	}
 
 	if c.Host == "" {
@@ -269,11 +272,19 @@ func TestConfigErrorRendersEverySourceKind(t *testing.T) {
 		want   string
 	}{
 		{
-			"toml file without a line", &strata.Origin{Key: portKey, Source: strata.SourceFile, Path: "/etc/app/config.toml", RawValue: "70000"},
+			"toml file without a line",
+			&strata.Origin{Key: portKey, Source: strata.SourceFile, Path: "/etc/app/config.toml", RawValue: "70000"},
 			"config error: port out of range for port: \"70000\"\n  --> set by /etc/app/config.toml",
 		},
 		{
-			"yaml file with a line", &strata.Origin{Key: portKey, Source: strata.SourceUser, Path: "/home/u/.config/app/config.yaml", Line: 4, RawValue: "70000"},
+			"yaml file with a line",
+			&strata.Origin{
+				Key:      portKey,
+				Source:   strata.SourceUser,
+				Path:     "/home/u/.config/app/config.yaml",
+				Line:     4,
+				RawValue: "70000",
+			},
 			"config error: port out of range for port: \"70000\"\n  --> set by /home/u/.config/app/config.yaml:4",
 		},
 		{

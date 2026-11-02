@@ -117,7 +117,8 @@ func TestApplyDefaults(t *testing.T) {
 			t.Errorf("Server = %+v, want 127.0.0.1:8080", cfg.Server)
 		}
 
-		if cfg.Database == nil || cfg.Database.MaxConns != 10 || cfg.Database.Timeout != 5*time.Second {
+		if cfg.Database == nil || cfg.Database.MaxConns != 10 ||
+			cfg.Database.Timeout != 5*time.Second {
 			t.Errorf("Database = %+v, want maxConns 10, timeout 5s", cfg.Database)
 		}
 

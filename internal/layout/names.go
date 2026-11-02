@@ -118,7 +118,8 @@ func IsSecret(f reflect.StructField) bool {
 
 func IsSecretType(typ reflect.Type) bool {
 	var visited []reflect.Type
-	for typ.Kind() == reflect.Pointer || typ.Kind() == reflect.Map || typ.Kind() == reflect.Slice || typ.Kind() == reflect.Array {
+	for typ.Kind() == reflect.Pointer || typ.Kind() == reflect.Map ||
+		typ.Kind() == reflect.Slice || typ.Kind() == reflect.Array {
 		if slices.Contains(visited, typ) {
 			break
 		}
@@ -130,7 +131,7 @@ func IsSecretType(typ reflect.Type) bool {
 	return typ.PkgPath() == "github.com/zigai/strata" && typ.Name() == "Secret"
 }
 
-func shouldInsertUnderscore(s string, i, n int) bool {
+func shouldInsertUnderscore(s string, i int, n int) bool {
 	if i <= 0 {
 		return false
 	}

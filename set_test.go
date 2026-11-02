@@ -222,7 +222,12 @@ func TestSetBytesFailuresAreClassifiable(t *testing.T) {
 		{
 			"a TOML array of tables in the way",
 			func() ([]byte, error) {
-				return strata.SetBytes(".toml", []byte("[[srv]]\nname = \"a\"\n[[srv]]\nname = \"b\"\n"), "srv.1.name", "z")
+				return strata.SetBytes(
+					".toml",
+					[]byte("[[srv]]\nname = \"a\"\n[[srv]]\nname = \"b\"\n"),
+					"srv.1.name",
+					"z",
+				)
 			},
 			strata.ErrPathNotMapping,
 		},
@@ -285,7 +290,11 @@ func TestMultiDocumentYAMLIsRefused(t *testing.T) {
 
 	var target narrowConfig
 
-	if err := codec.NewYAML().Decode([]byte(stream), &target); !errors.Is(err, codec.ErrMultipleDocuments) {
+	if err := codec.NewYAML().
+		Decode([]byte(stream), &target); !errors.Is(
+		err,
+		codec.ErrMultipleDocuments,
+	) {
 		t.Fatalf("Decode err = %v, want ErrMultipleDocuments", err)
 	}
 
@@ -319,7 +328,9 @@ func TestSetMatchesKeysExactly(t *testing.T) {
 			}
 
 			text := string(out)
-			if !strings.Contains(text, "Port") || !strings.Contains(text, "1") || !strings.Contains(text, "port") || !strings.Contains(text, "2") {
+			if !strings.Contains(text, "Port") || !strings.Contains(text, "1") ||
+				!strings.Contains(text, "port") ||
+				!strings.Contains(text, "2") {
 				t.Fatalf("SetBytes changed the wrong key or dropped one:\n%s", text)
 			}
 		})
@@ -345,11 +356,21 @@ func TestSetChecksKeysAndValues(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	if err := strata.Set[primitiveConfig](path, "prot", "9000"); err == nil || !strings.Contains(err.Error(), "did you mean \"port\"") {
+	if err := strata.Set[primitiveConfig](
+		path,
+		"prot",
+		"9000",
+	); err == nil ||
+		!strings.Contains(err.Error(), "did you mean \"port\"") {
 		t.Fatalf("unknown key error = %v", err)
 	}
 
-	if err := strata.Set[primitiveConfig](path, portKey, "abc"); err == nil || !strings.Contains(err.Error(), path) {
+	if err := strata.Set[primitiveConfig](
+		path,
+		portKey,
+		"abc",
+	); err == nil ||
+		!strings.Contains(err.Error(), path) {
 		t.Fatalf("bad value error = %v", err)
 	}
 
@@ -357,7 +378,11 @@ func TestSetChecksKeysAndValues(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	if err := strata.Set[primitiveConfig](path, "secret", strata.Secret("private-value")); err != nil {
+	if err := strata.Set[primitiveConfig](
+		path,
+		"secret",
+		strata.Secret("private-value"),
+	); err != nil {
 		t.Fatal(err)
 	}
 
@@ -461,12 +486,19 @@ func TestSetTextDecodedSlicesRoundTrip(t *testing.T) {
 				t.Fatal(err)
 			}
 
-			want := config{Delays: []time.Duration{3 * time.Second, 4 * time.Second}, Levels: []numericEditLevel{2, 1}}
+			want := config{
+				Delays: []time.Duration{3 * time.Second, 4 * time.Second},
+				Levels: []numericEditLevel{2, 1},
+			}
 			if !reflect.DeepEqual(got, want) {
 				t.Fatalf("config = %+v, want %+v", got, want)
 			}
 
-			if err := strata.Set[config](path, "delays", []time.Duration{5 * time.Second, 6 * time.Second}); err != nil {
+			if err := strata.Set[config](
+				path,
+				"delays",
+				[]time.Duration{5 * time.Second, 6 * time.Second},
+			); err != nil {
 				t.Fatalf("Set typed durations: %v", err)
 			}
 
@@ -757,7 +789,10 @@ func TestSetNamedSliceSerializationUsesDecodedElements(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	want := config{Levels: csvEditLevels{2, 1}, Delays: csvEditDurations{3 * time.Second, 4 * time.Second}}
+	want := config{
+		Levels: csvEditLevels{2, 1},
+		Delays: csvEditDurations{3 * time.Second, 4 * time.Second},
+	}
 	if !reflect.DeepEqual(got, want) {
 		t.Fatalf("config = %+v, want %+v", got, want)
 	}
@@ -787,7 +822,9 @@ func TestSetBytesTOMLPreservesLiteralDottedSibling(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	want := map[string]map[string]any{"a": {"b": int64(3), "b.c": map[string]any{"x": int64(1)}, "keep": int64(2)}}
+	want := map[string]map[string]any{
+		"a": {"b": int64(3), "b.c": map[string]any{"x": int64(1)}, "keep": int64(2)},
+	}
 	if !reflect.DeepEqual(got, want) {
 		t.Fatalf("document = %#v, want %#v\n%s", got, want, updated)
 	}
@@ -811,7 +848,10 @@ func TestSetCompositeValuesRoundTrip(t *testing.T) {
 		"json":        {"json", `{"keep":7,"items":[],"labels":{}}`},
 		"yaml":        {"yaml", "keep: 7\nitems: []\nlabels: {}\n"},
 		"toml inline": {"toml", "keep = 7\nitems = []\nlabels = {}\n"},
-		"toml tables": {"toml", "keep = 7\n[[items]]\nlisten_port = 1\ntimeout = '1s'\n[labels.old]\nlisten_port = 2\ntimeout = '2s'\n"},
+		"toml tables": {
+			"toml",
+			"keep = 7\n[[items]]\nlisten_port = 1\ntimeout = '1s'\n[labels.old]\nlisten_port = 2\ntimeout = '2s'\n",
+		},
 	} {
 		t.Run(name, func(t *testing.T) {
 			t.Parallel()
@@ -829,12 +869,19 @@ func TestSetCompositeValuesRoundTrip(t *testing.T) {
 				}
 			}
 
-			got, err := strata.Load[config](strata.WithPath(path), strata.WithFormats(initial.format))
+			got, err := strata.Load[config](
+				strata.WithPath(path),
+				strata.WithFormats(initial.format),
+			)
 			if err != nil {
 				t.Fatal(err)
 			}
 
-			want := config{Keep: 7, Items: []item{{HTTPPort: 8080, Timeout: 3 * time.Second}}, Labels: map[string]item{"first": {HTTPPort: 9000, Timeout: 4 * time.Second}}}
+			want := config{
+				Keep:   7,
+				Items:  []item{{HTTPPort: 8080, Timeout: 3 * time.Second}},
+				Labels: map[string]item{"first": {HTTPPort: 9000, Timeout: 4 * time.Second}},
+			}
 			if !reflect.DeepEqual(got, want) {
 				t.Fatalf("config = %+v, want %+v", got, want)
 			}
@@ -853,7 +900,14 @@ func TestSetRejectsRemovingReferencedYAMLAnchor(t *testing.T) {
 	const initial = "base:\n  x: &value 1\ncopy: *value\n"
 
 	path := writeFile(t, "config.yaml", initial)
-	if err := strata.Set[config](path, "base", map[string]int{"y": 2}); !errors.Is(err, strata.ErrMalformed) {
+	if err := strata.Set[config](
+		path,
+		"base",
+		map[string]int{"y": 2},
+	); !errors.Is(
+		err,
+		strata.ErrMalformed,
+	) {
 		t.Fatalf("Set = %v, want ErrMalformed", err)
 	}
 
@@ -884,11 +938,17 @@ func TestSetParsesLists(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	if !reflect.DeepEqual(cfg.Tags, []string{"a", "b"}) || !reflect.DeepEqual(cfg.Numbers, []int{1, 2}) {
+	if !reflect.DeepEqual(cfg.Tags, []string{"a", "b"}) ||
+		!reflect.DeepEqual(cfg.Numbers, []int{1, 2}) {
 		t.Fatalf("lists = %+v", cfg)
 	}
 
-	if err := strata.Set[listEditConfig](path, "numbers", "1,nope"); err == nil || !strings.Contains(err.Error(), `"nope" is not an integer`) {
+	if err := strata.Set[listEditConfig](
+		path,
+		"numbers",
+		"1,nope",
+	); err == nil ||
+		!strings.Contains(err.Error(), `"nope" is not an integer`) {
 		t.Fatalf("list error = %v", err)
 	}
 }
@@ -918,7 +978,11 @@ func TestSetEditsTaggedEmbeddedStructAsNestedKey(t *testing.T) {
 				t.Fatal(err)
 			}
 
-			got, err := strata.Load[config](strata.WithPath(path), strata.WithFormats(filepath.Ext(path)), strata.WithStrict())
+			got, err := strata.Load[config](
+				strata.WithPath(path),
+				strata.WithFormats(filepath.Ext(path)),
+				strata.WithStrict(),
+			)
 			if err != nil {
 				t.Fatal(err)
 			}
@@ -996,7 +1060,10 @@ func TestSetUsesSymlinkTargetFormat(t *testing.T) {
 				t.Fatal(err)
 			}
 
-			got, err := strata.Load[config](strata.WithPath(path), strata.WithFormats(filepath.Ext(path)))
+			got, err := strata.Load[config](
+				strata.WithPath(path),
+				strata.WithFormats(filepath.Ext(path)),
+			)
 			if err != nil {
 				t.Fatal(err)
 			}
@@ -1032,8 +1099,20 @@ func TestSetRoundsFloat32ToDeclaredPrecision(t *testing.T) {
 		original string
 		want     config
 	}{
-		{name: "scalar", format: "toml", key: "ratio", original: "ratio = 0\n", want: config{Ratio: 0x1.000002p0, Ratios: nil}},
-		{name: "slice", format: "json", key: "ratios", original: `{"ratios":[]}`, want: config{Ratio: 0, Ratios: []float32{0x1.000002p0}}},
+		{
+			name:     "scalar",
+			format:   "toml",
+			key:      "ratio",
+			original: "ratio = 0\n",
+			want:     config{Ratio: 0x1.000002p0, Ratios: nil},
+		},
+		{
+			name:     "slice",
+			format:   "json",
+			key:      "ratios",
+			original: `{"ratios":[]}`,
+			want:     config{Ratio: 0, Ratios: []float32{0x1.000002p0}},
+		},
 	} {
 		t.Run(test.name, func(t *testing.T) {
 			t.Parallel()
@@ -1061,11 +1140,20 @@ func TestSetRoundsFloat32ToDeclaredPrecision(t *testing.T) {
 
 func TestSetDecodesByFieldType(t *testing.T) {
 	path := filepath.Join(t.TempDir(), "config.toml")
-	if err := os.WriteFile(path, []byte("level = 'info'\nratio = 0\n[labels]\n"), 0o600); err != nil {
+	if err := os.WriteFile(
+		path,
+		[]byte("level = 'info'\nratio = 0\n[labels]\n"),
+		0o600,
+	); err != nil {
 		t.Fatal(err)
 	}
 
-	if err := strata.Set[richEditConfig](path, "level", "bogus"); err == nil || !strings.Contains(err.Error(), "unknown level") {
+	if err := strata.Set[richEditConfig](
+		path,
+		"level",
+		"bogus",
+	); err == nil ||
+		!strings.Contains(err.Error(), "unknown level") {
 		t.Fatalf("invalid level error = %v", err)
 	}
 
@@ -1082,7 +1170,8 @@ func TestSetDecodesByFieldType(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	if strings.Contains(string(data), "0.100000001") || !strings.Contains(string(data), "ratio = 0.1") {
+	if strings.Contains(string(data), "0.100000001") ||
+		!strings.Contains(string(data), "ratio = 0.1") {
 		t.Fatalf("float32 edit = %s", data)
 	}
 
@@ -1133,7 +1222,10 @@ func TestSaveThenSetUsesOneKeySpelling(t *testing.T) {
 
 			path := filepath.Join(t.TempDir(), "state"+ext)
 
-			if err := strata.Save(path, typoConfig{Host: "h", Database: typoDatabase{MaxConns: 3}}); err != nil {
+			if err := strata.Save(
+				path,
+				typoConfig{Host: "h", Database: typoDatabase{MaxConns: 3}},
+			); err != nil {
 				t.Fatalf("Save: %v", err)
 			}
 
@@ -1146,11 +1238,16 @@ func TestSaveThenSetUsesOneKeySpelling(t *testing.T) {
 				t.Fatalf("read: %v", err)
 			}
 
-			if strings.Count(string(data), "max_conns") != 1 || strings.Contains(string(data), "MaxConns") {
+			if strings.Count(string(data), "max_conns") != 1 ||
+				strings.Contains(string(data), "MaxConns") {
 				t.Fatalf("file names the key more than one way:\n%s", data)
 			}
 
-			cfg, err := strata.Load[typoConfig](strata.WithPath(path), strata.WithStrict(), strata.WithFormats(ext))
+			cfg, err := strata.Load[typoConfig](
+				strata.WithPath(path),
+				strata.WithStrict(),
+				strata.WithFormats(ext),
+			)
 			if err != nil {
 				t.Fatalf("Load: %v", err)
 			}
@@ -1166,9 +1263,12 @@ func TestSetChangesOnlyTheNamedKey(t *testing.T) {
 	t.Parallel()
 
 	for ext, initial := range map[string]string{
-		".toml": "# settings\nhost = \"db.example\"\nport = 9000\napi_key = \"k\"\n\n[database]\nport = 5432 # primary\nmax_conns = 20\n\n[labels]\nenv = \"prod\"\n",
-		".yaml": "# settings\nhost: db.example\nport: 9000\napi_key: k\ndatabase:\n  port: 5432 # primary\n  max_conns: 20\nlabels:\n  env: prod\n",
-		".json": `{"host": "db.example", "port": 9000, "api_key": "k", "database": {"port": 5432, "max_conns": 20}, "labels": {"env": "prod"}}`,
+		".toml": "# settings\nhost = \"db.example\"\nport = 9000\napi_key = \"k\"\n\n" +
+			"[database]\nport = 5432 # primary\nmax_conns = 20\n\n[labels]\nenv = \"prod\"\n",
+		".yaml": "# settings\nhost: db.example\nport: 9000\napi_key: k\n" +
+			"database:\n  port: 5432 # primary\n  max_conns: 20\nlabels:\n  env: prod\n",
+		".json": `{"host": "db.example", "port": 9000, "api_key": "k", ` +
+			`"database": {"port": 5432, "max_conns": 20}, "labels": {"env": "prod"}}`,
 	} {
 		t.Run(ext, func(t *testing.T) {
 			t.Parallel()
@@ -1179,7 +1279,11 @@ func TestSetChangesOnlyTheNamedKey(t *testing.T) {
 				t.Fatalf("Set: %v", err)
 			}
 
-			got, err := strata.Load[typoConfig](strata.WithPath(path), strata.WithFormats(ext), strata.WithStrict())
+			got, err := strata.Load[typoConfig](
+				strata.WithPath(path),
+				strata.WithFormats(ext),
+				strata.WithStrict(),
+			)
 			if err != nil {
 				t.Fatalf("Load: %v", err)
 			}
@@ -1260,7 +1364,7 @@ func TestSetRejectionLeavesTheFileUnchanged(t *testing.T) {
 	})
 }
 
-func requireFileContent(t *testing.T, path, want string) {
+func requireFileContent(t *testing.T, path string, want string) {
 	t.Helper()
 
 	data, err := os.ReadFile(path)
@@ -1285,7 +1389,11 @@ func TestSetKeepsStringFieldsAsStrings(t *testing.T) {
 			t.Run(ext+" "+value, func(t *testing.T) {
 				t.Parallel()
 
-				path := writeFile(t, "config"+ext, map[string]string{".toml": "name = 'x'\n", ".yaml": "name: x\n", ".json": `{"name": "x"}`}[ext])
+				path := writeFile(
+					t,
+					"config"+ext,
+					map[string]string{".toml": "name = 'x'\n", ".yaml": "name: x\n", ".json": `{"name": "x"}`}[ext],
+				)
 
 				if err := strata.Set[stringConfig](path, "name", value); err != nil {
 					t.Fatalf("Set: %v", err)
@@ -1413,7 +1521,11 @@ func TestSetAllWritesEveryChange(t *testing.T) {
 
 	path := writeFile(t, "config.toml", "host = \"a\"\nport = 1\n")
 
-	if err := strata.SetAll[config](path, strata.Change{Key: "host", Value: "b"}, strata.Change{Key: portKey, Value: 2}); err != nil {
+	if err := strata.SetAll[config](
+		path,
+		strata.Change{Key: "host", Value: "b"},
+		strata.Change{Key: portKey, Value: 2},
+	); err != nil {
 		t.Fatal(err)
 	}
 
@@ -1442,8 +1554,16 @@ func TestSetAllLeavesTheFileUnchangedWhenAnyChangeFails(t *testing.T) {
 		changes []strata.Change
 		want    error
 	}{
-		{name: "an unknown key", changes: []strata.Change{{Key: "host", Value: "b"}, {Key: "prot", Value: 2}}, want: strata.ErrUnknownKey},
-		{name: "a value of the wrong type", changes: []strata.Change{{Key: "host", Value: "b"}, {Key: portKey, Value: "high"}}, want: nil},
+		{
+			name:    "an unknown key",
+			changes: []strata.Change{{Key: "host", Value: "b"}, {Key: "prot", Value: 2}},
+			want:    strata.ErrUnknownKey,
+		},
+		{
+			name:    "a value of the wrong type",
+			changes: []strata.Change{{Key: "host", Value: "b"}, {Key: portKey, Value: "high"}},
+			want:    nil,
+		},
 	} {
 		t.Run(test.name, func(t *testing.T) {
 			t.Parallel()
@@ -1486,12 +1606,23 @@ func TestSetEditsInlineKeysAtTheTopLevel(t *testing.T) {
 				t.Fatal(err)
 			}
 
-			got, err := strata.Load[inlineConfig](strata.WithPath(path), strata.WithFormats(filepath.Ext(test.name)), strata.WithStrict())
+			got, err := strata.Load[inlineConfig](
+				strata.WithPath(path),
+				strata.WithFormats(filepath.Ext(test.name)),
+				strata.WithStrict(),
+			)
 			if err != nil || got.Server.Host != "edited" || got.Port != 1 {
 				t.Fatalf("reloaded %+v, %v; want host edited and port 1", got, err)
 			}
 
-			if err := strata.Set[inlineConfig](path, "server.host", "x"); !errors.Is(err, strata.ErrUnknownKey) {
+			if err := strata.Set[inlineConfig](
+				path,
+				"server.host",
+				"x",
+			); !errors.Is(
+				err,
+				strata.ErrUnknownKey,
+			) {
 				t.Fatalf("Set(/server/host) error = %v, want ErrUnknownKey", err)
 			}
 		})
@@ -1504,7 +1635,12 @@ func TestSetChecksInlineMapEntriesAgainstTheMapType(t *testing.T) {
 	initial := "name: n\nalpha: 1\n"
 	path := writeFile(t, "config.yaml", initial)
 
-	if err := strata.Set[inlineMapConfig](path, "beta", "x"); err == nil || !strings.Contains(err.Error(), "beta") {
+	if err := strata.Set[inlineMapConfig](
+		path,
+		"beta",
+		"x",
+	); err == nil ||
+		!strings.Contains(err.Error(), "beta") {
 		t.Fatalf("Set(/beta, x) error = %v, want a rejection naming /beta", err)
 	}
 
@@ -1514,7 +1650,11 @@ func TestSetChecksInlineMapEntriesAgainstTheMapType(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	got, err := strata.Load[inlineMapConfig](strata.WithPath(path), strata.WithFormats(yamlFormat), strata.WithStrict())
+	got, err := strata.Load[inlineMapConfig](
+		strata.WithPath(path),
+		strata.WithFormats(yamlFormat),
+		strata.WithStrict(),
+	)
 	if err != nil || !reflect.DeepEqual(got.Extra, map[string]int{"alpha": 1, "beta": 2}) {
 		t.Fatalf("reloaded %+v, %v", got, err)
 	}
@@ -1541,7 +1681,11 @@ func TestSetBytesTreatsEveryTokenAsOneKey(t *testing.T) {
 			t.Run(format+" "+test.key, func(t *testing.T) {
 				t.Parallel()
 
-				empty := map[string][]byte{jsonFormat: []byte("{\"labels\": {}}\n"), tomlFormat: []byte("[labels]\n"), yamlFormat: []byte("labels: {}\n")}
+				empty := map[string][]byte{
+					jsonFormat: []byte("{\"labels\": {}}\n"),
+					tomlFormat: []byte("[labels]\n"),
+					yamlFormat: []byte("labels: {}\n"),
+				}
 
 				edited, err := strata.SetBytes(format, empty[format], test.key, "v")
 				if err != nil {
@@ -1550,13 +1694,24 @@ func TestSetBytesTreatsEveryTokenAsOneKey(t *testing.T) {
 
 				path := writeFile(t, "config."+format, string(edited))
 
-				got, meta, err := strata.LoadWithMetadata[typoConfig](strata.WithPath(path), strata.WithFormats(format))
+				got, meta, err := strata.LoadWithMetadata[typoConfig](
+					strata.WithPath(path),
+					strata.WithFormats(format),
+				)
 				if err != nil || !reflect.DeepEqual(got.Labels, map[string]string{test.want: "v"}) {
 					t.Fatalf("labels = %q, %v; want only %q", got.Labels, err, test.want)
 				}
 
-				if origin, found := meta.Where(test.key); !found || origin.Source != strata.SourceFile || origin.Key != test.key {
-					t.Fatalf("Where(%q) = %+v, %t; want the file origin under the same key", test.key, origin, found)
+				if origin, found := meta.Where(
+					test.key,
+				); !found || origin.Source != strata.SourceFile ||
+					origin.Key != test.key {
+					t.Fatalf(
+						"Where(%q) = %+v, %t; want the file origin under the same key",
+						test.key,
+						origin,
+						found,
+					)
 				}
 			})
 		}
@@ -1582,7 +1737,12 @@ func TestSetAllWritesEscapedKeysThatReloadExactly(t *testing.T) {
 		{Key: `x\.y`, Value: "dotted"},
 		{Key: "HOST", Value: "upper"},
 	}
-	wantLabels := map[string]map[string]int{"a.b": {"c": 1}, `a\b`: {"": 2}, spacedLabel: {"0": 3}, "x/y": {"~1": 4}}
+	wantLabels := map[string]map[string]int{
+		"a.b":       {"c": 1},
+		`a\b`:       {"": 2},
+		spacedLabel: {"0": 3},
+		"x/y":       {"~1": 4},
+	}
 	wantExtra := map[string]string{"x.y": "dotted", "HOST": "upper"}
 
 	for _, test := range []struct{ name, document string }{
@@ -1599,18 +1759,31 @@ func TestSetAllWritesEscapedKeysThatReloadExactly(t *testing.T) {
 				t.Fatal(err)
 			}
 
-			got, meta, err := strata.LoadWithMetadata[escapedKeyConfig](strata.WithPath(path), strata.WithFormats(filepath.Ext(test.name)), strata.WithStrict())
+			got, meta, err := strata.LoadWithMetadata[escapedKeyConfig](
+				strata.WithPath(path),
+				strata.WithFormats(filepath.Ext(test.name)),
+				strata.WithStrict(),
+			)
 			if err != nil {
 				t.Fatal(err)
 			}
 
-			if got.Name != "n" || !reflect.DeepEqual(got.Labels, wantLabels) || !reflect.DeepEqual(got.Extra, wantExtra) {
+			if got.Name != "n" || !reflect.DeepEqual(got.Labels, wantLabels) ||
+				!reflect.DeepEqual(got.Extra, wantExtra) {
 				t.Fatalf("reloaded %+v, want labels %v and extra %q", got, wantLabels, wantExtra)
 			}
 
 			for _, change := range changes {
-				if origin, found := meta.Where(change.Key); !found || origin.Key != change.Key || origin.Source != strata.SourceFile {
-					t.Errorf("Where(%q) = %+v, %t; want the file origin under the same key", change.Key, origin, found)
+				if origin, found := meta.Where(
+					change.Key,
+				); !found || origin.Key != change.Key ||
+					origin.Source != strata.SourceFile {
+					t.Errorf(
+						"Where(%q) = %+v, %t; want the file origin under the same key",
+						change.Key,
+						origin,
+						found,
+					)
 				}
 			}
 		})
@@ -1637,7 +1810,9 @@ func TestSetRejectsMalformedKeysWithoutWriting(t *testing.T) {
 		requireFileContent(t, path, initial)
 
 		meta := strata.NewMetadata()
-		meta.Record(strata.Origin{Key: key, Source: strata.SourceFile, Path: path, Line: 0, RawValue: "1"})
+		meta.Record(
+			strata.Origin{Key: key, Source: strata.SourceFile, Path: path, Line: 0, RawValue: "1"},
+		)
 
 		if origin, found := meta.Where(key); found {
 			t.Errorf("Where(%q) = %+v, want a malformed key never to match", key, origin)

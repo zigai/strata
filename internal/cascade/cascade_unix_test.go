@@ -45,7 +45,12 @@ func TestDiscoverSkipsNonRegularLayerFiles(t *testing.T) {
 			done := make(chan result, 1)
 
 			go func() {
-				layers, err := cascade.Discover(cascade.DiscoverOptions{AppName: "testapp", Extensions: []string{".toml", ".yaml"}})
+				layers, err := cascade.Discover(
+					cascade.DiscoverOptions{
+						AppName:    "testapp",
+						Extensions: []string{".toml", ".yaml"},
+					},
+				)
 				done <- result{layers, err}
 			}()
 

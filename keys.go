@@ -91,7 +91,10 @@ func keyNodeFor(typ reflect.Type, nodes map[reflect.Type]*keyNode) *keyNode {
 
 		node.children = make(map[string]*keyNode, len(structLayout.Fields))
 		for _, field := range structLayout.Fields {
-			node.children[field.Key] = withSecret(keyNodeFor(field.Member.Field.Type, nodes), field.Secret)
+			node.children[field.Key] = withSecret(
+				keyNodeFor(field.Member.Field.Type, nodes),
+				field.Secret,
+			)
 		}
 
 		if rest := structLayout.Rest; rest != nil {
@@ -107,7 +110,13 @@ func withSecret(node *keyNode, secret bool) *keyNode {
 		return node
 	}
 
-	return &keyNode{children: node.children, element: node.element, rest: node.rest, kind: node.kind, secret: true}
+	return &keyNode{
+		children: node.children,
+		element:  node.element,
+		rest:     node.rest,
+		kind:     node.kind,
+		secret:   true,
+	}
 }
 
 func (t *keyTree) collectNames(typ reflect.Type, prefix jsontext.Pointer, active []reflect.Type) {
@@ -324,7 +333,7 @@ func (t *keyTree) suggest(key jsontext.Pointer) jsontext.Pointer {
 // number of insertions, deletions, substitutions, and adjacent transpositions
 // that turn one into the other. A transposition counts once, so "prot" is one
 // edit from "port".
-func editDistance(a, b string) int {
+func editDistance(a string, b string) int {
 	ra, rb := []rune(a), []rune(b)
 
 	prev2 := make([]int, len(rb)+1)

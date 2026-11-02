@@ -68,14 +68,30 @@ func TestUpdateTOMLCompositeSubtreesPreserveSiblings(t *testing.T) {
 	}
 
 	for _, test := range []struct{ name, input string }{
-		{"inline", "service = { ports = { old = { listen_port = 1 } }, keep = 7 } # service comment\n[other]\nkeep = 8 # other comment\n"},
-		{"tables", "[service.ports.old]\nlisten_port = 1\n[service]\nkeep = 7 # service comment\n[other]\nkeep = 8 # other comment\n"},
-		{"dotted", "service.ports.old.listen_port = 1\nservice.keep = 7 # service comment\n[other]\nkeep = 8 # other comment\n"},
+		{
+			"inline",
+			"service = { ports = { old = { listen_port = 1 } }, keep = 7 } # service comment\n" +
+				"[other]\nkeep = 8 # other comment\n",
+		},
+		{
+			"tables",
+			"[service.ports.old]\nlisten_port = 1\n[service]\nkeep = 7 # service comment\n" +
+				"[other]\nkeep = 8 # other comment\n",
+		},
+		{
+			"dotted",
+			"service.ports.old.listen_port = 1\nservice.keep = 7 # service comment\n" +
+				"[other]\nkeep = 8 # other comment\n",
+		},
 	} {
 		t.Run(test.name, func(t *testing.T) {
 			t.Parallel()
 
-			updated, err := edit.UpdateTOML([]byte(test.input), []string{"service", "ports"}, map[string]item{"first": {HTTPPort: 9090}})
+			updated, err := edit.UpdateTOML(
+				[]byte(test.input),
+				[]string{"service", "ports"},
+				map[string]item{"first": {HTTPPort: 9090}},
+			)
 			if err != nil {
 				t.Fatal(err)
 			}
@@ -93,11 +109,14 @@ func TestUpdateTOMLCompositeSubtreesPreserveSiblings(t *testing.T) {
 				t.Fatal(err)
 			}
 
-			if len(got.Service.Ports) != 1 || got.Service.Ports["first"].ListenPort != 9090 || got.Service.Keep != 7 || got.Other.Keep != 8 {
+			if len(got.Service.Ports) != 1 || got.Service.Ports["first"].ListenPort != 9090 ||
+				got.Service.Keep != 7 ||
+				got.Other.Keep != 8 {
 				t.Fatalf("document = %+v\n%s", got, updated)
 			}
 
-			if !strings.Contains(string(updated), "# service comment") || !strings.Contains(string(updated), "keep = 8 # other comment") {
+			if !strings.Contains(string(updated), "# service comment") ||
+				!strings.Contains(string(updated), "keep = 8 # other comment") {
 				t.Fatalf("sibling comments changed:\n%s", updated)
 			}
 		})
@@ -141,7 +160,8 @@ other = "keep"
 		t.Errorf("multiline tail was not removed:\n%s", res)
 	}
 
-	if !strings.Contains(res, "val = 'single line'") && !strings.Contains(res, "val = \"single line\"") {
+	if !strings.Contains(res, "val = 'single line'") &&
+		!strings.Contains(res, "val = \"single line\"") {
 		t.Errorf("missing new value in result:\n%s", res)
 	}
 }
@@ -191,7 +211,8 @@ func TestUpdateTOMLRetainsMultilineClosingComment(t *testing.T) {
 		t.Run(delimiter, func(t *testing.T) {
 			t.Parallel()
 
-			input := "message = " + delimiter + "\nold # text, not a comment\n" + delimiter + " # keep closing comment\nkeep = 2\n"
+			input := "message = " + delimiter + "\nold # text, not a comment\n" +
+				delimiter + " # keep closing comment\nkeep = 2\n"
 
 			updated, err := edit.UpdateTOML([]byte(input), []string{"message"}, "new")
 			if err != nil {
@@ -207,7 +228,8 @@ func TestUpdateTOMLRetainsMultilineClosingComment(t *testing.T) {
 				t.Fatal(err)
 			}
 
-			if got["message"] != "new" || got["keep"] != int64(2) || strings.Contains(string(updated), "# text") {
+			if got["message"] != "new" || got["keep"] != int64(2) ||
+				strings.Contains(string(updated), "# text") {
 				t.Fatalf("document = %#v\n%s", got, updated)
 			}
 		})
@@ -256,7 +278,8 @@ port = 8080
 		t.Fatalf("UpdateTOML error: %v", err)
 	}
 
-	if !strings.Contains(string(updated), "host = \"0.0.0.0\"") && !strings.Contains(string(updated), "host = '0.0.0.0'") {
+	if !strings.Contains(string(updated), "host = \"0.0.0.0\"") &&
+		!strings.Contains(string(updated), "host = '0.0.0.0'") {
 		t.Errorf("expected appended host, got:\n%s", string(updated))
 	}
 
@@ -302,7 +325,8 @@ func TestUpdateTOMLPreservesLiteralDottedSibling(t *testing.T) {
 				t.Fatalf("document = %+v\n%s", got, updated)
 			}
 
-			if !strings.Contains(string(updated), "x = 1") || !strings.Contains(string(updated), "keep = 2") {
+			if !strings.Contains(string(updated), "x = 1") ||
+				!strings.Contains(string(updated), "keep = 2") {
 				t.Fatalf("untouched assignments changed:\n%s", updated)
 			}
 		})
@@ -326,7 +350,8 @@ foo = "bar"
 		t.Errorf("duplicate table header created:\n%s", result)
 	}
 
-	if !strings.Contains(result, "foo = 'updated'") && !strings.Contains(result, "foo = \"updated\"") {
+	if !strings.Contains(result, "foo = 'updated'") &&
+		!strings.Contains(result, "foo = \"updated\"") {
 		t.Errorf("foo not updated in-place:\n%s", result)
 	}
 }
@@ -465,18 +490,59 @@ func TestUpdateTOMLMultilineEdits(t *testing.T) {
 	t.Parallel()
 
 	cases := []struct{ name, input, key, literal, want string }{
-		{"unrelated_string", "banner = \"\"\"\nport = 123\n\"\"\"\nport = 8080\n", portKey, "9000", "banner = \"\"\"\nport = 123\n\"\"\"\nport = 9000\n"},
-		{"multiline_array", "ports = [\n  80,\n  443,\n]\nkeep = true\n", "ports", "[ 8080 ]", "ports = [ 8080 ]\nkeep = true\n"},
-		{"single_line_triple_with_comment", "banner = \"\"\"hello\"\"\" # keep comment\nport = 8080\n", "banner", "\"new\"", "banner = \"new\" # keep comment\nport = 8080\n"},
-		{"single_line_triple_with_quote_and_bracket", "a = '''don't ['''\n\n[db]\nport = 1\n", "a", "'x'", "a = 'x'\n\n[db]\nport = 1\n"},
-		{"table_after_single_line_triple", "a = '''don't ['''\n\n[db]\nport = 1\n", "db.port", "2", "a = '''don't ['''\n\n[db]\nport = 2\n"},
-		{"bracket_inside_string_in_array", "a = [\n  \"\"\"\n]\nb = 1\n  \"\"\",\n]\nb = 1\n", "b", "2", "a = [\n  \"\"\"\n]\nb = 1\n  \"\"\",\n]\nb = 2\n"},
+		{
+			"unrelated_string",
+			"banner = \"\"\"\nport = 123\n\"\"\"\nport = 8080\n",
+			portKey,
+			"9000",
+			"banner = \"\"\"\nport = 123\n\"\"\"\nport = 9000\n",
+		},
+		{
+			"multiline_array",
+			"ports = [\n  80,\n  443,\n]\nkeep = true\n",
+			"ports",
+			"[ 8080 ]",
+			"ports = [ 8080 ]\nkeep = true\n",
+		},
+		{
+			"single_line_triple_with_comment",
+			"banner = \"\"\"hello\"\"\" # keep comment\nport = 8080\n",
+			"banner",
+			"\"new\"",
+			"banner = \"new\" # keep comment\nport = 8080\n",
+		},
+		{
+			"single_line_triple_with_quote_and_bracket",
+			"a = '''don't ['''\n\n[db]\nport = 1\n",
+			"a",
+			"'x'",
+			"a = 'x'\n\n[db]\nport = 1\n",
+		},
+		{
+			"table_after_single_line_triple",
+			"a = '''don't ['''\n\n[db]\nport = 1\n",
+			"db.port",
+			"2",
+			"a = '''don't ['''\n\n[db]\nport = 2\n",
+		},
+		{
+			"bracket_inside_string_in_array",
+			"a = [\n  \"\"\"\n]\nb = 1\n  \"\"\",\n]\nb = 1\n",
+			"b",
+			"2",
+			"a = [\n  \"\"\"\n]\nb = 1\n  \"\"\",\n]\nb = 2\n",
+		},
 		{"space_in_quoted_key", "\"my key\" = 1\n", "my key", "2", "\"my key\" = 2\n"},
 		{"spaces_around_dots", "a . b = 1\n", "a.b", "2", "a . b = 2\n"},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
-			got, err := edit.UpdateTOMLFormatted([]byte(tc.input), strings.Split(tc.key, "."), nil, tc.literal)
+			got, err := edit.UpdateTOMLFormatted(
+				[]byte(tc.input),
+				strings.Split(tc.key, "."),
+				nil,
+				tc.literal,
+			)
 			if err != nil {
 				t.Fatal(err)
 			}

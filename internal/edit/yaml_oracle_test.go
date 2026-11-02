@@ -15,7 +15,7 @@ import (
 	"github.com/zigai/strata/internal/edit"
 )
 
-func requireYAMLEdit(t *testing.T, input, output []byte, path []string, value any) {
+func requireYAMLEdit(t *testing.T, input []byte, output []byte, path []string, value any) {
 	t.Helper()
 
 	before, ok := decodeYAMLDocument(input)
@@ -25,13 +25,23 @@ func requireYAMLEdit(t *testing.T, input, output []byte, path []string, value an
 
 	after, ok := decodeYAMLDocument(output)
 	if !ok {
-		t.Fatalf("output does not decode to a string-keyed mapping:\ninput:\n%s\noutput:\n%s", input, output)
+		t.Fatalf(
+			"output does not decode to a string-keyed mapping:\ninput:\n%s\noutput:\n%s",
+			input,
+			output,
+		)
 	}
 
 	want := setYAMLDecoded(before, path, decodedYAMLValue(t, value))
 	if !reflect.DeepEqual(after, want) {
-		t.Fatalf("edit of %q changed the document wrongly\ninput:\n%s\noutput:\n%s\ndecoded: %#v\nwant:    %#v",
-			strings.Join(path, "."), input, output, after, want)
+		t.Fatalf(
+			"edit of %q changed the document wrongly\ninput:\n%s\noutput:\n%s\ndecoded: %#v\nwant:    %#v",
+			strings.Join(path, "."),
+			input,
+			output,
+			after,
+			want,
+		)
 	}
 }
 
@@ -121,14 +131,39 @@ func TestUpdateYAMLChangesOnlyTheNamedKey(t *testing.T) {
 		key   string
 		value any
 	}{
-		{"comments", "# main\nserver:\n  # host\n  host: 127.0.0.1 # inline\n  port: 8080\n\ndatabase:\n  port: 5432\n", "server.port", 9090},
+		{
+			"comments",
+			"# main\nserver:\n  # host\n  host: 127.0.0.1 # inline\n  port: 8080\n\ndatabase:\n  port: 5432\n",
+			"server.port",
+			9090,
+		},
 		{"append in mapping", "server:\n  port: 8080\n", "server.timeout", "30s"},
-		{"key with siblings after it", "server:\n  port: 8080\n  host: h\n  tls: true\nname: app\n", "server.port", 9090},
-		{"through an alias", "default: &default\n  timeout: 30s\n  retries: 3\n\nproduction: *default\n", "production.retries", 5},
-		{"deep through an alias", "default: &default\n  nested:\n    val: 10\nserver: *default\n", "server.nested.val", 999},
+		{
+			"key with siblings after it",
+			"server:\n  port: 8080\n  host: h\n  tls: true\nname: app\n",
+			"server.port",
+			9090,
+		},
+		{
+			"through an alias",
+			"default: &default\n  timeout: 30s\n  retries: 3\n\nproduction: *default\n",
+			"production.retries",
+			5,
+		},
+		{
+			"deep through an alias",
+			"default: &default\n  nested:\n    val: 10\nserver: *default\n",
+			"server.nested.val",
+			999,
+		},
 		{"case-different sibling", "Port: 8080\nport: 9090\n", portKey, 9999},
 		{"merge key override", "base: &base\n  host: a\n  port: 1\ndb:\n  <<: *base\n", "db.port", 2},
-		{"nested mapping from the first merge source", "first: &f {n: {x: 1}}\nsecond: &s {n: {x: 2, y: 3}}\nc:\n  <<: [*f, *s]\n", "c.n.z", 4},
+		{
+			"nested mapping from the first merge source",
+			"first: &f {n: {x: 1}}\nsecond: &s {n: {x: 2, y: 3}}\nc:\n  <<: [*f, *s]\n",
+			"c.n.z",
+			4,
+		},
 		{"second alias of an edited alias", "a: &x\n  p: 1\nb: *x\nc: *x\n", "b.p", 2},
 		{"four-space indent", "server:\n    host: h\n    port: 1\n", "server.port", 2},
 		{"flow mapping", "server: {host: h, port: 1}\n", "server.port", 2},
@@ -175,7 +210,10 @@ func FuzzUpdateYAML(f *testing.F) {
 	for _, seed := range []struct {
 		doc, key string
 	}{
-		{"# main\nserver:\n  # host\n  host: 127.0.0.1 # inline\n  port: 8080\n\ndatabase:\n  port: 5432\n", "server.port"},
+		{
+			"# main\nserver:\n  # host\n  host: 127.0.0.1 # inline\n  port: 8080\n\ndatabase:\n  port: 5432\n",
+			"server.port",
+		},
 		{"default: &default\n  timeout: 30s\n  retries: 3\n\nproduction: *default\n", "production.retries"},
 		{"default: &default\n  nested:\n    val: 10\nserver: *default\n", "server.nested.val"},
 		{"base: &base\n  host: a\n  port: 1\ndb:\n  <<: *base\n", "db.port"},
@@ -203,7 +241,8 @@ func FuzzUpdateYAML(f *testing.F) {
 
 	f.Fuzz(func(t *testing.T, doc, key string, n int64, s string, useInt bool) {
 		_, ok := decodeYAMLDocument([]byte(doc))
-		if !ok || !bareYAMLKey.MatchString(key) || !utf8.ValidString(s) || !singleYAMLDocument(doc) {
+		if !ok || !bareYAMLKey.MatchString(key) || !utf8.ValidString(s) ||
+			!singleYAMLDocument(doc) {
 			t.Skip()
 		}
 
@@ -222,7 +261,14 @@ func FuzzUpdateYAML(f *testing.F) {
 		before, _ := decodeYAMLDocument([]byte(doc))
 		if yamlPathThroughValue(before, path) {
 			if !errors.Is(err, edit.ErrPathNotMapping) {
-				t.Fatalf("path %q runs through a value that is not a mapping: err = %v, want ErrPathNotMapping\ninput:\n%s\noutput:\n%s", key, err, doc, out)
+				t.Fatalf(
+					"path %q runs through a value that is not a mapping: err = %v, want ErrPathNotMapping\n"+
+						"input:\n%s\noutput:\n%s",
+					key,
+					err,
+					doc,
+					out,
+				)
 			}
 
 			return

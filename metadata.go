@@ -31,7 +31,8 @@ type Metadata struct {
 	secretKeys  *keyTree
 	activeFiles []string
 	unknown     []UnknownKey
-	mu          sync.RWMutex
+	//exhaustruct:optional
+	mu sync.RWMutex
 }
 
 type secretScope uint8
@@ -46,7 +47,6 @@ func NewMetadata() *Metadata {
 		secretKeys:  nil,
 		activeFiles: make([]string, 0),
 		unknown:     nil,
-		mu:          sync.RWMutex{},
 	}
 }
 
@@ -283,7 +283,10 @@ func (m *Metadata) orderBy(names []jsontext.Pointer) {
 		}
 	}
 
-	sort.SliceStable(m.order, func(i, j int) bool { return orderRanks[m.order[i]] < orderRanks[m.order[j]] })
+	sort.SliceStable(
+		m.order,
+		func(i, j int) bool { return orderRanks[m.order[i]] < orderRanks[m.order[j]] },
+	)
 }
 
 func (m *Metadata) initMapsLocked() {

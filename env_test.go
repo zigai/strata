@@ -32,7 +32,8 @@ func TestNamedByteSliceEnvironmentBinding(t *testing.T) {
 			}
 
 			origin, found := meta.Where("payload")
-			if !found || origin.Source != strata.SourceEnv || origin.Path != "BINDING_PAYLOAD" || origin.RawValue != value {
+			if !found || origin.Source != strata.SourceEnv || origin.Path != "BINDING_PAYLOAD" ||
+				origin.RawValue != value {
 				t.Fatalf("origin = %+v, found = %t", origin, found)
 			}
 		})
@@ -140,7 +141,10 @@ func TestEnvRejectsValuesThatDoNotFitTheField(t *testing.T) {
 		t.Run(tc.name, func(t *testing.T) {
 			t.Setenv(tc.key, tc.value)
 
-			got, err := strata.Load[narrowConfig](strata.WithEnvPrefix("NARROW_"), strata.WithoutFileDiscovery())
+			got, err := strata.Load[narrowConfig](
+				strata.WithEnvPrefix("NARROW_"),
+				strata.WithoutFileDiscovery(),
+			)
 			if err == nil {
 				t.Fatalf("%s = %q loaded as %+v, want an error", tc.key, tc.value, got)
 			}
@@ -157,7 +161,10 @@ func TestEnvAcceptsValuesAtTheFieldBoundary(t *testing.T) {
 	t.Setenv("NARROW_TINY", "255")
 	t.Setenv("NARROW_FLOAT", "3.5")
 
-	got, err := strata.Load[narrowConfig](strata.WithEnvPrefix("NARROW_"), strata.WithoutFileDiscovery())
+	got, err := strata.Load[narrowConfig](
+		strata.WithEnvPrefix("NARROW_"),
+		strata.WithoutFileDiscovery(),
+	)
 	if err != nil {
 		t.Fatalf("Load: %v", err)
 	}
@@ -264,7 +271,10 @@ func TestEnvVars(t *testing.T) {
 		t.Error("a map field is listed, but the environment cannot set one")
 	}
 
-	if names := got["database.port"].Names; !slices.Equal(names, []string{"MYAPP_DATABASE__PORT", "MYAPP_DATABASE_PORT"}) {
+	if names := got["database.port"].Names; !slices.Equal(
+		names,
+		[]string{"MYAPP_DATABASE__PORT", "MYAPP_DATABASE_PORT"},
+	) {
 		t.Errorf("database.port names = %v", names)
 	}
 
@@ -307,7 +317,10 @@ func TestEnvDecodesBoolSpellings(t *testing.T) {
 		t.Run(tc.value, func(t *testing.T) {
 			t.Setenv("DEC_FLAG", tc.value)
 
-			got, err := strata.Load[envDecodeConfig](strata.WithDefaults(envDecodeConfig{Flag: !tc.want}), strata.WithEnvPrefix("DEC_"))
+			got, err := strata.Load[envDecodeConfig](
+				strata.WithDefaults(envDecodeConfig{Flag: !tc.want}),
+				strata.WithEnvPrefix("DEC_"),
+			)
 			if err != nil {
 				t.Fatalf("Load: %v", err)
 			}
@@ -330,7 +343,12 @@ func TestEnvDecodesByFieldType(t *testing.T) {
 		t.Fatalf("Load: %v", err)
 	}
 
-	want := envDecodeConfig{Wait: 168 * time.Hour, Span: strata.Duration(336 * time.Hour), Tags: []string{"a", "b"}, Level: "debug"}
+	want := envDecodeConfig{
+		Wait:  168 * time.Hour,
+		Span:  strata.Duration(336 * time.Hour),
+		Tags:  []string{"a", "b"},
+		Level: "debug",
+	}
 	if !reflect.DeepEqual(got, want) {
 		t.Fatalf("got %+v, want %+v", got, want)
 	}
@@ -352,7 +370,8 @@ func TestEnvErrorsNameTheKeyAndVariable(t *testing.T) {
 				t.Fatalf("err = %v, want ErrInvalidEnvValue", err)
 			}
 
-			if msg := err.Error(); !strings.Contains(msg, tc.variable) || !strings.Contains(msg, `"`+tc.key+`"`) && !strings.Contains(msg, " "+tc.key) {
+			if msg := err.Error(); !strings.Contains(msg, tc.variable) ||
+				!strings.Contains(msg, `"`+tc.key+`"`) && !strings.Contains(msg, " "+tc.key) {
 				t.Errorf("err = %q, want it to name %s and key %s", msg, tc.variable, tc.key)
 			}
 		})
@@ -364,8 +383,16 @@ func TestEnvVarsMatchesWhatLoadReads(t *testing.T) {
 		{Key: "host", Name: "MYAPP_HOST", Names: []string{"MYAPP_HOST"}},
 		{Key: portKey, Name: "MYAPP_PORT", Names: []string{"MYAPP_PORT"}},
 		{Key: "api_key", Name: "MYAPP_API_KEY", Names: []string{"MYAPP_API_KEY"}, IsSecret: true},
-		{Key: "database.port", Name: "MYAPP_DATABASE_PORT", Names: []string{"MYAPP_DATABASE__PORT", "MYAPP_DATABASE_PORT"}},
-		{Key: "database.max_conns", Name: "MYAPP_DATABASE_MAX_CONNS", Names: []string{"MYAPP_DATABASE__MAX_CONNS", "MYAPP_DATABASE_MAX_CONNS"}},
+		{
+			Key:   "database.port",
+			Name:  "MYAPP_DATABASE_PORT",
+			Names: []string{"MYAPP_DATABASE__PORT", "MYAPP_DATABASE_PORT"},
+		},
+		{
+			Key:   "database.max_conns",
+			Name:  "MYAPP_DATABASE_MAX_CONNS",
+			Names: []string{"MYAPP_DATABASE__MAX_CONNS", "MYAPP_DATABASE_MAX_CONNS"},
+		},
 	}
 
 	vars := strata.EnvVars[typoConfig]("myapp")
@@ -373,8 +400,19 @@ func TestEnvVarsMatchesWhatLoadReads(t *testing.T) {
 		t.Fatalf("EnvVars =\n%+v\nwant\n%+v", vars, want)
 	}
 
-	values := map[string]string{"host": "h", portKey: "1", "api_key": "k", "database.port": "2", "database.max_conns": "3"}
-	wantCfg := typoConfig{Host: "h", Port: 1, APIKey: "k", Database: typoDatabase{Port: 2, MaxConns: 3}}
+	values := map[string]string{
+		"host":               "h",
+		portKey:              "1",
+		"api_key":            "k",
+		"database.port":      "2",
+		"database.max_conns": "3",
+	}
+	wantCfg := typoConfig{
+		Host:     "h",
+		Port:     1,
+		APIKey:   "k",
+		Database: typoDatabase{Port: 2, MaxConns: 3},
+	}
 
 	for _, tc := range []struct {
 		name string

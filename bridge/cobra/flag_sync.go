@@ -12,7 +12,12 @@ import (
 	"github.com/zigai/strata/internal/plan"
 )
 
-func syncTarget(cmd *cobra.Command, root reflect.Value, bound *boundFlag, meta *strata.Metadata) error {
+func syncTarget(
+	cmd *cobra.Command,
+	root reflect.Value,
+	bound *boundFlag,
+	meta *strata.Metadata,
+) error {
 	target := &bound.target
 	flag := cmd.Flag(target.FlagName)
 
@@ -48,7 +53,13 @@ func decodeFlag(fs *pflag.FlagSet, target *plan.Leaf, dst reflect.Value) error {
 		return decodeString(fs, target, dst)
 	case plan.KindBool:
 		return decodeBool(fs, target, dst)
-	case plan.KindInt, plan.KindInt64, plan.KindUint, plan.KindUint64, plan.KindFloat32, plan.KindFloat64, plan.KindDuration:
+	case plan.KindInt,
+		plan.KindInt64,
+		plan.KindUint,
+		plan.KindUint64,
+		plan.KindFloat32,
+		plan.KindFloat64,
+		plan.KindDuration:
 		return decodeNumeric(fs, target, dst)
 	case plan.KindStringSlice, plan.KindIntSlice, plan.KindInt64Slice:
 		return decodeSlice(fs, target, dst)
@@ -91,7 +102,13 @@ func decodeNumeric(fs *pflag.FlagSet, target *plan.Leaf, dst reflect.Value) erro
 		return decodeSigned(fs, target, dst)
 	case plan.KindUint, plan.KindUint64, plan.KindFloat32, plan.KindFloat64:
 		return decodeOtherNumeric(fs, target, dst)
-	case plan.KindUnsupported, plan.KindString, plan.KindBool, plan.KindText, plan.KindStringSlice, plan.KindIntSlice, plan.KindInt64Slice:
+	case plan.KindUnsupported,
+		plan.KindString,
+		plan.KindBool,
+		plan.KindText,
+		plan.KindStringSlice,
+		plan.KindIntSlice,
+		plan.KindInt64Slice:
 		return fmt.Errorf("%w: %s", plan.ErrUnsupportedFieldType, target.FieldName)
 	default:
 		return fmt.Errorf("%w: %s", plan.ErrUnsupportedFieldType, target.FieldName)
@@ -121,7 +138,17 @@ func decodeSigned(fs *pflag.FlagSet, target *plan.Leaf, dst reflect.Value) error
 		}
 
 		return plan.AssignInt(dst, int64(value))
-	case plan.KindUnsupported, plan.KindString, plan.KindBool, plan.KindUint, plan.KindUint64, plan.KindFloat32, plan.KindFloat64, plan.KindText, plan.KindStringSlice, plan.KindIntSlice, plan.KindInt64Slice:
+	case plan.KindUnsupported,
+		plan.KindString,
+		plan.KindBool,
+		plan.KindUint,
+		plan.KindUint64,
+		plan.KindFloat32,
+		plan.KindFloat64,
+		plan.KindText,
+		plan.KindStringSlice,
+		plan.KindIntSlice,
+		plan.KindInt64Slice:
 		return fmt.Errorf("%w: %s", plan.ErrUnsupportedFieldType, target.FieldName)
 	default:
 		return fmt.Errorf("%w: %s", plan.ErrUnsupportedFieldType, target.FieldName)
@@ -158,7 +185,16 @@ func decodeOtherNumeric(fs *pflag.FlagSet, target *plan.Leaf, dst reflect.Value)
 		}
 
 		return plan.AssignFloat(dst, value)
-	case plan.KindUnsupported, plan.KindString, plan.KindBool, plan.KindInt, plan.KindInt64, plan.KindDuration, plan.KindText, plan.KindStringSlice, plan.KindIntSlice, plan.KindInt64Slice:
+	case plan.KindUnsupported,
+		plan.KindString,
+		plan.KindBool,
+		plan.KindInt,
+		plan.KindInt64,
+		plan.KindDuration,
+		plan.KindText,
+		plan.KindStringSlice,
+		plan.KindIntSlice,
+		plan.KindInt64Slice:
 		return fmt.Errorf("%w: %s", plan.ErrUnsupportedFieldType, target.FieldName)
 	default:
 		return fmt.Errorf("%w: %s", plan.ErrUnsupportedFieldType, target.FieldName)
@@ -188,7 +224,17 @@ func decodeSlice(fs *pflag.FlagSet, target *plan.Leaf, dst reflect.Value) error 
 		}
 
 		return plan.AssignSlice(dst, reflect.ValueOf(value))
-	case plan.KindUnsupported, plan.KindString, plan.KindBool, plan.KindInt, plan.KindInt64, plan.KindUint, plan.KindUint64, plan.KindFloat32, plan.KindFloat64, plan.KindDuration, plan.KindText:
+	case plan.KindUnsupported,
+		plan.KindString,
+		plan.KindBool,
+		plan.KindInt,
+		plan.KindInt64,
+		plan.KindUint,
+		plan.KindUint64,
+		plan.KindFloat32,
+		plan.KindFloat64,
+		plan.KindDuration,
+		plan.KindText:
 		return fmt.Errorf("%w: %s", plan.ErrUnsupportedFieldType, target.FieldName)
 	default:
 		return fmt.Errorf("%w: %s", plan.ErrUnsupportedFieldType, target.FieldName)

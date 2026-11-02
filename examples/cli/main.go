@@ -41,7 +41,15 @@ func newRootCommand() *cobra.Command {
 		Args:  cobra.NoArgs,
 		RunE: func(cmd *cobra.Command, _ []string) error {
 			// A real service would start listening here.
-			_, err := fmt.Fprintf(cmd.OutOrStdout(), "serving %s on :%d (db %s:%d, timeout %s)\n", cfg.Env, cfg.Port, cfg.DB.Host, cfg.DB.Port, cfg.Timeout)
+			_, err := fmt.Fprintf(
+				cmd.OutOrStdout(),
+				"serving %s on :%d (db %s:%d, timeout %s)\n",
+				cfg.Env,
+				cfg.Port,
+				cfg.DB.Host,
+				cfg.DB.Port,
+				cfg.Timeout,
+			)
 
 			return err
 		},

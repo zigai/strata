@@ -17,7 +17,8 @@ import (
 type Registry struct {
 	codecs map[string]Codec
 	order  []string
-	mu     sync.RWMutex
+	//exhaustruct:optional
+	mu sync.RWMutex
 }
 
 // NewRegistry returns a registry holding the built-in TOML, YAML, and JSON
@@ -27,7 +28,6 @@ func NewRegistry() *Registry {
 	r := &Registry{
 		codecs: make(map[string]Codec),
 		order:  []string{".toml", ".yaml", ".yml", ".json"},
-		mu:     sync.RWMutex{},
 	}
 	r.Register(".toml", NewTOML())
 	r.Register(".yaml", NewYAML())

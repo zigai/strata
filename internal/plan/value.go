@@ -48,7 +48,7 @@ func SeedStorage(storage reflect.Value, root reflect.Value, target *Leaf) error 
 	return nil
 }
 
-func EncodeLeaf(dst, src reflect.Value, kind Kind) error {
+func EncodeLeaf(dst reflect.Value, src reflect.Value, kind Kind) error {
 	//nolint:exhaustive // KindUnsupported never reaches storage seeding
 	switch kind {
 	case KindText:
@@ -87,7 +87,7 @@ func EncodeLeaf(dst, src reflect.Value, kind Kind) error {
 	}
 }
 
-func CloneSlice(dst, src reflect.Value) error {
+func CloneSlice(dst reflect.Value, src reflect.Value) error {
 	out := reflect.MakeSlice(dst.Type(), src.Len(), src.Len())
 
 	for i := range src.Len() {
@@ -149,7 +149,11 @@ func UnmarshalLeaf(dst reflect.Value, value string) error {
 		}
 	}
 
-	return fmt.Errorf("%w: %s does not implement encoding.TextUnmarshaler", ErrUnsupportedFieldType, dst.Type())
+	return fmt.Errorf(
+		"%w: %s does not implement encoding.TextUnmarshaler",
+		ErrUnsupportedFieldType,
+		dst.Type(),
+	)
 }
 
 func AssignInt(dst reflect.Value, value int64) error {
@@ -182,7 +186,7 @@ func AssignFloat(dst reflect.Value, value float64) error {
 	return nil
 }
 
-func AssignSlice(dst, src reflect.Value) error {
+func AssignSlice(dst reflect.Value, src reflect.Value) error {
 	out := reflect.MakeSlice(dst.Type(), src.Len(), src.Len())
 
 	for i := range src.Len() {

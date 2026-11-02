@@ -34,7 +34,13 @@ func bindFlag(p *pendingFlag) (cli.Flag, error) {
 		return bindStringFlag(p)
 	case plan.KindBool:
 		return bindBoolFlag(p)
-	case plan.KindInt, plan.KindInt64, plan.KindUint, plan.KindUint64, plan.KindFloat32, plan.KindFloat64, plan.KindDuration:
+	case plan.KindInt,
+		plan.KindInt64,
+		plan.KindUint,
+		plan.KindUint64,
+		plan.KindFloat32,
+		plan.KindFloat64,
+		plan.KindDuration:
 		return bindNumericFlag(p)
 	case plan.KindStringSlice, plan.KindIntSlice, plan.KindInt64Slice:
 		return bindSliceFlag(p)
@@ -162,7 +168,14 @@ func bindNumericFlag(p *pendingFlag) (cli.Flag, error) {
 
 		var destination cli.Value = value
 
-		return &cli.GenericFlag{Name: p.target.FlagName, Aliases: aliases, Usage: usage, Value: value, Destination: &destination, HideDefault: hidden}, nil
+		return &cli.GenericFlag{
+			Name:        p.target.FlagName,
+			Aliases:     aliases,
+			Usage:       usage,
+			Value:       value,
+			Destination: &destination,
+			HideDefault: hidden,
+		}, nil
 	default:
 		return nil, fmt.Errorf("%w: %s", plan.ErrUnsupportedFieldType, p.target.FieldName)
 	}

@@ -22,18 +22,31 @@ func TestExampleWorkflow(t *testing.T) {
 	path := strings.TrimPrefix(strings.TrimSpace(mustRun(t, "config", "init")), "wrote ")
 	mustRun(t, "config", "set", "port", "9001")
 
-	if out := mustRun(t, "config", "show"); !regexp.MustCompile(`port\s+9001\s+user ` + regexp.QuoteMeta(path)).MatchString(out) {
+	if out := mustRun(
+		t,
+		"config",
+		"show",
+	); !regexp.MustCompile(`port\s+9001\s+user ` + regexp.QuoteMeta(path)).
+		MatchString(out) {
 		t.Fatalf("config show lacks port 9001 from %s:\n%s", path, out)
 	}
 
-	if _, err := run(t, "config", "set", "prot", "1"); err == nil || !strings.Contains(err.Error(), `did you mean "port"`) {
+	if _, err := run(
+		t,
+		"config",
+		"set",
+		"prot",
+		"1",
+	); err == nil ||
+		!strings.Contains(err.Error(), `did you mean "port"`) {
 		t.Fatalf("config set prot: err = %v, want a suggestion", err)
 	}
 
 	mustRun(t, "config", "set", "port", "0")
 
 	_, err := run(t, "serve")
-	if err == nil || !strings.Contains(err.Error(), "must be between 1 and 65535") || !strings.Contains(err.Error(), path) {
+	if err == nil || !strings.Contains(err.Error(), "must be between 1 and 65535") ||
+		!strings.Contains(err.Error(), path) {
 		t.Fatalf("serve with port 0: err = %v, want the range error naming %s", err, path)
 	}
 }

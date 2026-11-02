@@ -177,7 +177,9 @@ func (b *schemaBuilder) structSchema(typ reflect.Type) *jsonschema.Schema {
 			continue
 		}
 
-		if documenter, ok := reflect.TypeAssert[schemaFieldDocumenter](reflect.New(source.owner)); ok {
+		if documenter, ok := reflect.TypeAssert[schemaFieldDocumenter](
+			reflect.New(source.owner),
+		); ok {
 			property.Description = documenter.GetFieldDocString(source.field.Name)
 		}
 
@@ -185,7 +187,13 @@ func (b *schemaBuilder) structSchema(typ reflect.Type) *jsonschema.Schema {
 		if source.field.Type.Kind() == reflect.Pointer {
 			description := property.Description
 			property.Description = ""
-			schema.Properties.Set(source.key, &jsonschema.Schema{AnyOf: []*jsonschema.Schema{property, {Type: "null"}}, Description: description})
+			schema.Properties.Set(
+				source.key,
+				&jsonschema.Schema{
+					AnyOf:       []*jsonschema.Schema{property, {Type: "null"}},
+					Description: description,
+				},
+			)
 		}
 	}
 
@@ -271,7 +279,10 @@ func schemaStandInType(typ reflect.Type) (reflect.Type, []schemaSourceField, str
 			Index:     nil,
 			Anonymous: false,
 		})
-		sources = append(sources, schemaSourceField{owner: field.Owner, field: field.Member.Field, key: field.Key})
+		sources = append(
+			sources,
+			schemaSourceField{owner: field.Owner, field: field.Member.Field, key: field.Key},
+		)
 	}
 
 	if structLayout.Rest == nil {
@@ -327,5 +338,6 @@ func decodesFromText(typ reflect.Type) bool {
 
 	textUnmarshaler := reflect.TypeFor[encoding.TextUnmarshaler]()
 
-	return typ.Implements(textUnmarshaler) || typ.Kind() != reflect.Pointer && reflect.PointerTo(typ).Implements(textUnmarshaler)
+	return typ.Implements(textUnmarshaler) ||
+		typ.Kind() != reflect.Pointer && reflect.PointerTo(typ).Implements(textUnmarshaler)
 }

@@ -42,7 +42,12 @@ func ReadBounded(r io.Reader, maxBytes int64) ([]byte, error) {
 	}
 
 	if int64(len(data)) > maxBytes {
-		return nil, fmt.Errorf("%w (%d bytes limit, got >%d bytes)", ErrFileTooLarge, maxBytes, maxBytes)
+		return nil, fmt.Errorf(
+			"%w (%d bytes limit, got >%d bytes)",
+			ErrFileTooLarge,
+			maxBytes,
+			maxBytes,
+		)
 	}
 
 	return data, nil
@@ -73,7 +78,12 @@ func ReadStdin(r io.Reader, maxBytes int64) ([]byte, error) {
 		}
 
 		if int64(len(stdinCache.data)) > maxBytes {
-			return nil, fmt.Errorf("%w (%d bytes limit, cached is %d bytes)", ErrFileTooLarge, maxBytes, len(stdinCache.data))
+			return nil, fmt.Errorf(
+				"%w (%d bytes limit, cached is %d bytes)",
+				ErrFileTooLarge,
+				maxBytes,
+				len(stdinCache.data),
+			)
 		}
 
 		cp := make([]byte, len(stdinCache.data))

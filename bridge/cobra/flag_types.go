@@ -24,7 +24,13 @@ func bindFlag(destination *pflag.FlagSet, p *pendingFlag) error {
 		return bindStringFlag(destination, p)
 	case plan.KindBool:
 		return bindBoolFlag(destination, p)
-	case plan.KindInt, plan.KindInt64, plan.KindUint, plan.KindUint64, plan.KindFloat32, plan.KindFloat64, plan.KindDuration:
+	case plan.KindInt,
+		plan.KindInt64,
+		plan.KindUint,
+		plan.KindUint64,
+		plan.KindFloat32,
+		plan.KindFloat64,
+		plan.KindDuration:
 		return bindNumericFlag(destination, p)
 	case plan.KindStringSlice, plan.KindIntSlice, plan.KindInt64Slice:
 		return bindSliceFlag(destination, p)
@@ -68,11 +74,28 @@ func bindNumericFlag(destination *pflag.FlagSet, p *pendingFlag) error {
 	case *uint64:
 		destination.Uint64VarP(value, p.target.FlagName, p.target.Shorthand, *value, p.target.Usage)
 	case *float32:
-		destination.Float32VarP(value, p.target.FlagName, p.target.Shorthand, *value, p.target.Usage)
+		destination.Float32VarP(
+			value,
+			p.target.FlagName,
+			p.target.Shorthand,
+			*value,
+			p.target.Usage,
+		)
 	case *float64:
-		destination.Float64VarP(value, p.target.FlagName, p.target.Shorthand, *value, p.target.Usage)
+		destination.Float64VarP(
+			value,
+			p.target.FlagName,
+			p.target.Shorthand,
+			*value,
+			p.target.Usage,
+		)
 	case *time.Duration:
-		destination.VarP(&durationFlagValue{value: value}, p.target.FlagName, p.target.Shorthand, p.target.Usage)
+		destination.VarP(
+			&durationFlagValue{value: value},
+			p.target.FlagName,
+			p.target.Shorthand,
+			p.target.Usage,
+		)
 	default:
 		return fmt.Errorf("%w: %s", plan.ErrUnsupportedFieldType, p.target.FieldName)
 	}
@@ -98,11 +121,29 @@ func (v *durationFlagValue) Type() string { return "duration" }
 func bindSliceFlag(destination *pflag.FlagSet, p *pendingFlag) error {
 	switch value := p.storage.Interface().(type) {
 	case *[]string:
-		destination.StringSliceVarP(value, p.target.FlagName, p.target.Shorthand, *value, p.target.Usage)
+		destination.StringSliceVarP(
+			value,
+			p.target.FlagName,
+			p.target.Shorthand,
+			*value,
+			p.target.Usage,
+		)
 	case *[]int:
-		destination.IntSliceVarP(value, p.target.FlagName, p.target.Shorthand, *value, p.target.Usage)
+		destination.IntSliceVarP(
+			value,
+			p.target.FlagName,
+			p.target.Shorthand,
+			*value,
+			p.target.Usage,
+		)
 	case *[]int64:
-		destination.Int64SliceVarP(value, p.target.FlagName, p.target.Shorthand, *value, p.target.Usage)
+		destination.Int64SliceVarP(
+			value,
+			p.target.FlagName,
+			p.target.Shorthand,
+			*value,
+			p.target.Usage,
+		)
 	default:
 		return fmt.Errorf("%w: %s", plan.ErrUnsupportedFieldType, p.target.FieldName)
 	}

@@ -23,7 +23,11 @@ func readJSON(data []byte, emit func(Record)) bool {
 	return true
 }
 
-func walkJSONObject(document map[string]jsontext.Value, prefix jsontext.Pointer, emit func(Record)) {
+func walkJSONObject(
+	document map[string]jsontext.Value,
+	prefix jsontext.Pointer,
+	emit func(Record),
+) {
 	for _, key := range slices.Sorted(maps.Keys(document)) {
 		walkJSONValue(document[key], prefix.AppendToken(key), emit)
 	}

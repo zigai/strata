@@ -74,7 +74,11 @@ func TestWithFormatsRestrictsDiscovery(t *testing.T) {
 	}
 
 	tomlPath := filepath.Join(appDir, "config.toml")
-	if err := os.WriteFile(tomlPath, []byte("port = 8080\nhost = 'toml-host'\n"), 0o600); err != nil {
+	if err := os.WriteFile(
+		tomlPath,
+		[]byte("port = 8080\nhost = 'toml-host'\n"),
+		0o600,
+	); err != nil {
 		t.Fatalf("WriteFile: %v", err)
 	}
 
@@ -86,7 +90,12 @@ func TestWithFormatsRestrictsDiscovery(t *testing.T) {
 	t.Setenv("XDG_CONFIG_HOME", dir)
 	t.Setenv("XDG_CONFIG_DIRS", t.TempDir())
 
-	if _, err := strata.Load[formatsTestConfig](strata.WithAppName("myapp")); !errors.Is(err, strata.ErrNoFormats) {
+	if _, err := strata.Load[formatsTestConfig](
+		strata.WithAppName("myapp"),
+	); !errors.Is(
+		err,
+		strata.ErrNoFormats,
+	) {
 		t.Fatalf("Load without formats error = %v, want ErrNoFormats", err)
 	}
 
@@ -123,7 +132,12 @@ func TestDiscoveryRequiresFormatsWithoutExistingFiles(t *testing.T) {
 		{strata.WithAppName("myapp")},
 		{strata.WithAppName("myapp"), strata.WithPath(writeFile(t, "config.toml", "port = 8080\n"))},
 	} {
-		if _, err := strata.Load[formatsTestConfig](options...); !errors.Is(err, strata.ErrNoFormats) {
+		if _, err := strata.Load[formatsTestConfig](
+			options...,
+		); !errors.Is(
+			err,
+			strata.ErrNoFormats,
+		) {
 			t.Fatalf("Load without discovery formats error = %v, want ErrNoFormats", err)
 		}
 	}
@@ -132,7 +146,10 @@ func TestDiscoveryRequiresFormatsWithoutExistingFiles(t *testing.T) {
 		t.Fatalf("defaults-only load: %v", err)
 	}
 
-	if _, err := strata.Load[defaultedFormatsConfig](strata.WithAppName("myapp"), strata.WithoutFileDiscovery()); err != nil {
+	if _, err := strata.Load[defaultedFormatsConfig](
+		strata.WithAppName("myapp"),
+		strata.WithoutFileDiscovery(),
+	); err != nil {
 		t.Fatalf("disabled file discovery: %v", err)
 	}
 }
@@ -142,36 +159,78 @@ func TestNamedPathUsesExtension(t *testing.T) {
 
 	for _, name := range []string{"config", "config.conf"} {
 		path := writeFile(t, name, "port = 8080\n")
-		if _, err := strata.Load[formatsTestConfig](strata.WithPath(path)); !errors.Is(err, strata.ErrNoFormats) {
+		if _, err := strata.Load[formatsTestConfig](
+			strata.WithPath(path),
+		); !errors.Is(
+			err,
+			strata.ErrNoFormats,
+		) {
 			t.Fatalf("Load(%q) error = %v, want ErrNoFormats", path, err)
 		}
 
-		if _, err := strata.Load[formatsTestConfig](strata.WithPath(path), strata.WithFormats("toml")); !errors.Is(err, strata.ErrUnsupportedFormat) {
+		if _, err := strata.Load[formatsTestConfig](
+			strata.WithPath(path),
+			strata.WithFormats("toml"),
+		); !errors.Is(
+			err,
+			strata.ErrUnsupportedFormat,
+		) {
 			t.Fatalf("Load(%q) with TOML enabled error = %v, want ErrUnsupportedFormat", path, err)
 		}
 	}
 
 	jsonPath := writeFile(t, "config.json", "port = 8080\n")
-	if _, err := strata.Load[formatsTestConfig](strata.WithPath(jsonPath), strata.WithFormats("json")); !errors.Is(err, strata.ErrMalformed) {
+	if _, err := strata.Load[formatsTestConfig](
+		strata.WithPath(jsonPath),
+		strata.WithFormats("json"),
+	); !errors.Is(
+		err,
+		strata.ErrMalformed,
+	) {
 		t.Fatalf("Load JSON with TOML content error = %v, want ErrMalformed", err)
 	}
 
 	missingYAML := filepath.Join(t.TempDir(), "missing.yaml")
-	if _, err := strata.Load[formatsTestConfig](strata.WithOptionalPath(missingYAML)); !errors.Is(err, strata.ErrNoFormats) {
+	if _, err := strata.Load[formatsTestConfig](
+		strata.WithOptionalPath(missingYAML),
+	); !errors.Is(
+		err,
+		strata.ErrNoFormats,
+	) {
 		t.Fatalf("Load optional path without formats error = %v, want ErrNoFormats", err)
 	}
 
-	if _, err := strata.Load[formatsTestConfig](strata.WithOptionalPath(missingYAML), strata.WithFormats("toml")); !errors.Is(err, strata.ErrUnsupportedFormat) {
+	if _, err := strata.Load[formatsTestConfig](
+		strata.WithOptionalPath(missingYAML),
+		strata.WithFormats("toml"),
+	); !errors.Is(
+		err,
+		strata.ErrUnsupportedFormat,
+	) {
 		t.Fatalf("Load missing disallowed YAML error = %v, want ErrUnsupportedFormat", err)
 	}
 
 	aliasPath := writeFile(t, "config.conf", "port = 8080\n")
-	if _, err := strata.Load[formatsTestConfig](strata.WithPath(aliasPath), strata.WithFormatAlias(".conf", "toml"), strata.WithFormats("toml")); !errors.Is(err, strata.ErrUnsupportedFormat) {
+	if _, err := strata.Load[formatsTestConfig](
+		strata.WithPath(aliasPath),
+		strata.WithFormatAlias(".conf", "toml"),
+		strata.WithFormats("toml"),
+	); !errors.Is(
+		err,
+		strata.ErrUnsupportedFormat,
+	) {
 		t.Fatalf("Load unlisted alias error = %v, want ErrUnsupportedFormat", err)
 	}
 
 	customPath := writeFile(t, "config.custom", "data")
-	if _, err := strata.Load[formatsTestConfig](strata.WithPath(customPath), strata.WithCodec(".custom", &dummyCustomCodec{}), strata.WithFormats("toml")); !errors.Is(err, strata.ErrUnsupportedFormat) {
+	if _, err := strata.Load[formatsTestConfig](
+		strata.WithPath(customPath),
+		strata.WithCodec(".custom", &dummyCustomCodec{}),
+		strata.WithFormats("toml"),
+	); !errors.Is(
+		err,
+		strata.ErrUnsupportedFormat,
+	) {
 		t.Fatalf("Load unlisted codec error = %v, want ErrUnsupportedFormat", err)
 	}
 }
@@ -183,13 +242,32 @@ func TestStdinUsesFirstFormat(t *testing.T) {
 		nil,
 		{strata.WithFormats()},
 	} {
-		selected := append([]strata.Option{strata.WithPath("-"), strata.WithStdin(strings.NewReader("port = 8080\n"))}, options...)
-		if _, err := strata.Load[formatsTestConfig](selected...); !errors.Is(err, strata.ErrNoFormats) {
-			t.Fatalf("Load stdin with %d format options error = %v, want ErrNoFormats", len(options), err)
+		selected := append(
+			[]strata.Option{
+				strata.WithPath("-"),
+				strata.WithStdin(strings.NewReader("port = 8080\n")),
+			},
+			options...,
+		)
+		if _, err := strata.Load[formatsTestConfig](
+			selected...,
+		); !errors.Is(
+			err,
+			strata.ErrNoFormats,
+		) {
+			t.Fatalf(
+				"Load stdin with %d format options error = %v, want ErrNoFormats",
+				len(options),
+				err,
+			)
 		}
 	}
 
-	cfg, err := strata.Load[formatsTestConfig](strata.WithPath("-"), strata.WithStdin(strings.NewReader(`{"port": 8080}`)), strata.WithFormats("json", "toml"))
+	cfg, err := strata.Load[formatsTestConfig](
+		strata.WithPath("-"),
+		strata.WithStdin(strings.NewReader(`{"port": 8080}`)),
+		strata.WithFormats("json", "toml"),
+	)
 	if err != nil || cfg.Port != 8080 {
 		t.Fatalf("Load JSON stdin = %+v, %v", cfg, err)
 	}
@@ -694,7 +772,11 @@ func TestWithFormatAliasCascadingLayers(t *testing.T) {
 	userConf := filepath.Join(appUserDir, "config.conf")
 	projConf := filepath.Join(projDir, "config.conf")
 
-	if err := os.WriteFile(userConf, []byte("port = 2000\nhost = 'user-host'\n"), 0o600); err != nil {
+	if err := os.WriteFile(
+		userConf,
+		[]byte("port = 2000\nhost = 'user-host'\n"),
+		0o600,
+	); err != nil {
 		t.Fatalf("WriteFile user: %v", err)
 	}
 
@@ -944,9 +1026,17 @@ func TestWithCodecAppliesToOneLoadOnly(t *testing.T) {
 
 	path := writeFile(t, "config.toml", "port = 8080\nhost = 'h'\n")
 
-	replaced, err := strata.Load[formatsTestConfig](strata.WithPath(path), strata.WithFormats("toml"), strata.WithCodec(".toml", replacingCodec{}))
+	replaced, err := strata.Load[formatsTestConfig](
+		strata.WithPath(path),
+		strata.WithFormats("toml"),
+		strata.WithCodec(".toml", replacingCodec{}),
+	)
 	if err != nil || replaced.Port != 777 {
-		t.Fatalf("load with WithCodec = %+v, %v; want the replacing codec's port 777", replaced, err)
+		t.Fatalf(
+			"load with WithCodec = %+v, %v; want the replacing codec's port 777",
+			replaced,
+			err,
+		)
 	}
 
 	plain, err := strata.Load[formatsTestConfig](strata.WithPath(path), strata.WithFormats("toml"))
@@ -966,7 +1056,13 @@ func TestWithCodecAppliesToOneLoadOnly(t *testing.T) {
 
 	for path, want := range map[string]string{saved: "port = 1\nhost = 's'\n", template: "port = 0\nhost = ''\n"} {
 		if data, err := os.ReadFile(path); err != nil || string(data) != want {
-			t.Errorf("%s = %q, %v; want %q from the built-in encoder", filepath.Base(path), data, err, want)
+			t.Errorf(
+				"%s = %q, %v; want %q from the built-in encoder",
+				filepath.Base(path),
+				data,
+				err,
+				want,
+			)
 		}
 	}
 }
@@ -995,7 +1091,7 @@ func (c *overlayConfig) SetDefaults() {
 	c.Pair = [2]int{1, 2}
 }
 
-func loadOverlay(t *testing.T, name, document string) (overlayConfig, error) {
+func loadOverlay(t *testing.T, name string, document string) (overlayConfig, error) {
 	t.Helper()
 
 	path := writeFile(t, name, document)
@@ -1007,9 +1103,13 @@ func TestFormatsMergeMapsAndReplaceLists(t *testing.T) {
 	t.Parallel()
 
 	want := overlayConfig{
-		Name:    "default",
-		Entry:   overlayEntry{A: 9, B: 2},
-		Entries: map[string]overlayEntry{"kept": {A: 1, B: 2}, "merged": {A: 9, B: 2}, "added": {A: 9, B: 0}},
+		Name:  "default",
+		Entry: overlayEntry{A: 9, B: 2},
+		Entries: map[string]overlayEntry{
+			"kept":   {A: 1, B: 2},
+			"merged": {A: 9, B: 2},
+			"added":  {A: 9, B: 0},
+		},
 		Nested:  map[string]map[string]int{"inner": {"x": 9, "y": 2}},
 		List:    []overlayEntry{{A: 9, B: 0}},
 		Pair:    [2]int{8, 9},
@@ -1018,7 +1118,8 @@ func TestFormatsMergeMapsAndReplaceLists(t *testing.T) {
 	}
 
 	for name, document := range map[string]string{
-		"config.json": `{"entry": {"a": 9}, "entries": {"merged": {"a": 9}, "added": {"a": 9}}, "nested": {"inner": {"x": 9}},
+		"config.json": `{"entry": {"a": 9}, "entries": {"merged": {"a": 9}, "added": {"a": 9}}, ` +
+			`"nested": {"inner": {"x": 9}},
 			"list": [{"a": 9}], "pair": [8, 9], "timeout": "7d", "grace": "1m30s"}`,
 		"config.toml": "list = [{a = 9}]\npair = [8, 9]\ntimeout = \"7d\"\ngrace = \"1m30s\"\n[entry]\na = 9\n" +
 			"[entries.merged]\na = 9\n[entries.added]\na = 9\n[nested.inner]\nx = 9\n",
@@ -1056,8 +1157,13 @@ func TestFormatsResetNullToZero(t *testing.T) {
 			}
 
 			wantEntries := map[string]overlayEntry{"kept": {A: 1, B: 2}, "merged": {}}
-			if got.Name != "" || got.Entry != (overlayEntry{}) || !reflect.DeepEqual(got.Entries, wantEntries) || got.List != nil {
-				t.Fatalf("loaded %+v, want null fields reset to zero and the kept entry untouched", got)
+			if got.Name != "" || got.Entry != (overlayEntry{}) ||
+				!reflect.DeepEqual(got.Entries, wantEntries) ||
+				got.List != nil {
+				t.Fatalf(
+					"loaded %+v, want null fields reset to zero and the kept entry untouched",
+					got,
+				)
 			}
 		})
 	}
@@ -1083,7 +1189,8 @@ func TestFormatsRejectTheSameInvalidValues(t *testing.T) {
 			_, err := loadOverlay(t, test.name, test.document)
 
 			var keyErr *codec.KeyError
-			if !errors.As(err, &keyErr) || keyErr.Key != test.key || !errors.Is(err, strata.ErrMalformed) {
+			if !errors.As(err, &keyErr) || keyErr.Key != test.key ||
+				!errors.Is(err, strata.ErrMalformed) {
 				t.Fatalf("err = %v, want a malformed-document error for key %q", err, test.key)
 			}
 		})
@@ -1101,7 +1208,7 @@ type inlineTLS struct {
 
 type inlineConfig struct {
 	Server inlineServer `yaml:",inline"`
-	TLS    *inlineTLS   `json:",embed"`
+	TLS    *inlineTLS   `               json:",embed"`
 	Name   string
 	Port   int
 }
@@ -1125,17 +1232,30 @@ func TestInlineFieldsLoadUnderTheParentKeys(t *testing.T) {
 
 			path := writeFile(t, name, document)
 
-			got, meta, err := strata.LoadWithMetadata[inlineConfig](strata.WithPath(path), strata.WithFormats(filepath.Ext(name)), strata.WithStrict())
+			got, meta, err := strata.LoadWithMetadata[inlineConfig](
+				strata.WithPath(path),
+				strata.WithFormats(filepath.Ext(name)),
+				strata.WithStrict(),
+			)
 			if err != nil {
 				t.Fatal(err)
 			}
 
-			want := inlineConfig{Server: inlineServer{Host: "file", Port: 1}, TLS: &inlineTLS{CertFile: "c.pem"}, Port: 9}
+			want := inlineConfig{
+				Server: inlineServer{Host: "file", Port: 1},
+				TLS:    &inlineTLS{CertFile: "c.pem"},
+				Port:   9,
+			}
 			if !reflect.DeepEqual(got, want) {
 				t.Fatalf("loaded %+v, want %+v", got, want)
 			}
 
-			for key, source := range map[string]strata.SourceKind{"host": strata.SourceFile, "port": strata.SourceFile, "cert_file": strata.SourceFile, "name": strata.SourceDefault} {
+			for key, source := range map[string]strata.SourceKind{
+				"host":      strata.SourceFile,
+				"port":      strata.SourceFile,
+				"cert_file": strata.SourceFile,
+				"name":      strata.SourceDefault,
+			} {
 				if origin, found := meta.Where(key); !found || origin.Source != source {
 					t.Errorf("Where(%q) = %+v, %t; want %v", key, origin, found, source)
 				}
@@ -1166,7 +1286,12 @@ func TestInlinePointerStaysNilUntilUsed(t *testing.T) {
 func TestInlineFieldsRoundTripThroughEveryFormat(t *testing.T) {
 	t.Parallel()
 
-	saved := inlineConfig{Server: inlineServer{Host: "saved", Port: 1}, TLS: &inlineTLS{CertFile: "c.pem"}, Name: "n", Port: 7}
+	saved := inlineConfig{
+		Server: inlineServer{Host: "saved", Port: 1},
+		TLS:    &inlineTLS{CertFile: "c.pem"},
+		Name:   "n",
+		Port:   7,
+	}
 
 	for _, format := range []string{jsonFormat, tomlFormat, yamlFormat} {
 		t.Run(format, func(t *testing.T) {
@@ -1179,7 +1304,11 @@ func TestInlineFieldsRoundTripThroughEveryFormat(t *testing.T) {
 				t.Fatal(err)
 			}
 
-			got, err := strata.Load[inlineConfig](strata.WithPath(savePath), strata.WithFormats(format), strata.WithStrict())
+			got, err := strata.Load[inlineConfig](
+				strata.WithPath(savePath),
+				strata.WithFormats(format),
+				strata.WithStrict(),
+			)
 			if err != nil || !reflect.DeepEqual(got, saved) {
 				t.Fatalf("Save then Load = %+v, %v; want %+v", got, err, saved)
 			}
@@ -1189,7 +1318,11 @@ func TestInlineFieldsRoundTripThroughEveryFormat(t *testing.T) {
 				t.Fatal(err)
 			}
 
-			got, err = strata.Load[inlineConfig](strata.WithPath(initPath), strata.WithFormats(format), strata.WithStrict())
+			got, err = strata.Load[inlineConfig](
+				strata.WithPath(initPath),
+				strata.WithFormats(format),
+				strata.WithStrict(),
+			)
 
 			want := inlineConfig{Server: inlineServer{Host: "localhost", Port: 1}, Port: 2}
 			if err != nil || !reflect.DeepEqual(got, want) {
@@ -1217,7 +1350,11 @@ func TestInlineMapCollectsUnclaimedKeys(t *testing.T) {
 
 			path := writeFile(t, name, document)
 
-			got, meta, err := strata.LoadWithMetadata[inlineMapConfig](strata.WithPath(path), strata.WithFormats(filepath.Ext(name)), strata.WithStrict())
+			got, meta, err := strata.LoadWithMetadata[inlineMapConfig](
+				strata.WithPath(path),
+				strata.WithFormats(filepath.Ext(name)),
+				strata.WithStrict(),
+			)
 			if err != nil {
 				t.Fatal(err)
 			}
@@ -1247,10 +1384,14 @@ func TestInlineMapRejectsValuesOfTheWrongType(t *testing.T) {
 
 			path := writeFile(t, name, document)
 
-			_, err := strata.Load[inlineMapConfig](strata.WithPath(path), strata.WithFormats(filepath.Ext(name)))
+			_, err := strata.Load[inlineMapConfig](
+				strata.WithPath(path),
+				strata.WithFormats(filepath.Ext(name)),
+			)
 
 			var keyErr *codec.KeyError
-			if !errors.As(err, &keyErr) || keyErr.Key != "alpha" || !errors.Is(err, strata.ErrMalformed) {
+			if !errors.As(err, &keyErr) || keyErr.Key != "alpha" ||
+				!errors.Is(err, strata.ErrMalformed) {
 				t.Fatalf("err = %v, want a malformed-document error for alpha", err)
 			}
 		})
@@ -1291,7 +1432,11 @@ func TestInlineMapKeysNeverCollideWithDeclaredFields(t *testing.T) {
 
 			path := writeFile(t, name, document)
 
-			got, meta, err := strata.LoadWithMetadata[inlineOverlapConfig](strata.WithPath(path), strata.WithFormats(filepath.Ext(name)), strata.WithStrict())
+			got, meta, err := strata.LoadWithMetadata[inlineOverlapConfig](
+				strata.WithPath(path),
+				strata.WithFormats(filepath.Ext(name)),
+				strata.WithStrict(),
+			)
 			if err != nil {
 				t.Fatal(err)
 			}
@@ -1311,14 +1456,22 @@ func TestInlineMapKeysNeverCollideWithDeclaredFields(t *testing.T) {
 				t.Errorf("origin keys = %q, want %q", keys, want)
 			}
 
-			for key, raw := range map[string]string{"host": "declared", "HOST": "upper", spacedHost: "spaced", "ho_st": "underscored"} {
+			for key, raw := range map[string]string{
+				"host":     "declared",
+				"HOST":     "upper",
+				spacedHost: "spaced",
+				"ho_st":    "underscored",
+			} {
 				if origin, found := meta.Where(key); !found || origin.RawValue != raw {
 					t.Errorf("Where(%q) = %+v, %t; want raw value %q", key, origin, found, raw)
 				}
 			}
 
 			if origin, found := meta.Where("Host"); found {
-				t.Errorf("Where(/Host) = %+v, want no match where an inline map may hold the key", origin)
+				t.Errorf(
+					"Where(/Host) = %+v, want no match where an inline map may hold the key",
+					origin,
+				)
 			}
 		})
 	}
@@ -1329,12 +1482,20 @@ func TestInlineMapSecretsFollowExactKeys(t *testing.T) {
 
 	path := writeFile(t, "config.yaml", "host: declared\nHOST: upper\n")
 
-	_, secretMap, err := strata.LoadWithMetadata[inlineSecretMapConfig](strata.WithPath(path), strata.WithFormats(yamlFormat), strata.WithStrict())
+	_, secretMap, err := strata.LoadWithMetadata[inlineSecretMapConfig](
+		strata.WithPath(path),
+		strata.WithFormats(yamlFormat),
+		strata.WithStrict(),
+	)
 	if err != nil {
 		t.Fatal(err)
 	}
 
-	_, secretField, err := strata.LoadWithMetadata[inlineSecretFieldConfig](strata.WithPath(path), strata.WithFormats(yamlFormat), strata.WithStrict())
+	_, secretField, err := strata.LoadWithMetadata[inlineSecretFieldConfig](
+		strata.WithPath(path),
+		strata.WithFormats(yamlFormat),
+		strata.WithStrict(),
+	)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -1351,7 +1512,14 @@ func TestInlineMapSecretsFollowExactKeys(t *testing.T) {
 		{"secret field, map key", secretField, "HOST", "upper"},
 	} {
 		if origin, found := test.meta.Where(test.key); !found || origin.RawValue != test.want {
-			t.Errorf("%s: Where(%q) = %+v, %t; want raw value %q", test.name, test.key, origin, found, test.want)
+			t.Errorf(
+				"%s: Where(%q) = %+v, %t; want raw value %q",
+				test.name,
+				test.key,
+				origin,
+				found,
+				test.want,
+			)
 		}
 	}
 }
@@ -1366,7 +1534,10 @@ type recursiveTreeConfig struct {
 func TestRecursiveContainerTypesSaveAndLoad(t *testing.T) {
 	t.Parallel()
 
-	want := recursiveTreeConfig{Root: recursiveTree{{}, {{}}}, Index: map[string]recursiveTree{"a": {{}}}}
+	want := recursiveTreeConfig{
+		Root:  recursiveTree{{}, {{}}},
+		Index: map[string]recursiveTree{"a": {{}}},
+	}
 
 	for _, format := range []string{jsonFormat, tomlFormat, yamlFormat} {
 		t.Run(format, func(t *testing.T) {
@@ -1377,7 +1548,10 @@ func TestRecursiveContainerTypesSaveAndLoad(t *testing.T) {
 				t.Fatalf("Save: %v", err)
 			}
 
-			got, err := strata.Load[recursiveTreeConfig](strata.WithPath(path), strata.WithFormats(format))
+			got, err := strata.Load[recursiveTreeConfig](
+				strata.WithPath(path),
+				strata.WithFormats(format),
+			)
 			if err != nil {
 				t.Fatalf("Load: %v", err)
 			}
@@ -1420,7 +1594,10 @@ func TestMapKeysDecodeThroughTheirTextUnmarshaler(t *testing.T) {
 
 			path := writeFile(t, name, document)
 
-			got, err := strata.Load[lowerCaseKeyConfig](strata.WithPath(path), strata.WithFormats(filepath.Ext(name)))
+			got, err := strata.Load[lowerCaseKeyConfig](
+				strata.WithPath(path),
+				strata.WithFormats(filepath.Ext(name)),
+			)
 			if !errors.Is(err, errUpperCaseKey) {
 				t.Fatalf("Load = %+v, %v; want the key rejected by UnmarshalText", got, err)
 			}

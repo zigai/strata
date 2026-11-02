@@ -61,7 +61,10 @@ func BenchmarkLoadMetadataWithSharedDefaults(b *testing.B) {
 	b.ReportAllocs()
 
 	for b.Loop() {
-		_, _, err := strata.LoadWithMetadata[config](strata.WithDefaults(defaults), strata.WithoutFileDiscovery())
+		_, _, err := strata.LoadWithMetadata[config](
+			strata.WithDefaults(defaults),
+			strata.WithoutFileDiscovery(),
+		)
 		if err != nil {
 			b.Fatal(err)
 		}

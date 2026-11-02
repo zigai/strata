@@ -73,8 +73,17 @@ func Bind[T any](root *cobra.Command, cfg *T, opts ...strata.Option) *Binding[T]
 	}
 
 	resolvedOpts := append([]strata.Option{strata.WithAppName(root.Name())}, opts...)
-	b := &Binding[T]{root: root, cfg: cfg, opts: resolvedOpts, configPath: "", meta: nil, flags: nil, defaults: reflect.ValueOf(defaults)}
-	root.PersistentFlags().StringVarP(&b.configPath, "config", "c", "", "config file to load on top of the user config")
+	b := &Binding[T]{
+		root:       root,
+		cfg:        cfg,
+		opts:       resolvedOpts,
+		configPath: "",
+		meta:       nil,
+		flags:      nil,
+		defaults:   reflect.ValueOf(defaults),
+	}
+	root.PersistentFlags().
+		StringVarP(&b.configPath, "config", "c", "", "config file to load on top of the user config")
 	previous := root.PersistentPreRun
 	previousE := root.PersistentPreRunE
 	root.PersistentPreRunE = func(cmd *cobra.Command, args []string) error {
@@ -145,7 +154,7 @@ func (b *Binding[T]) Flag(flagSet *pflag.FlagSet, key string, usage string) {
 }
 
 // FlagP is Flag with a shorthand flag name.
-func (b *Binding[T]) FlagP(flagSet *pflag.FlagSet, key string, shorthand, usage string) {
+func (b *Binding[T]) FlagP(flagSet *pflag.FlagSet, key string, shorthand string, usage string) {
 	if flagSet == nil {
 		panic("stratacobra.Flag requires a flag set")
 	}
@@ -288,86 +297,117 @@ func (b *Binding[T]) ConfigCommand() *cobra.Command {
 }
 
 func (b *Binding[T]) configShowCommand() *cobra.Command {
-	return &cobra.Command{Use: "show", Short: "Show every setting and where its value came from", Args: cobra.NoArgs, RunE: func(cmd *cobra.Command, _ []string) error {
-		for _, unknown := range b.meta.UnknownKeys() {
-			if _, err := fmt.Fprintf(cmd.ErrOrStderr(), "warning: %s: %s\n", unknown.Path, unknown.String()); err != nil {
-				return fmt.Errorf("write warning: %w", err)
-			}
-		}
-
-		w := tabwriter.NewWriter(cmd.OutOrStdout(), 0, 0, showColumnPadding, ' ', 0)
-		if _, err := fmt.Fprintln(w, "KEY\tVALUE\tSOURCE"); err != nil {
-			return fmt.Errorf("write heading: %w", err)
-		}
-
-		for _, origin := range b.meta.Origins() {
-			value := origin.RawValue
-			if plan.IsUnsetSecret(reflect.ValueOf(*b.cfg), origin.Key) {
-				value = "(unset)"
+	return &cobra.Command{
+		Use:   "show",
+		Short: "Show every setting and where its value came from",
+		Args:  cobra.NoArgs,
+		RunE: func(cmd *cobra.Command, _ []string) error {
+			for _, unknown := range b.meta.UnknownKeys() {
+				if _, err := fmt.Fprintf(
+					cmd.ErrOrStderr(),
+					"warning: %s: %s\n",
+					unknown.Path,
+					unknown.String(),
+				); err != nil {
+					return fmt.Errorf("write warning: %w", err)
+				}
 			}
 
-			if _, err := fmt.Fprintf(w, "%s\t%s\t%s\n", origin.Key, value, origin.Location()); err != nil {
-				return fmt.Errorf("write setting: %w", err)
+			w := tabwriter.NewWriter(cmd.OutOrStdout(), 0, 0, showColumnPadding, ' ', 0)
+			if _, err := fmt.Fprintln(w, "KEY\tVALUE\tSOURCE"); err != nil {
+				return fmt.Errorf("write heading: %w", err)
 			}
-		}
 
-		if err := w.Flush(); err != nil {
-			return fmt.Errorf("flush settings: %w", err)
-		}
+			for _, origin := range b.meta.Origins() {
+				value := origin.RawValue
+				if plan.IsUnsetSecret(reflect.ValueOf(*b.cfg), origin.Key) {
+					value = "(unset)"
+				}
 
-		return nil
-	}}
+				if _, err := fmt.Fprintf(
+					w,
+					"%s\t%s\t%s\n",
+					origin.Key,
+					value,
+					origin.Location(),
+				); err != nil {
+					return fmt.Errorf("write setting: %w", err)
+				}
+			}
+
+			if err := w.Flush(); err != nil {
+				return fmt.Errorf("flush settings: %w", err)
+			}
+
+			return nil
+		},
+	}
 }
 
 func (b *Binding[T]) configSetCommand() *cobra.Command {
-	return &cobra.Command{Use: "set <key> <value>", Short: "Change one setting in the config file", Args: cobra.ExactArgs(configSetArgCount), RunE: func(cmd *cobra.Command, args []string) error {
-		cmd.SilenceUsage = true
+	return &cobra.Command{
+		Use:   "set <key> <value>",
+		Short: "Change one setting in the config file",
+		Args:  cobra.ExactArgs(configSetArgCount),
+		RunE: func(cmd *cobra.Command, args []string) error {
+			cmd.SilenceUsage = true
 
-		path, err := b.Set(args[0], args[1])
-		if err != nil {
-			return err
-		}
+			path, err := b.Set(args[0], args[1])
+			if err != nil {
+				return err
+			}
 
-		_, err = fmt.Fprintf(cmd.OutOrStdout(), "%s: set %s\n", path, args[0])
-		if err != nil {
-			return fmt.Errorf("write set result: %w", err)
-		}
+			_, err = fmt.Fprintf(cmd.OutOrStdout(), "%s: set %s\n", path, args[0])
+			if err != nil {
+				return fmt.Errorf("write set result: %w", err)
+			}
 
-		return nil
-	}}
+			return nil
+		},
+	}
 }
 
 func (b *Binding[T]) configInitCommand() *cobra.Command {
-	return &cobra.Command{Use: "init", Short: "Write a config file with every default filled in", Args: cobra.NoArgs, RunE: func(cmd *cobra.Command, _ []string) error {
-		cmd.SilenceUsage = true
+	return &cobra.Command{
+		Use:   "init",
+		Short: "Write a config file with every default filled in",
+		Args:  cobra.NoArgs,
+		RunE: func(cmd *cobra.Command, _ []string) error {
+			cmd.SilenceUsage = true
 
-		path, err := b.Init()
-		if err != nil {
-			return err
-		}
+			path, err := b.Init()
+			if err != nil {
+				return err
+			}
 
-		_, err = fmt.Fprintf(cmd.OutOrStdout(), "wrote %s\n", path)
-		if err != nil {
-			return fmt.Errorf("write init result: %w", err)
-		}
+			_, err = fmt.Fprintf(cmd.OutOrStdout(), "wrote %s\n", path)
+			if err != nil {
+				return fmt.Errorf("write init result: %w", err)
+			}
 
-		return nil
-	}}
+			return nil
+		},
+	}
 }
 
 func (b *Binding[T]) configPathCommand() *cobra.Command {
-	return &cobra.Command{Use: "path", Short: "Show the config file path", Args: cobra.NoArgs, RunE: func(cmd *cobra.Command, _ []string) error {
-		cmd.SilenceUsage = true
+	return &cobra.Command{
+		Use:   "path",
+		Short: "Show the config file path",
+		Args:  cobra.NoArgs,
+		RunE: func(cmd *cobra.Command, _ []string) error {
+			cmd.SilenceUsage = true
 
-		resolved, err := b.EditPath()
-		if err != nil {
-			return err
-		}
+			resolved, err := b.EditPath()
+			if err != nil {
+				return err
+			}
 
-		if _, err := fmt.Fprintln(cmd.OutOrStdout(), resolved); err != nil {
-			return fmt.Errorf("write configuration path: %w", err)
-		}
+			if _, err := fmt.Fprintln(cmd.OutOrStdout(), resolved); err != nil {
+				return fmt.Errorf("write configuration path: %w", err)
+			}
 
-		return nil
-	}}
+			return nil
+		},
+	}
 }

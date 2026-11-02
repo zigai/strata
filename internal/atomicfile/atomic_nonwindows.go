@@ -7,7 +7,7 @@ import (
 	"os"
 )
 
-func replaceFile(from, to string) error {
+func replaceFile(from string, to string) error {
 	if err := os.Rename(from, to); err != nil {
 		return fmt.Errorf("rename %s to %s: %w", from, to, err)
 	}
@@ -15,7 +15,7 @@ func replaceFile(from, to string) error {
 	return nil
 }
 
-func createFileNoOverwrite(from, to string) error {
+func createFileNoOverwrite(from string, to string) error {
 	if err := os.Link(from, to); err != nil {
 		return fmt.Errorf("link %s to %s: %w", from, to, err)
 	}

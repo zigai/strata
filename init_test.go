@@ -57,7 +57,8 @@ func TestInitDirectives(t *testing.T) {
 			t.Errorf("TOML missing Taplo directive header: %q", content)
 		}
 
-		if !strings.Contains(content, "server_host = '127.0.0.1'") && !strings.Contains(content, "server_host = \"127.0.0.1\"") {
+		if !strings.Contains(content, "server_host = '127.0.0.1'") &&
+			!strings.Contains(content, "server_host = \"127.0.0.1\"") {
 			t.Errorf("TOML missing default server_host: %q", content)
 		}
 	})
@@ -78,7 +79,10 @@ func TestInitDirectives(t *testing.T) {
 		}
 
 		content := string(data)
-		if !strings.HasPrefix(content, "# yaml-language-server: $schema=https://example.com/schema.json\n") {
+		if !strings.HasPrefix(
+			content,
+			"# yaml-language-server: $schema=https://example.com/schema.json\n",
+		) {
 			t.Errorf("YAML missing language-server directive header: %q", content)
 		}
 
@@ -160,11 +164,19 @@ func TestInitReplacesExistingJSONSchemaAndReloads(t *testing.T) {
 			t.Parallel()
 
 			path := filepath.Join(t.TempDir(), "config.json")
-			if err := strata.Init[schemaCollisionConfig](path, strata.WithSchemaURL(schemaURL)); err != nil {
+			if err := strata.Init[schemaCollisionConfig](
+				path,
+				strata.WithSchemaURL(schemaURL),
+			); err != nil {
 				t.Fatalf("Init: %v", err)
 			}
 
-			loaded, err := strata.Load[schemaCollisionConfig](strata.WithDefaults(schemaCollisionConfig{}), strata.WithPath(path), strata.WithFormats("json"), strata.WithStrict())
+			loaded, err := strata.Load[schemaCollisionConfig](
+				strata.WithDefaults(schemaCollisionConfig{}),
+				strata.WithPath(path),
+				strata.WithFormats("json"),
+				strata.WithStrict(),
+			)
 			if err != nil {
 				t.Fatalf("Load generated template: %v", err)
 			}
@@ -311,8 +323,16 @@ func TestInitOmitsRuntimeAndMarshaledSecrets(t *testing.T) {
 		init func(string) error
 		want map[string]string
 	}{
-		{name: "runtime Secret", init: func(path string) error { return strata.Init[runtimeSecretConfig](path) }, want: map[string]string{}},
-		{name: "custom marshaler", init: func(path string) error { return strata.Init[marshaledSecretConfig](path) }, want: map[string]string{"keep": "public-value"}},
+		{
+			name: "runtime Secret",
+			init: func(path string) error { return strata.Init[runtimeSecretConfig](path) },
+			want: map[string]string{},
+		},
+		{
+			name: "custom marshaler",
+			init: func(path string) error { return strata.Init[marshaledSecretConfig](path) },
+			want: map[string]string{"keep": "public-value"},
+		},
 	} {
 		t.Run(test.name, func(t *testing.T) {
 			t.Parallel()
@@ -343,7 +363,11 @@ func TestInitRejectsUnexportedMarshaledSecretEmbedding(t *testing.T) {
 	t.Parallel()
 
 	path := writeFile(t, "config.json", "{}\n")
-	if err := strata.Init[embeddedMarshaledSecretConfig](path, strata.WithOverwrite(true)); err == nil || !strings.Contains(err.Error(), "unexported custom-marshaled embedding") {
+	if err := strata.Init[embeddedMarshaledSecretConfig](
+		path,
+		strata.WithOverwrite(true),
+	); err == nil ||
+		!strings.Contains(err.Error(), "unexported custom-marshaled embedding") {
 		t.Fatalf("Init error = %v; want unsupported embedding", err)
 	}
 
@@ -540,7 +564,8 @@ func TestTOMLInitWritesPlainDurationsAsStrings(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	if !strings.Contains(string(data), "30s") || !strings.Contains(string(data), "45s") || strings.Contains(string(data), "30000000000") {
+	if !strings.Contains(string(data), "30s") || !strings.Contains(string(data), "45s") ||
+		strings.Contains(string(data), "30000000000") {
 		t.Fatalf("template = %s", data)
 	}
 
@@ -563,11 +588,19 @@ func TestInitTemplatesLoadBackToTheDefaults(t *testing.T) {
 				t.Parallel()
 
 				path := filepath.Join(t.TempDir(), "config"+ext)
-				if err := strata.Init[demoConfig](path, strata.WithSchemaURL(schemaURL)); err != nil {
+				if err := strata.Init[demoConfig](
+					path,
+					strata.WithSchemaURL(schemaURL),
+				); err != nil {
 					t.Fatalf("Init: %v", err)
 				}
 
-				got, err := strata.Load[demoConfig](strata.WithDefaults(demoConfig{}), strata.WithPath(path), strata.WithFormats(ext), strata.WithStrict())
+				got, err := strata.Load[demoConfig](
+					strata.WithDefaults(demoConfig{}),
+					strata.WithPath(path),
+					strata.WithFormats(ext),
+					strata.WithStrict(),
+				)
 				if err != nil {
 					t.Fatalf("Load: %v", err)
 				}

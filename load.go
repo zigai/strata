@@ -389,14 +389,25 @@ func discoverAndApplyLayers(target any, opts *loadOptions, meta *Metadata) error
 
 	for _, layer := range layers {
 		if err := applyLayer(target, layer, opts, meta); err != nil {
-			return fmt.Errorf("apply configuration layer %s (%s): %w", layer.Path, layer.Source, err)
+			return fmt.Errorf(
+				"apply configuration layer %s (%s): %w",
+				layer.Path,
+				layer.Source,
+				err,
+			)
 		}
 	}
 
 	return nil
 }
 
-func recordLayerOrigins(data []byte, layer cascade.Layer, ext string, keys *keyTree, meta *Metadata) {
+func recordLayerOrigins(
+	data []byte,
+	layer cascade.Layer,
+	ext string,
+	keys *keyTree,
+	meta *Metadata,
+) {
 	origins.Read(data, ext, func(record origins.Record) {
 		origin := Origin{
 			Key:      keypath.Format(record.Key),
@@ -429,7 +440,9 @@ func recordLayerOrigins(data []byte, layer cascade.Layer, ext string, keys *keyT
 		}
 
 		origin.RawValue = ""
-		meta.recordUnknown(UnknownKey{Origin: origin, Suggestion: keypath.Format(keys.suggest(record.Key))})
+		meta.recordUnknown(
+			UnknownKey{Origin: origin, Suggestion: keypath.Format(keys.suggest(record.Key))},
+		)
 	})
 }
 
@@ -444,7 +457,12 @@ func unknownKeysError(meta *Metadata) error {
 	for _, key := range unknown {
 		cause := fmt.Errorf(`%w "%s"`, ErrUnknownKey, key.Key)
 		if key.Suggestion != "" {
-			cause = fmt.Errorf(`%w "%s" (did you mean "%s"?)`, ErrUnknownKey, key.Key, key.Suggestion)
+			cause = fmt.Errorf(
+				`%w "%s" (did you mean "%s"?)`,
+				ErrUnknownKey,
+				key.Key,
+				key.Suggestion,
+			)
 		}
 
 		errs = append(errs, &ConfigError{Key: key.Key, Err: cause, Origin: key.Origin})

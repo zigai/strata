@@ -57,9 +57,12 @@ func WithSchemaTitle(title string) SchemaOption {
 	}
 }
 
-func WithSchemaComments(packagePath, directory string) SchemaOption {
+func WithSchemaComments(packagePath string, directory string) SchemaOption {
 	return func(opts *schemaOptions) {
-		opts.comments = append(opts.comments, schemaCommentSource{packagePath: packagePath, directory: directory})
+		opts.comments = append(
+			opts.comments,
+			schemaCommentSource{packagePath: packagePath, directory: directory},
+		)
 	}
 }
 
@@ -98,7 +101,10 @@ func Schema[T any](opts ...SchemaOption) ([]byte, error) {
 
 	if function := runtime.FuncForPC(caller); function != nil {
 		name := function.Name()
-		if separator := strings.IndexByte(name[strings.LastIndexByte(name, '/')+1:], '.'); separator >= 0 {
+		if separator := strings.IndexByte(
+			name[strings.LastIndexByte(name, '/')+1:],
+			'.',
+		); separator >= 0 {
 			callerPackage = name[:strings.LastIndexByte(name, '/')+1+separator]
 		}
 	}
@@ -124,7 +130,12 @@ func Schema[T any](opts ...SchemaOption) ([]byte, error) {
 	return data, nil
 }
 
-func reflectSchema(typ reflect.Type, sourceFile, callerPackage string, sources []schemaCommentSource) (*jsonschema.Schema, error) {
+func reflectSchema(
+	typ reflect.Type,
+	sourceFile string,
+	callerPackage string,
+	sources []schemaCommentSource,
+) (*jsonschema.Schema, error) {
 	if err := layout.Validate(typ); err != nil {
 		return nil, fmt.Errorf("%w: %w", ErrReflectSchema, err)
 	}
@@ -141,7 +152,12 @@ func reflectSchema(typ reflect.Type, sourceFile, callerPackage string, sources [
 	comments := make(map[string]string)
 	for _, source := range sources {
 		if err := addSchemaComments(comments, source); err != nil {
-			return nil, fmt.Errorf("%w: read Go comments in %s: %w", ErrReflectSchema, source.directory, err)
+			return nil, fmt.Errorf(
+				"%w: read Go comments in %s: %w",
+				ErrReflectSchema,
+				source.directory,
+				err,
+			)
 		}
 	}
 
@@ -171,7 +187,11 @@ func reflectSchema(typ reflect.Type, sourceFile, callerPackage string, sources [
 	return schema, nil
 }
 
-func schemaCommentSources(typ reflect.Type, sourceFile, callerPackage string) ([]schemaCommentSource, error) {
+func schemaCommentSources(
+	typ reflect.Type,
+	sourceFile string,
+	callerPackage string,
+) ([]schemaCommentSource, error) {
 	packages := make(map[string]bool)
 	collectSchemaPackages(typ, make(map[reflect.Type]bool), packages)
 
@@ -198,12 +218,20 @@ func schemaCommentSources(typ reflect.Type, sourceFile, callerPackage string) ([
 	var sources []schemaCommentSource
 
 	for packagePath := range packages {
-		directory, err := schemaPackageDirectory(packagePath, callerDirectory, callerPackage, module)
+		directory, err := schemaPackageDirectory(
+			packagePath,
+			callerDirectory,
+			callerPackage,
+			module,
+		)
 		if err != nil {
 			return nil, err
 		}
 
-		sources = append(sources, schemaCommentSource{packagePath: packagePath, directory: directory})
+		sources = append(
+			sources,
+			schemaCommentSource{packagePath: packagePath, directory: directory},
+		)
 	}
 
 	return sources, nil
@@ -215,7 +243,12 @@ func schemaCommentSources(typ reflect.Type, sourceFile, callerPackage string) ([
 func trimmedSourcePath(sourceFile string) (string, error) {
 	directory, err := os.Getwd()
 	if err != nil {
-		return "", fmt.Errorf("%w: caller source path %q is not absolute: %w", ErrReflectSchema, sourceFile, err)
+		return "", fmt.Errorf(
+			"%w: caller source path %q is not absolute: %w",
+			ErrReflectSchema,
+			sourceFile,
+			err,
+		)
 	}
 
 	for {
@@ -224,13 +257,21 @@ func trimmedSourcePath(sourceFile string) (string, error) {
 			return "", fmt.Errorf("%w: locate caller module: %w", ErrReflectSchema, err)
 		}
 
-		if relative, found := strings.CutPrefix(filepath.ToSlash(sourceFile), modulePath+"/"); err == nil && found {
+		if relative, found := strings.CutPrefix(
+			filepath.ToSlash(sourceFile),
+			modulePath+"/",
+		); err == nil &&
+			found {
 			return filepath.Join(directory, filepath.FromSlash(relative)), nil
 		}
 
 		parent := filepath.Dir(directory)
 		if parent == directory {
-			return "", fmt.Errorf("%w: caller source path %q is not in the module of the working directory; use WithSchemaComments", ErrReflectSchema, sourceFile)
+			return "", fmt.Errorf(
+				"%w: caller source path %q is not in the module of the working directory; use WithSchemaComments",
+				ErrReflectSchema,
+				sourceFile,
+			)
 		}
 
 		directory = parent
@@ -244,7 +285,11 @@ func goModulePath(path string) (string, error) {
 	}
 
 	for line := range strings.Lines(string(data)) {
-		if rest, found := strings.CutPrefix(strings.TrimSpace(line), "module"); found && rest != "" && (rest[0] == ' ' || rest[0] == '\t') {
+		if rest, found := strings.CutPrefix(
+			strings.TrimSpace(line),
+			"module",
+		); found && rest != "" &&
+			(rest[0] == ' ' || rest[0] == '\t') {
 			name, _, _ := strings.Cut(strings.TrimSpace(rest), "//")
 
 			return strings.Trim(strings.TrimSpace(name), `"`), nil
@@ -254,7 +299,7 @@ func goModulePath(path string) (string, error) {
 	return "", fmt.Errorf("%w: %s declares no module", fs.ErrNotExist, path)
 }
 
-func schemaCallerModule(callerDirectory, callerPackage string) (schemaCommentSource, error) {
+func schemaCallerModule(callerDirectory string, callerPackage string) (schemaCommentSource, error) {
 	directory := callerDirectory
 	for {
 		_, err := os.Stat(filepath.Join(directory, "go.mod"))
@@ -275,7 +320,11 @@ func schemaCallerModule(callerDirectory, callerPackage string) (schemaCommentSou
 	}
 }
 
-func schemaModuleFromCaller(directory, callerDirectory, callerPackage string) (schemaCommentSource, error) {
+func schemaModuleFromCaller(
+	directory string,
+	callerDirectory string,
+	callerPackage string,
+) (schemaCommentSource, error) {
 	modulePath := strings.TrimSuffix(callerPackage, "_test")
 	if callerPackage == "main" {
 		if info, ok := debug.ReadBuildInfo(); ok {
@@ -301,7 +350,9 @@ func collectSchemaPackages(typ reflect.Type, seen map[reflect.Type]bool, package
 	}
 
 	seen[typ] = true
-	if typ.Kind() == reflect.Pointer || typ.Kind() == reflect.Slice || typ.Kind() == reflect.Array || typ.Kind() == reflect.Map {
+	if typ.Kind() == reflect.Pointer || typ.Kind() == reflect.Slice ||
+		typ.Kind() == reflect.Array ||
+		typ.Kind() == reflect.Map {
 		collectSchemaPackages(typ.Elem(), seen, packages)
 		return
 	}
@@ -324,7 +375,12 @@ func collectSchemaPackages(typ reflect.Type, seen map[reflect.Type]bool, package
 	}
 }
 
-func schemaPackageDirectory(packagePath, callerDirectory, callerPackage string, module schemaCommentSource) (string, error) {
+func schemaPackageDirectory(
+	packagePath string,
+	callerDirectory string,
+	callerPackage string,
+	module schemaCommentSource,
+) (string, error) {
 	importPath := strings.TrimSuffix(packagePath, "_test")
 	switch {
 	case packagePath == "main" || packagePath == callerPackage:
@@ -332,9 +388,16 @@ func schemaPackageDirectory(packagePath, callerDirectory, callerPackage string, 
 	case module.packagePath != "" && importPath == module.packagePath:
 		return module.directory, nil
 	case module.packagePath != "" && strings.HasPrefix(importPath, module.packagePath+"/"):
-		return filepath.Join(module.directory, filepath.FromSlash(strings.TrimPrefix(importPath, module.packagePath+"/"))), nil
+		return filepath.Join(
+			module.directory,
+			filepath.FromSlash(strings.TrimPrefix(importPath, module.packagePath+"/")),
+		), nil
 	default:
-		return "", fmt.Errorf("%w: source for package %q is outside the caller module; use WithSchemaComments", ErrReflectSchema, packagePath)
+		return "", fmt.Errorf(
+			"%w: source for package %q is outside the caller module; use WithSchemaComments",
+			ErrReflectSchema,
+			packagePath,
+		)
 	}
 }
 
@@ -363,7 +426,13 @@ func addSchemaComments(comments map[string]string, source schemaCommentSource) e
 			return fmt.Errorf("parse comment source: %w", err)
 		}
 
-		if strings.HasSuffix(file.Name.Name, "_test") != strings.HasSuffix(source.packagePath, "_test") {
+		if strings.HasSuffix(
+			file.Name.Name,
+			"_test",
+		) != strings.HasSuffix(
+			source.packagePath,
+			"_test",
+		) {
 			continue
 		}
 
@@ -397,7 +466,12 @@ func addSchemaFileComments(comments map[string]string, packagePath string, file 
 	}
 }
 
-func addSchemaTypeComments(comments map[string]string, packagePath string, group *ast.GenDecl, typ *ast.TypeSpec) {
+func addSchemaTypeComments(
+	comments map[string]string,
+	packagePath string,
+	group *ast.GenDecl,
+	typ *ast.TypeSpec,
+) {
 	prefix := packagePath + "." + typ.Name.Name
 
 	text := typ.Doc.Text()

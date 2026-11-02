@@ -70,7 +70,10 @@ func redactDecodeError(err error, keys *keyTree) error {
 		}
 	}
 
-	return &decodeError{message: codec.ErrMalformed.Error() + ": " + strings.Join(parts, "\n"), cause: err}
+	return &decodeError{
+		message: codec.ErrMalformed.Error() + ": " + strings.Join(parts, "\n"),
+		cause:   err,
+	}
 }
 
 func secretFailure(keys *keyTree, dotted string) bool {

@@ -37,7 +37,10 @@ func (c *Config) ValidateWith(meta *strata.Metadata) error {
 		errs = append(errs, meta.NewConfigError("port", errors.New("must be between 1 and 65535")))
 	}
 	if c.DB.Port < 1 || c.DB.Port > 65535 {
-		errs = append(errs, meta.NewConfigError("db.port", errors.New("must be between 1 and 65535")))
+		errs = append(
+			errs,
+			meta.NewConfigError("db.port", errors.New("must be between 1 and 65535")),
+		)
 	}
 	if c.Env == "production" && c.APIKey == "" {
 		errs = append(errs, meta.NewConfigError("env", errors.New("requires api_key to be set")))

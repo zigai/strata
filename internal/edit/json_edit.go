@@ -50,7 +50,12 @@ func UpdateJSON(data []byte, parts []string, value any) ([]byte, error) {
 	return append(updated, '\n'), nil
 }
 
-func setNested(obj map[string]jsontext.Value, parts []string, value jsontext.Value, indent string) error {
+func setNested(
+	obj map[string]jsontext.Value,
+	parts []string,
+	value jsontext.Value,
+	indent string,
+) error {
 	key := parts[0]
 
 	if len(parts) == 1 {

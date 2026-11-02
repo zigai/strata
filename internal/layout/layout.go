@@ -139,7 +139,9 @@ func validate(typ reflect.Type, seen map[reflect.Type]bool) error {
 
 	seen[typ] = true
 
-	if typ.Kind() == reflect.Pointer || typ.Kind() == reflect.Slice || typ.Kind() == reflect.Array || typ.Kind() == reflect.Map {
+	if typ.Kind() == reflect.Pointer || typ.Kind() == reflect.Slice ||
+		typ.Kind() == reflect.Array ||
+		typ.Kind() == reflect.Map {
 		return validate(typ.Elem(), seen)
 	}
 
@@ -166,7 +168,13 @@ func validate(typ reflect.Type, seen map[reflect.Type]bool) error {
 }
 
 func build(typ reflect.Type) *Struct {
-	layout := &Struct{Members: members(typ), Fields: nil, Rest: nil, keys: make(map[string]int), err: nil}
+	layout := &Struct{
+		Members: members(typ),
+		Fields:  nil,
+		Rest:    nil,
+		keys:    make(map[string]int),
+		err:     nil,
+	}
 
 	var (
 		found []candidate
@@ -191,7 +199,10 @@ func build(typ reflect.Type) *Struct {
 		}
 	}
 
-	slices.SortStableFunc(found, func(a, b candidate) int { return slices.Compare(a.field.Index, b.field.Index) })
+	slices.SortStableFunc(
+		found,
+		func(a, b candidate) int { return slices.Compare(a.field.Index, b.field.Index) },
+	)
 
 	for _, item := range found {
 		owners := claims[item.field.Key]
@@ -200,7 +211,17 @@ func build(typ reflect.Type) *Struct {
 		}
 
 		if len(owners) > 1 {
-			errs = append(errs, fmt.Errorf("%w: %s: fields %s claim the key %q", ErrInvalid, typ, fieldNames(owners), item.field.Key))
+			errs = append(
+				errs,
+				fmt.Errorf(
+					"%w: %s: fields %s claim the key %q",
+					ErrInvalid,
+					typ,
+					fieldNames(owners),
+					item.field.Key,
+				),
+			)
+
 			continue
 		}
 
@@ -213,7 +234,10 @@ func build(typ reflect.Type) *Struct {
 	case 1:
 		layout.Rest = &rests[0].field
 	default:
-		errs = append(errs, fmt.Errorf("%w: %s: more than one inline map: %s", ErrInvalid, typ, fieldNames(rests)))
+		errs = append(
+			errs,
+			fmt.Errorf("%w: %s: more than one inline map: %s", ErrInvalid, typ, fieldNames(rests)),
+		)
 	}
 
 	layout.err = errors.Join(errs...)
@@ -224,7 +248,16 @@ func build(typ reflect.Type) *Struct {
 // collect lists the keyed fields of typ in declaration order. A promoted
 // member's fields follow at the next depth, so a field declared closer to the
 // struct owns its key, as in Go.
-func collect(typ reflect.Type, prefix []int, depth int, secret bool, active []reflect.Type, found, rests *[]candidate, errs *[]error) {
+func collect(
+	typ reflect.Type,
+	prefix []int,
+	depth int,
+	secret bool,
+	active []reflect.Type,
+	found *[]candidate,
+	rests *[]candidate,
+	errs *[]error,
+) {
 	var promoted []Member
 
 	for _, member := range members(typ) {
@@ -234,7 +267,13 @@ func collect(typ reflect.Type, prefix []int, depth int, secret bool, active []re
 		}
 
 		index := append(slices.Clone(prefix), member.Field.Index...)
-		field := Field{Key: member.Key, Index: index, Owner: typ, Member: member, Secret: secret || member.Secret}
+		field := Field{
+			Key:    member.Key,
+			Index:  index,
+			Owner:  typ,
+			Member: member,
+			Secret: secret || member.Secret,
+		}
 
 		switch {
 		case member.Promoted:
@@ -253,18 +292,38 @@ func collect(typ reflect.Type, prefix []int, depth int, secret bool, active []re
 		}
 
 		index := append(slices.Clone(prefix), member.Field.Index...)
-		collect(base, index, depth+1, secret || member.Secret, append(active, base), found, rests, errs)
+		collect(
+			base,
+			index,
+			depth+1,
+			secret || member.Secret,
+			append(active, base),
+			found,
+			rests,
+			errs,
+		)
 	}
 }
 
 func memberError(owner reflect.Type, member Member) error {
 	switch {
 	case member.Promoted && EncodesItself(deref(member.Field.Type)):
-		return fmt.Errorf("%w: %s.%s: an inline struct must not marshal itself", ErrInvalid, owner, member.Field.Name)
+		return fmt.Errorf(
+			"%w: %s.%s: an inline struct must not marshal itself",
+			ErrInvalid,
+			owner,
+			member.Field.Name,
+		)
 	case member.Rest:
 		return checkRest(owner, member.Field)
 	case !member.Promoted && IsInline(member.Field):
-		return fmt.Errorf("%w: %s.%s: an inline field must be a struct or a map, not %s", ErrInvalid, owner, member.Field.Name, member.Field.Type)
+		return fmt.Errorf(
+			"%w: %s.%s: an inline field must be a struct or a map, not %s",
+			ErrInvalid,
+			owner,
+			member.Field.Name,
+			member.Field.Type,
+		)
 	}
 
 	return nil
@@ -316,11 +375,22 @@ func promotes(field reflect.StructField) bool {
 
 func checkRest(owner reflect.Type, field reflect.StructField) error {
 	if field.Type.Key().Kind() != reflect.String {
-		return fmt.Errorf("%w: %s.%s: an inline map needs string keys, not %s", ErrInvalid, owner, field.Name, field.Type.Key())
+		return fmt.Errorf(
+			"%w: %s.%s: an inline map needs string keys, not %s",
+			ErrInvalid,
+			owner,
+			field.Name,
+			field.Type.Key(),
+		)
 	}
 
 	if !field.IsExported() {
-		return fmt.Errorf("%w: %s.%s: an inline map must be exported", ErrInvalid, owner, field.Name)
+		return fmt.Errorf(
+			"%w: %s.%s: an inline map must be exported",
+			ErrInvalid,
+			owner,
+			field.Name,
+		)
 	}
 
 	return nil
@@ -337,7 +407,7 @@ func named(field reflect.StructField) bool {
 	return false
 }
 
-func hasOption(tag, option string) bool {
+func hasOption(tag string, option string) bool {
 	_, options, found := strings.Cut(tag, ",")
 	if !found {
 		return false

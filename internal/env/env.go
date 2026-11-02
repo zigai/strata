@@ -68,7 +68,16 @@ func Apply(target any, opts Options) error {
 		lookup = os.LookupEnv
 	}
 
-	return bindEnvStruct(elem, normalizePrefix(opts.Prefix), rootScope(elem.Type()), lookup, opts.OnBind, false, nil, nil)
+	return bindEnvStruct(
+		elem,
+		normalizePrefix(opts.Prefix),
+		rootScope(elem.Type()),
+		lookup,
+		opts.OnBind,
+		false,
+		nil,
+		nil,
+	)
 }
 
 func Describe(typ reflect.Type, prefix string) []Var {
@@ -101,7 +110,11 @@ func rootScope(typ reflect.Type) scope {
 }
 
 func (at scope) promoted(member layout.Member) scope {
-	return scope{key: at.key, layout: at.layout, index: append(slices.Clone(at.index), member.Field.Index...)}
+	return scope{
+		key:    at.key,
+		layout: at.layout,
+		index:  append(slices.Clone(at.index), member.Field.Index...),
+	}
 }
 
 func (at scope) nested(key string, typ reflect.Type) scope {
@@ -120,7 +133,14 @@ func (at scope) owns(member layout.Member) bool {
 	return ok && slices.Equal(field.Index, append(slices.Clone(at.index), member.Field.Index...))
 }
 
-func describeStruct(typ reflect.Type, prefix string, at scope, inheritedSecret bool, active []reflect.Type, vars *[]Var) {
+func describeStruct(
+	typ reflect.Type,
+	prefix string,
+	at scope,
+	inheritedSecret bool,
+	active []reflect.Type,
+	vars *[]Var,
+) {
 	if slices.Contains(active, typ) {
 		return
 	}
@@ -132,7 +152,14 @@ func describeStruct(typ reflect.Type, prefix string, at scope, inheritedSecret b
 	}
 }
 
-func describeMember(member layout.Member, prefix string, at scope, inheritedSecret bool, active []reflect.Type, vars *[]Var) {
+func describeMember(
+	member layout.Member,
+	prefix string,
+	at scope,
+	inheritedSecret bool,
+	active []reflect.Type,
+	vars *[]Var,
+) {
 	sf := member.Field
 	if !sf.IsExported() || member.Rest {
 		return
@@ -170,7 +197,10 @@ func describeMember(member layout.Member, prefix string, at scope, inheritedSecr
 		return
 	}
 
-	*vars = append(*vars, Var{Key: key, Name: documentedName(sf, names), Names: names, IsSecret: secret})
+	*vars = append(
+		*vars,
+		Var{Key: key, Name: documentedName(sf, names), Names: names, IsSecret: secret},
+	)
 }
 
 func documentedName(sf reflect.StructField, names []string) string {
@@ -230,12 +260,38 @@ func bindEnvStruct(
 
 		switch {
 		case member.Promoted:
-			err = bindStruct(field, prefix, at.promoted(member), lookup, onBind, fieldSecret, activeTypes, activePtrs)
+			err = bindStruct(
+				field,
+				prefix,
+				at.promoted(member),
+				lookup,
+				onBind,
+				fieldSecret,
+				activeTypes,
+				activePtrs,
+			)
 		case !at.owns(member):
 		case layout.IsNestedStructType(field.Type()):
-			err = bindStruct(field, prefix, at.nested(member.Key, field.Type()), lookup, onBind, fieldSecret, activeTypes, activePtrs)
+			err = bindStruct(
+				field,
+				prefix,
+				at.nested(member.Key, field.Type()),
+				lookup,
+				onBind,
+				fieldSecret,
+				activeTypes,
+				activePtrs,
+			)
 		default:
-			err = bindLeafField(field, member.Field, prefix, at.key.AppendToken(member.Key), lookup, onBind, fieldSecret)
+			err = bindLeafField(
+				field,
+				member.Field,
+				prefix,
+				at.key.AppendToken(member.Key),
+				lookup,
+				onBind,
+				fieldSecret,
+			)
 		}
 
 		if err != nil {
@@ -257,10 +313,28 @@ func bindStruct(
 	activePtrs []uintptr,
 ) error {
 	if field.Kind() == reflect.Pointer {
-		return bindPointerStructField(field, prefix, at, lookup, onBind, inheritedSecret, activeTypes, activePtrs)
+		return bindPointerStructField(
+			field,
+			prefix,
+			at,
+			lookup,
+			onBind,
+			inheritedSecret,
+			activeTypes,
+			activePtrs,
+		)
 	}
 
-	return bindEnvStruct(field, prefix, at, lookup, onBind, inheritedSecret, activeTypes, activePtrs)
+	return bindEnvStruct(
+		field,
+		prefix,
+		at,
+		lookup,
+		onBind,
+		inheritedSecret,
+		activeTypes,
+		activePtrs,
+	)
 }
 
 func bindPointerStructField(
@@ -287,7 +361,16 @@ func bindPointerStructField(
 		activePtrs = append(activePtrs, ptr)
 		defer func() { activePtrs = activePtrs[:len(activePtrs)-1] }()
 
-		return bindEnvStruct(field.Elem(), prefix, at, lookup, onBind, inheritedSecret, activeTypes, activePtrs)
+		return bindEnvStruct(
+			field.Elem(),
+			prefix,
+			at,
+			lookup,
+			onBind,
+			inheritedSecret,
+			activeTypes,
+			activePtrs,
+		)
 	}
 
 	tmp := reflect.New(elemType)
@@ -301,7 +384,16 @@ func bindPointerStructField(
 		}
 	}
 
-	if err := bindEnvStruct(tmp.Elem(), prefix, at, lookup, countBind, inheritedSecret, activeTypes, activePtrs); err != nil {
+	if err := bindEnvStruct(
+		tmp.Elem(),
+		prefix,
+		at,
+		lookup,
+		countBind,
+		inheritedSecret,
+		activeTypes,
+		activePtrs,
+	); err != nil {
 		return err
 	}
 
@@ -332,10 +424,22 @@ func bindLeafField(
 		// NB: a secret field MUST NOT have its value reproduced here, and the
 		// parse library's own error text quotes the input.
 		if secret {
-			return fmt.Errorf("%w for %s from %s=[REDACTED]", ErrInvalidValue, keypath.Format(key), envVar)
+			return fmt.Errorf(
+				"%w for %s from %s=[REDACTED]",
+				ErrInvalidValue,
+				keypath.Format(key),
+				envVar,
+			)
 		}
 
-		return fmt.Errorf("%w for %s from %s=%q: %w", ErrInvalidValue, keypath.Format(key), envVar, rawVal, err)
+		return fmt.Errorf(
+			"%w for %s from %s=%q: %w",
+			ErrInvalidValue,
+			keypath.Format(key),
+			envVar,
+			rawVal,
+			err,
+		)
 	}
 
 	recordVal := rawVal

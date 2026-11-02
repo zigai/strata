@@ -45,7 +45,7 @@ func writeTempFile(tmpFile *os.File, data []byte, perm os.FileMode) error {
 	return nil
 }
 
-func commitAtomicFile(tmpPath, targetPath string, overwrite bool) error {
+func commitAtomicFile(tmpPath string, targetPath string, overwrite bool) error {
 	if overwrite {
 		if replaceErr := replaceFile(tmpPath, targetPath); replaceErr != nil {
 			return fmt.Errorf("replace file %s with %s: %w", targetPath, tmpPath, replaceErr)

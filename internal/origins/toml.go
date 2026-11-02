@@ -44,7 +44,8 @@ func walkTOMLValue(value any, key jsontext.Pointer, emit func(Record)) {
 		item := sequence.Index(index).Interface()
 
 		kind := reflect.TypeOf(item)
-		if kind != nil && (kind.Kind() == reflect.Map || kind.Kind() == reflect.Slice || kind.Kind() == reflect.Array) {
+		if kind != nil &&
+			(kind.Kind() == reflect.Map || kind.Kind() == reflect.Slice || kind.Kind() == reflect.Array) {
 			walkTOMLValue(item, key.AppendToken(strconv.Itoa(index)), emit)
 		}
 	}

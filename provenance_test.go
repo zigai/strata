@@ -107,7 +107,9 @@ func TestWhereMatchesUndeclaredKeysExactly(t *testing.T) {
 	t.Parallel()
 
 	meta := strata.NewMetadata()
-	meta.Record(strata.Origin{Key: "ÉTAGÈRE", Source: strata.SourceEnv, Path: "ETAGERE", RawValue: "val"})
+	meta.Record(
+		strata.Origin{Key: "ÉTAGÈRE", Source: strata.SourceEnv, Path: "ETAGERE", RawValue: "val"},
+	)
 
 	if _, ok := meta.Where("ÉTAGÈRE"); !ok {
 		t.Error("Where missed the exactly recorded key")
@@ -122,15 +124,26 @@ func TestChainedJSONAliasPreservesSchemaAndProvenance(t *testing.T) {
 	t.Parallel()
 
 	cfg, meta, err := strata.LoadWithMetadata[stdinFormatConfig](
-		strata.WithPath("-"), strata.WithStdin(strings.NewReader(`{"$schema":"https://example.invalid/config.json","alpha":17}`)),
-		strata.WithFormats("settings"), strata.WithFormatAlias("settings", "intermediate"), strata.WithFormatAlias("intermediate", "json"), strata.WithStrict(),
+		strata.WithPath(
+			"-",
+		),
+		strata.WithStdin(
+			strings.NewReader(`{"$schema":"https://example.invalid/config.json","alpha":17}`),
+		),
+		strata.WithFormats(
+			"settings",
+		),
+		strata.WithFormatAlias("settings", "intermediate"),
+		strata.WithFormatAlias("intermediate", "json"),
+		strata.WithStrict(),
 	)
 	if err != nil {
 		t.Fatal(err)
 	}
 
 	origin, found := meta.Where("alpha")
-	if cfg.Alpha != 17 || !found || origin.Source != strata.SourceStdin || origin.Line != 0 || origin.RawValue != "17" {
+	if cfg.Alpha != 17 || !found || origin.Source != strata.SourceStdin || origin.Line != 0 ||
+		origin.RawValue != "17" {
 		t.Fatalf("config = %+v, origin = %+v, found = %t", cfg, origin, found)
 	}
 }
@@ -146,9 +159,24 @@ func TestArrayReplacementRemovesDescendantOrigins(t *testing.T) {
 	}
 
 	for _, test := range []struct{ format, lower, empty, shorter string }{
-		{"json", `{"label":"retained","endpoints":[{"port":9000},{"port":9001}]}`, `{"endpoints":[]}`, `{"endpoints":[{"port":8000}]}`},
-		{"yaml", "label: retained\nendpoints: [{port: 9000}, {port: 9001}]\n", "endpoints: []\n", "endpoints: [{port: 8000}]\n"},
-		{"toml", "label = 'retained'\nendpoints = [{port = 9000}, {port = 9001}]\n", "endpoints = []\n", "endpoints = [{port = 8000}]\n"},
+		{
+			"json",
+			`{"label":"retained","endpoints":[{"port":9000},{"port":9001}]}`,
+			`{"endpoints":[]}`,
+			`{"endpoints":[{"port":8000}]}`,
+		},
+		{
+			"yaml",
+			"label: retained\nendpoints: [{port: 9000}, {port: 9001}]\n",
+			"endpoints: []\n",
+			"endpoints: [{port: 8000}]\n",
+		},
+		{
+			"toml",
+			"label = 'retained'\nendpoints = [{port = 9000}, {port = 9001}]\n",
+			"endpoints = []\n",
+			"endpoints = [{port = 8000}]\n",
+		},
 	} {
 		t.Run(test.format, func(t *testing.T) {
 			systemBase, userBase := isolateLayers(t)
@@ -175,7 +203,11 @@ func TestArrayReplacementRemovesDescendantOrigins(t *testing.T) {
 				t.Run(replacement.name, func(t *testing.T) {
 					upperPath := writeFile(t, "override."+test.format, replacement.body)
 
-					got, meta, err := strata.LoadWithMetadata[config](strata.WithAppName("sample"), strata.WithFormats(test.format), strata.WithPath(upperPath))
+					got, meta, err := strata.LoadWithMetadata[config](
+						strata.WithAppName("sample"),
+						strata.WithFormats(test.format),
+						strata.WithPath(upperPath),
+					)
 					if err != nil {
 						t.Fatal(err)
 					}
@@ -192,17 +224,22 @@ func TestArrayReplacementRemovesDescendantOrigins(t *testing.T) {
 						if origin, found := meta.Where("endpoints.0.port"); found {
 							t.Errorf("empty array retained origin: %+v", origin)
 						}
-					} else if origin, found := meta.Where("endpoints.0.port"); got.Endpoints[0].Port != 8000 || !found || origin.Path != upperPath || origin.RawValue != "8000" {
+					} else if origin, found := meta.Where("endpoints.0.port"); got.Endpoints[0].Port != 8000 ||
+						!found || origin.Path != upperPath || origin.RawValue != "8000" {
 						t.Errorf("replacement origin = %+v, %t; config = %+v", origin, found, got)
 					}
 
 					for _, origin := range meta.Origins() {
-						if strings.HasPrefix(origin.Key, "endpoints.") && (len(replacement.ports) == 0 || origin.Key != "endpoints.0.port") {
+						if strings.HasPrefix(origin.Key, "endpoints.") &&
+							(len(replacement.ports) == 0 || origin.Key != "endpoints.0.port") {
 							t.Errorf("Origins retained removed endpoint: %+v", origin)
 						}
 					}
 
-					if origin, found := meta.Where("label"); !found || origin.Path != lowerPath || origin.RawValue != "retained" {
+					if origin, found := meta.Where(
+						"label",
+					); !found || origin.Path != lowerPath ||
+						origin.RawValue != "retained" {
 						t.Errorf("unrelated origin = %+v, %t", origin, found)
 					}
 				})
@@ -218,7 +255,15 @@ func TestYAMLExplicitArrayOverridesMergedOrigins(t *testing.T) {
 		Endpoints []struct{ Port int }
 	}
 
-	got, meta, err := strata.LoadWithMetadata[config](strata.WithPath("-"), strata.WithFormats("yaml"), strata.WithStdin(strings.NewReader("base: &base\n  endpoints: [{port: 9000}]\n<<: *base\nendpoints: []\n")))
+	got, meta, err := strata.LoadWithMetadata[config](
+		strata.WithPath("-"),
+		strata.WithFormats("yaml"),
+		strata.WithStdin(
+			strings.NewReader(
+				"base: &base\n  endpoints: [{port: 9000}]\n<<: *base\nendpoints: []\n",
+			),
+		),
+	)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -240,13 +285,21 @@ func TestYAMLAliasAndSequenceProvenance(t *testing.T) {
 		Ports    []int              `strata:"ports"`
 	}
 
-	cfg, meta, err := strata.LoadWithMetadata[config](strata.WithPath("-"), strata.WithStdin(strings.NewReader("base: &base\n  port: 9001\ndatabase: *base\nports: [81, 444]\n")), strata.WithFormats("yaml"), strata.WithStrict())
+	cfg, meta, err := strata.LoadWithMetadata[config](
+		strata.WithPath("-"),
+		strata.WithStdin(
+			strings.NewReader("base: &base\n  port: 9001\ndatabase: *base\nports: [81, 444]\n"),
+		),
+		strata.WithFormats("yaml"),
+		strata.WithStrict(),
+	)
 	if err != nil {
 		t.Fatal(err)
 	}
 
 	origin, found := meta.Where("database.port")
-	if cfg.Database.Port != 9001 || !found || origin.Source != strata.SourceStdin || origin.RawValue != "9001" {
+	if cfg.Database.Port != 9001 || !found || origin.Source != strata.SourceStdin ||
+		origin.RawValue != "9001" {
 		t.Fatalf("config = %+v, alias origin = %+v, %t", cfg, origin, found)
 	}
 
@@ -352,7 +405,10 @@ func TestProvenancePreservesExactIntegers(t *testing.T) {
 				t.Fatalf("seed: %v", err)
 			}
 
-			_, meta, err := strata.LoadWithMetadata[wideConfig](strata.WithPath(path), strata.WithFormats(tc.ext))
+			_, meta, err := strata.LoadWithMetadata[wideConfig](
+				strata.WithPath(path),
+				strata.WithFormats(tc.ext),
+			)
 			if err != nil {
 				t.Fatalf("Load: %v", err)
 			}
@@ -428,7 +484,10 @@ func TestCustomKeyFileProvenance(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	_, meta, err := strata.LoadWithMetadata[customKeyFileConfig](strata.WithPath(filePath), strata.WithFormats("json"))
+	_, meta, err := strata.LoadWithMetadata[customKeyFileConfig](
+		strata.WithPath(filePath),
+		strata.WithFormats("json"),
+	)
 	if err != nil {
 		t.Fatalf("Load error: %v", err)
 	}
@@ -477,7 +536,11 @@ func TestOriginsListsEveryResolvedKey(t *testing.T) {
 
 	path := writeFile(t, "config.toml", "[database]\nport = 5432\n")
 
-	_, meta, err := strata.LoadWithMetadata[typoConfig](strata.WithPath(path), strata.WithEnvPrefix("ORIGINS_"), strata.WithFormats("toml"))
+	_, meta, err := strata.LoadWithMetadata[typoConfig](
+		strata.WithPath(path),
+		strata.WithEnvPrefix("ORIGINS_"),
+		strata.WithFormats("toml"),
+	)
 	if err != nil {
 		t.Fatalf("Load: %v", err)
 	}
@@ -491,7 +554,10 @@ func TestOriginsListsEveryResolvedKey(t *testing.T) {
 		sources[origin.Key] = origin.Source
 	}
 
-	if !slices.Equal(keys, []string{"host", portKey, "api_key", "database.port", "database.max_conns", "labels"}) {
+	if !slices.Equal(
+		keys,
+		[]string{"host", portKey, "api_key", "database.port", "database.max_conns", "labels"},
+	) {
 		t.Errorf("keys %v are not in declaration order", keys)
 	}
 
@@ -572,12 +638,22 @@ func TestMapEntriesWithSurroundingSpacesKeepTheirOwnOrigins(t *testing.T) {
 
 	stdin := strings.NewReader(`{"port": 8080, "labels": {"key": "one", " key ": "two"}}`)
 
-	loaded, meta, err := strata.LoadWithMetadata[config](strata.WithStdin(stdin), strata.WithPath("-"), strata.WithFormats("json"))
+	loaded, meta, err := strata.LoadWithMetadata[config](
+		strata.WithStdin(stdin),
+		strata.WithPath("-"),
+		strata.WithFormats("json"),
+	)
 	if err != nil {
 		t.Fatal(err)
 	}
 
-	if want := map[string]string{"key": "one", spacedLabel: "two"}; !maps.Equal(loaded.Labels, want) {
+	if want := map[string]string{
+		"key":       "one",
+		spacedLabel: "two",
+	}; !maps.Equal(
+		loaded.Labels,
+		want,
+	) {
 		t.Fatalf("Labels = %q, want %q", loaded.Labels, want)
 	}
 
@@ -603,7 +679,15 @@ func TestMapEntriesWithSurroundingSpacesKeepTheirOwnOrigins(t *testing.T) {
 		keys = append(keys, origin.Key)
 	}
 
-	if want := []string{"port", "labels", "labels." + spacedLabel, "labels.key"}; !slices.Equal(keys, want) {
+	if want := []string{
+		"port",
+		"labels",
+		"labels." + spacedLabel,
+		"labels.key",
+	}; !slices.Equal(
+		keys,
+		want,
+	) {
 		t.Errorf("origin keys = %q, want %q", keys, want)
 	}
 }
@@ -615,9 +699,16 @@ func TestMapEntriesSpelledAlikeKeepTheirOwnOrigins(t *testing.T) {
 		Labels map[string]string
 	}
 
-	path := writeFile(t, "config.yaml", "labels:\n  foo_bar: one\n  foobar: two\n  Env: three\n  env: four\n")
+	path := writeFile(
+		t,
+		"config.yaml",
+		"labels:\n  foo_bar: one\n  foobar: two\n  Env: three\n  env: four\n",
+	)
 
-	_, meta, err := strata.LoadWithMetadata[config](strata.WithPath(path), strata.WithFormats("yaml"))
+	_, meta, err := strata.LoadWithMetadata[config](
+		strata.WithPath(path),
+		strata.WithFormats("yaml"),
+	)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -635,7 +726,14 @@ func TestMapEntriesSpelledAlikeKeepTheirOwnOrigins(t *testing.T) {
 	} {
 		origin, found := meta.Where(test.key)
 		if !found || origin.RawValue != test.value || origin.Line != test.line {
-			t.Errorf("Where(%q) = %+v, %t; want %q from line %d", test.key, origin, found, test.value, test.line)
+			t.Errorf(
+				"Where(%q) = %+v, %t; want %q from line %d",
+				test.key,
+				origin,
+				found,
+				test.value,
+				test.line,
+			)
 		}
 	}
 
@@ -650,7 +748,16 @@ func TestMapEntriesSpelledAlikeKeepTheirOwnOrigins(t *testing.T) {
 		keys = append(keys, origin.Key)
 	}
 
-	if want := []string{"labels", "labels.foo_bar", "labels.foobar", "labels.Env", "labels.env"}; !slices.Equal(keys, want) {
+	if want := []string{
+		"labels",
+		"labels.foo_bar",
+		"labels.foobar",
+		"labels.Env",
+		"labels.env",
+	}; !slices.Equal(
+		keys,
+		want,
+	) {
 		t.Errorf("origin keys = %v, want %v", keys, want)
 	}
 }
@@ -672,7 +779,10 @@ func TestLiteralDottedKeysKeepTheirOwnOrigins(t *testing.T) {
 
 			path := writeFile(t, name, document)
 
-			got, meta, err := strata.LoadWithMetadata[config](strata.WithPath(path), strata.WithFormats(filepath.Ext(name)))
+			got, meta, err := strata.LoadWithMetadata[config](
+				strata.WithPath(path),
+				strata.WithFormats(filepath.Ext(name)),
+			)
 			if err != nil {
 				t.Fatal(err)
 			}

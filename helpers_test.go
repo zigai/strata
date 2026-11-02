@@ -40,7 +40,7 @@ func (c *typoConfig) SetDefaults() {
 	c.Port = 8080
 }
 
-func writeFile(t *testing.T, name, content string) string {
+func writeFile(t *testing.T, name string, content string) string {
 	t.Helper()
 
 	path := filepath.Join(t.TempDir(), name)
@@ -74,7 +74,7 @@ type formatsTestConfig struct {
 
 type narrowConfig struct {
 	Small int8    `strata:"small" env:"NARROW_SMALL"`
-	Tiny  uint8   `strata:"tiny" env:"NARROW_TINY"`
+	Tiny  uint8   `strata:"tiny"  env:"NARROW_TINY"`
 	Float float32 `strata:"float" env:"NARROW_FLOAT"`
 }
 
@@ -102,7 +102,7 @@ func isolateLayers(t *testing.T) (string, string) {
 	return systemBase, userBase
 }
 
-func writeLayerFile(t *testing.T, base, content string) string {
+func writeLayerFile(t *testing.T, base string, content string) string {
 	t.Helper()
 
 	dir := filepath.Join(base, "myapp")

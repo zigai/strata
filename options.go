@@ -169,7 +169,12 @@ func WithDefaults[T any](defaults T) Option {
 		opts.defaultsFunc = func(target any) error {
 			ptr, ok := target.(*T)
 			if !ok {
-				return fmt.Errorf("%w: WithDefaults[%T] used to load %T", ErrDefaultsTypeMismatch, defaults, target)
+				return fmt.Errorf(
+					"%w: WithDefaults[%T] used to load %T",
+					ErrDefaultsTypeMismatch,
+					defaults,
+					target,
+				)
 			}
 
 			*ptr = defaults
@@ -223,7 +228,7 @@ func WithFormats(formats ...string) Option {
 // target format's codec. When recording provenance, strata analyzes the file
 // using the target format's syntax. The alias is read only when aliasExt is
 // listed in [WithFormats].
-func WithFormatAlias(aliasExt, targetFormat string) Option {
+func WithFormatAlias(aliasExt string, targetFormat string) Option {
 	return func(opts *loadOptions) {
 		normAlias := normalizeExt(aliasExt)
 		normTarget := normalizeExt(targetFormat)

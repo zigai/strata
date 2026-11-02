@@ -21,9 +21,17 @@ func TestKeyName(t *testing.T) {
 func TestUnknownKeysAreReportedWithSuggestions(t *testing.T) {
 	t.Parallel()
 
-	path := writeFile(t, "config.yaml", "prot: 9000\ndatabase:\n  max_con: 5\n  port: 5432\nlabels:\n  anything: goes\napi_kye: hunter2\ncompletely_unrelated: 1\n")
+	path := writeFile(
+		t,
+		"config.yaml",
+		"prot: 9000\ndatabase:\n  max_con: 5\n  port: 5432\nlabels:\n  anything: goes\n"+
+			"api_kye: hunter2\ncompletely_unrelated: 1\n",
+	)
 
-	cfg, meta, err := strata.LoadWithMetadata[typoConfig](strata.WithPath(path), strata.WithFormats("yaml"))
+	cfg, meta, err := strata.LoadWithMetadata[typoConfig](
+		strata.WithPath(path),
+		strata.WithFormats("yaml"),
+	)
 	if err != nil {
 		t.Fatalf("Load: %v", err)
 	}
@@ -77,7 +85,11 @@ func TestStrictRejectsUnknownKeys(t *testing.T) {
 
 	path := writeFile(t, "config.toml", "prot = 9000\n")
 
-	_, err := strata.Load[typoConfig](strata.WithPath(path), strata.WithStrict(), strata.WithFormats("toml"))
+	_, err := strata.Load[typoConfig](
+		strata.WithPath(path),
+		strata.WithStrict(),
+		strata.WithFormats("toml"),
+	)
 	if !errors.Is(err, strata.ErrUnknownKey) {
 		t.Fatalf("err = %v, want ErrUnknownKey", err)
 	}
@@ -94,7 +106,11 @@ func TestStrictRejectsUnknownKeys(t *testing.T) {
 		}
 	}
 
-	if _, err := strata.Load[typoConfig](strata.WithPath(writeFile(t, "ok.toml", "port = 1\n")), strata.WithStrict(), strata.WithFormats("toml")); err != nil {
+	if _, err := strata.Load[typoConfig](
+		strata.WithPath(writeFile(t, "ok.toml", "port = 1\n")),
+		strata.WithStrict(),
+		strata.WithFormats("toml"),
+	); err != nil {
 		t.Fatalf("strict load of a valid file: %v", err)
 	}
 }
@@ -133,7 +149,12 @@ func TestStrictRejectsUnknownStructuredKeys(t *testing.T) {
 		t.Run(test.name, func(t *testing.T) {
 			t.Parallel()
 
-			_, err := strata.Load[config](strata.WithPath("-"), strata.WithStdin(strings.NewReader(test.body)), strata.WithFormats(test.format), strata.WithStrict())
+			_, err := strata.Load[config](
+				strata.WithPath("-"),
+				strata.WithStdin(strings.NewReader(test.body)),
+				strata.WithFormats(test.format),
+				strata.WithStrict(),
+			)
 			if !errors.Is(err, strata.ErrUnknownKey) {
 				t.Fatalf("Load error = %v, want ErrUnknownKey", err)
 			}
@@ -162,12 +183,19 @@ func TestStrictAcceptsStructuredCollectionValues(t *testing.T) {
 		t.Run(format, func(t *testing.T) {
 			t.Parallel()
 
-			cfg, err := strata.Load[config](strata.WithPath("-"), strata.WithStdin(strings.NewReader(body)), strata.WithFormats(format), strata.WithStrict())
+			cfg, err := strata.Load[config](
+				strata.WithPath("-"),
+				strata.WithStdin(strings.NewReader(body)),
+				strata.WithFormats(format),
+				strata.WithStrict(),
+			)
 			if err != nil {
 				t.Fatal(err)
 			}
 
-			if len(cfg.Endpoints) != 1 || cfg.Endpoints[0].Port != 9001 || cfg.Services["public"].Port != 9002 || cfg.Labels["a.b"] != "ok" {
+			if len(cfg.Endpoints) != 1 || cfg.Endpoints[0].Port != 9001 ||
+				cfg.Services["public"].Port != 9002 ||
+				cfg.Labels["a.b"] != "ok" {
 				t.Fatalf("config = %+v", cfg)
 			}
 		})
@@ -179,7 +207,11 @@ func TestReusedYAMLAnchorsAreNotUnknownKeys(t *testing.T) {
 
 	path := writeFile(t, "config.yaml", "base: &b\n  port: 5432\ndatabase:\n  <<: *b\n")
 
-	cfg, meta, err := strata.LoadWithMetadata[typoConfig](strata.WithPath(path), strata.WithStrict(), strata.WithFormats("yaml"))
+	cfg, meta, err := strata.LoadWithMetadata[typoConfig](
+		strata.WithPath(path),
+		strata.WithStrict(),
+		strata.WithFormats("yaml"),
+	)
 	if err != nil {
 		t.Fatalf("strict load: %v", err)
 	}
@@ -194,7 +226,11 @@ func TestReusedYAMLAnchorsAreNotUnknownKeys(t *testing.T) {
 
 	unused := writeFile(t, "unused.yaml", "base: &b\n  port: 5432\n")
 
-	_, err = strata.Load[typoConfig](strata.WithPath(unused), strata.WithStrict(), strata.WithFormats("yaml"))
+	_, err = strata.Load[typoConfig](
+		strata.WithPath(unused),
+		strata.WithStrict(),
+		strata.WithFormats("yaml"),
+	)
 	if !errors.Is(err, strata.ErrUnknownKey) {
 		t.Fatalf("err = %v, want ErrUnknownKey for an anchor nothing reuses", err)
 	}
@@ -203,9 +239,16 @@ func TestReusedYAMLAnchorsAreNotUnknownKeys(t *testing.T) {
 func TestUnknownKeysAreListedInReadOrder(t *testing.T) {
 	t.Parallel()
 
-	path := writeFile(t, "config.yaml", "prot: 9000\ndatabase:\n  maxconns: 5\n  port: 5432\nzzz_unrelated: 1\n")
+	path := writeFile(
+		t,
+		"config.yaml",
+		"prot: 9000\ndatabase:\n  maxconns: 5\n  port: 5432\nzzz_unrelated: 1\n",
+	)
 
-	cfg, meta, err := strata.LoadWithMetadata[typoConfig](strata.WithPath(path), strata.WithFormats("yaml"))
+	cfg, meta, err := strata.LoadWithMetadata[typoConfig](
+		strata.WithPath(path),
+		strata.WithFormats("yaml"),
+	)
 	if err != nil {
 		t.Fatalf("Load: %v", err)
 	}

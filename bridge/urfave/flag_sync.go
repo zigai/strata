@@ -11,7 +11,12 @@ import (
 	"github.com/zigai/strata/internal/plan"
 )
 
-func syncTarget(cmd *cli.Command, root reflect.Value, target *plan.Leaf, meta *strata.Metadata) error {
+func syncTarget(
+	cmd *cli.Command,
+	root reflect.Value,
+	target *plan.Leaf,
+	meta *strata.Metadata,
+) error {
 	if !cmd.IsSet(target.FlagName) {
 		return nil
 	}
@@ -44,7 +49,13 @@ func decodeFlag(cmd *cli.Command, target *plan.Leaf, dst reflect.Value) error {
 		return decodeString(cmd, target, dst)
 	case plan.KindBool:
 		return decodeBool(cmd, target, dst)
-	case plan.KindInt, plan.KindInt64, plan.KindUint, plan.KindUint64, plan.KindFloat32, plan.KindFloat64, plan.KindDuration:
+	case plan.KindInt,
+		plan.KindInt64,
+		plan.KindUint,
+		plan.KindUint64,
+		plan.KindFloat32,
+		plan.KindFloat64,
+		plan.KindDuration:
 		return decodeNumeric(cmd, target, dst)
 	case plan.KindStringSlice, plan.KindIntSlice, plan.KindInt64Slice:
 		return decodeSlice(cmd, target, dst)
@@ -81,7 +92,13 @@ func decodeNumeric(cmd *cli.Command, target *plan.Leaf, dst reflect.Value) error
 		return decodeUnsigned(cmd, target, dst)
 	case plan.KindFloat32, plan.KindFloat64:
 		return decodeFloat(cmd, target, dst)
-	case plan.KindUnsupported, plan.KindString, plan.KindBool, plan.KindText, plan.KindStringSlice, plan.KindIntSlice, plan.KindInt64Slice:
+	case plan.KindUnsupported,
+		plan.KindString,
+		plan.KindBool,
+		plan.KindText,
+		plan.KindStringSlice,
+		plan.KindIntSlice,
+		plan.KindInt64Slice:
 		return fmt.Errorf("%w: %s", plan.ErrUnsupportedFieldType, target.FieldName)
 	default:
 		return fmt.Errorf("%w: %s", plan.ErrUnsupportedFieldType, target.FieldName)
@@ -96,7 +113,17 @@ func decodeSigned(cmd *cli.Command, target *plan.Leaf, dst reflect.Value) error 
 		return plan.AssignInt(dst, cmd.Int64(target.FlagName))
 	case plan.KindDuration:
 		return plan.AssignInt(dst, int64(cmd.Duration(target.FlagName)))
-	case plan.KindUnsupported, plan.KindString, plan.KindBool, plan.KindUint, plan.KindUint64, plan.KindFloat32, plan.KindFloat64, plan.KindText, plan.KindStringSlice, plan.KindIntSlice, plan.KindInt64Slice:
+	case plan.KindUnsupported,
+		plan.KindString,
+		plan.KindBool,
+		plan.KindUint,
+		plan.KindUint64,
+		plan.KindFloat32,
+		plan.KindFloat64,
+		plan.KindText,
+		plan.KindStringSlice,
+		plan.KindIntSlice,
+		plan.KindInt64Slice:
 		return fmt.Errorf("%w: %s", plan.ErrUnsupportedFieldType, target.FieldName)
 	default:
 		return fmt.Errorf("%w: %s", plan.ErrUnsupportedFieldType, target.FieldName)
@@ -109,7 +136,18 @@ func decodeUnsigned(cmd *cli.Command, target *plan.Leaf, dst reflect.Value) erro
 		return plan.AssignUint(dst, uint64(cmd.Uint(target.FlagName)))
 	case plan.KindUint64:
 		return plan.AssignUint(dst, cmd.Uint64(target.FlagName))
-	case plan.KindUnsupported, plan.KindString, plan.KindBool, plan.KindInt, plan.KindInt64, plan.KindFloat32, plan.KindFloat64, plan.KindDuration, plan.KindText, plan.KindStringSlice, plan.KindIntSlice, plan.KindInt64Slice:
+	case plan.KindUnsupported,
+		plan.KindString,
+		plan.KindBool,
+		plan.KindInt,
+		plan.KindInt64,
+		plan.KindFloat32,
+		plan.KindFloat64,
+		plan.KindDuration,
+		plan.KindText,
+		plan.KindStringSlice,
+		plan.KindIntSlice,
+		plan.KindInt64Slice:
 		return fmt.Errorf("%w: %s", plan.ErrUnsupportedFieldType, target.FieldName)
 	default:
 		return fmt.Errorf("%w: %s", plan.ErrUnsupportedFieldType, target.FieldName)
@@ -122,7 +160,18 @@ func decodeFloat(cmd *cli.Command, target *plan.Leaf, dst reflect.Value) error {
 		return plan.AssignFloat(dst, float64(cmd.Float32(target.FlagName)))
 	case plan.KindFloat64:
 		return plan.AssignFloat(dst, cmd.Float64(target.FlagName))
-	case plan.KindUnsupported, plan.KindString, plan.KindBool, plan.KindInt, plan.KindInt64, plan.KindUint, plan.KindUint64, plan.KindDuration, plan.KindText, plan.KindStringSlice, plan.KindIntSlice, plan.KindInt64Slice:
+	case plan.KindUnsupported,
+		plan.KindString,
+		plan.KindBool,
+		plan.KindInt,
+		plan.KindInt64,
+		plan.KindUint,
+		plan.KindUint64,
+		plan.KindDuration,
+		plan.KindText,
+		plan.KindStringSlice,
+		plan.KindIntSlice,
+		plan.KindInt64Slice:
 		return fmt.Errorf("%w: %s", plan.ErrUnsupportedFieldType, target.FieldName)
 	default:
 		return fmt.Errorf("%w: %s", plan.ErrUnsupportedFieldType, target.FieldName)
@@ -137,7 +186,17 @@ func decodeSlice(cmd *cli.Command, target *plan.Leaf, dst reflect.Value) error {
 		return plan.AssignSlice(dst, reflect.ValueOf(cmd.IntSlice(target.FlagName)))
 	case plan.KindInt64Slice:
 		return plan.AssignSlice(dst, reflect.ValueOf(cmd.Int64Slice(target.FlagName)))
-	case plan.KindUnsupported, plan.KindString, plan.KindBool, plan.KindInt, plan.KindInt64, plan.KindUint, plan.KindUint64, plan.KindFloat32, plan.KindFloat64, plan.KindDuration, plan.KindText:
+	case plan.KindUnsupported,
+		plan.KindString,
+		plan.KindBool,
+		plan.KindInt,
+		plan.KindInt64,
+		plan.KindUint,
+		plan.KindUint64,
+		plan.KindFloat32,
+		plan.KindFloat64,
+		plan.KindDuration,
+		plan.KindText:
 		return fmt.Errorf("%w: %s", plan.ErrUnsupportedFieldType, target.FieldName)
 	default:
 		return fmt.Errorf("%w: %s", plan.ErrUnsupportedFieldType, target.FieldName)

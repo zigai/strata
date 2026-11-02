@@ -75,7 +75,10 @@ func TestWithContributionCanSatisfyValidation(t *testing.T) {
 
 	filePath := writeFile(t, "invalid.yaml", "port: 80\n")
 
-	_, err := strata.Load[contributionValidatedConfig](strata.WithPath(filePath), strata.WithFormats("yaml"))
+	_, err := strata.Load[contributionValidatedConfig](
+		strata.WithPath(filePath),
+		strata.WithFormats("yaml"),
+	)
 	if err == nil {
 		t.Fatal("expected validation failure without contribution")
 	}
@@ -216,7 +219,15 @@ func TestWithContributionSeesEnvironmentValues(t *testing.T) {
 			seen = cfg.Port
 			cfg.Port++
 
-			meta.Record(strata.Origin{Key: portKey, Source: strata.SourceFlag, Path: "--port", Line: 0, RawValue: "7001"})
+			meta.Record(
+				strata.Origin{
+					Key:      portKey,
+					Source:   strata.SourceFlag,
+					Path:     "--port",
+					Line:     0,
+					RawValue: "7001",
+				},
+			)
 
 			return nil
 		}),

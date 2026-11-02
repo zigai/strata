@@ -6,7 +6,14 @@ formatters:
   enable:
     - goimports
     - gofumpt
+    - golines
   settings:
+    gofumpt:
+      extra:
+        balance-calls: true
+    golines:
+      max-len: 100
+      reformat-tags: false
     goimports:
       local-prefixes:
         - github.com/zigai/strata

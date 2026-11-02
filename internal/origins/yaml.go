@@ -111,7 +111,8 @@ func (w *yamlWalker) value(node *yaml.Node, key jsontext.Pointer, line int, temp
 	defer delete(w.active, node)
 
 	for index, item := range node.Content {
-		if item.Kind == yaml.MappingNode || item.Kind == yaml.SequenceNode || item.Kind == yaml.AliasNode {
+		if item.Kind == yaml.MappingNode || item.Kind == yaml.SequenceNode ||
+			item.Kind == yaml.AliasNode {
 			w.value(item, key.AppendToken(strconv.Itoa(index)), item.Line, template)
 		}
 	}

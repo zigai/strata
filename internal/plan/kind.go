@@ -38,7 +38,6 @@ const (
 )
 
 var (
-	//nolint:exhaustive // reflect.Kind has many values with no flag representation; the lookup reports them
 	primitiveKinds = map[reflect.Kind]Kind{
 		reflect.String:  KindString,
 		reflect.Bool:    KindBool,
@@ -56,14 +55,12 @@ var (
 		reflect.Float64: KindFloat64,
 	}
 
-	//nolint:exhaustive // most slice element kinds have no flag representation; the lookup reports them
 	sliceElementKinds = map[reflect.Kind]Kind{
 		reflect.String: KindStringSlice,
 		reflect.Int:    KindIntSlice,
 		reflect.Int64:  KindInt64Slice,
 	}
 
-	//nolint:exhaustive // KindUnsupported never reaches storage; StorageTypeFor falls back to the leaf type
 	storageTypes = map[Kind]reflect.Type{
 		KindText:        reflect.TypeFor[string](),
 		KindString:      reflect.TypeFor[string](),
@@ -90,7 +87,11 @@ func Classify(typ reflect.Type) (Kind, reflect.Type, error) {
 	}
 
 	if leaf.Kind() == reflect.Pointer {
-		return KindUnsupported, nil, fmt.Errorf("%w: %s is a pointer to a pointer", ErrUnsupportedFieldType, typ)
+		return KindUnsupported, nil, fmt.Errorf(
+			"%w: %s is a pointer to a pointer",
+			ErrUnsupportedFieldType,
+			typ,
+		)
 	}
 
 	if implementsTextCodec(typ) {
@@ -113,7 +114,11 @@ func Classify(typ reflect.Type) (Kind, reflect.Type, error) {
 		return kind, leaf, nil
 	}
 
-	return KindUnsupported, nil, fmt.Errorf("%w: type %s has no flag mapping", ErrUnsupportedFieldType, typ)
+	return KindUnsupported, nil, fmt.Errorf(
+		"%w: type %s has no flag mapping",
+		ErrUnsupportedFieldType,
+		typ,
+	)
 }
 
 func StorageTypeFor(kind Kind, leaf reflect.Type) reflect.Type {
@@ -129,7 +134,11 @@ func classifySlice(leaf reflect.Type) (Kind, reflect.Type, error) {
 		return kind, leaf, nil
 	}
 
-	return KindUnsupported, nil, fmt.Errorf("%w: slice element type %s has no flag mapping", ErrUnsupportedFieldType, leaf.Elem())
+	return KindUnsupported, nil, fmt.Errorf(
+		"%w: slice element type %s has no flag mapping",
+		ErrUnsupportedFieldType,
+		leaf.Elem(),
+	)
 }
 
 // The marshaler lets a flag carry a default; the unmarshaler decodes parsed

@@ -223,7 +223,12 @@ func updateMappingNode(mapping *yaml.Node, parts []string, newVal *yaml.Node) er
 	return updateMappingNode(subMap, parts[1:], newVal)
 }
 
-func updateExistingEntry(mapping *yaml.Node, matchIdx int, parts []string, newVal *yaml.Node) error {
+func updateExistingEntry(
+	mapping *yaml.Node,
+	matchIdx int,
+	parts []string,
+	newVal *yaml.Node,
+) error {
 	currentKey := parts[0]
 	isLeaf := len(parts) == 1
 
@@ -403,7 +408,11 @@ func yamlValueNode(value any) (*yaml.Node, error) {
 	}
 
 	if len(newValDoc.Content) == 0 {
-		return nil, fmt.Errorf("%w: encoding %T produced an empty document", ErrEmptyEncodedValue, value)
+		return nil, fmt.Errorf(
+			"%w: encoding %T produced an empty document",
+			ErrEmptyEncodedValue,
+			value,
+		)
 	}
 
 	return newValDoc.Content[0], nil
@@ -446,12 +455,20 @@ func collectBlockScalars(node *yaml.Node, position scalarPosition, blocks *[]*ya
 	case yaml.MappingNode:
 		position.InFlow = position.InFlow || node.Style&yaml.FlowStyle != 0
 		for i, child := range node.Content {
-			collectBlockScalars(child, scalarPosition{InFlow: position.InFlow, IsKey: i%2 == 0}, blocks)
+			collectBlockScalars(
+				child,
+				scalarPosition{InFlow: position.InFlow, IsKey: i%2 == 0},
+				blocks,
+			)
 		}
 	case yaml.DocumentNode, yaml.SequenceNode:
 		position.InFlow = position.InFlow || node.Style&yaml.FlowStyle != 0
 		for _, child := range node.Content {
-			collectBlockScalars(child, scalarPosition{InFlow: position.InFlow, IsKey: false}, blocks)
+			collectBlockScalars(
+				child,
+				scalarPosition{InFlow: position.InFlow, IsKey: false},
+				blocks,
+			)
 		}
 	case yaml.AliasNode:
 	}
@@ -467,7 +484,8 @@ func collectBlockScalar(node *yaml.Node, position scalarPosition) bool {
 	}
 
 	// The encoder writes a multi-line scalar with no style as a literal block.
-	block := node.Style&blockStyles != 0 || node.Style&quotedStyles == 0 && strings.Contains(node.Value, "\n")
+	block := node.Style&blockStyles != 0 ||
+		node.Style&quotedStyles == 0 && strings.Contains(node.Value, "\n")
 
 	return !position.InFlow && block
 }
@@ -527,7 +545,8 @@ func roundTripYAML(mapping *yaml.Node, indent int) (*yaml.Node, bool) {
 	}
 
 	var back yaml.Node
-	if yaml.Unmarshal(buf.Bytes(), &back) != nil || len(back.Content) != 1 || back.Content[0].Kind != yaml.MappingNode {
+	if yaml.Unmarshal(buf.Bytes(), &back) != nil || len(back.Content) != 1 ||
+		back.Content[0].Kind != yaml.MappingNode {
 		return nil, false
 	}
 

@@ -39,7 +39,11 @@ func (c *JSON) Decode(data []byte, target any) error {
 
 	start := len(data) - len(bytes.TrimLeft(data, " \t\r\n"))
 
-	return decodeOverlay("json", jsonNode{document: data, offset: int64(start), value: document}, target)
+	return decodeOverlay(
+		"json",
+		jsonNode{document: data, offset: int64(start), value: document},
+		target,
+	)
 }
 
 // Encode writes value as indented JSON without a trailing newline. Map keys are
@@ -50,9 +54,14 @@ func (c *JSON) Encode(value any) ([]byte, error) {
 		return nil, fmt.Errorf("json marshal: %w", err)
 	}
 
-	data, err := json.Marshal(keyed, jsontext.WithIndent("  "), json.Deterministic(true), json.WithMarshalers(json.MarshalFunc(func(value time.Duration) ([]byte, error) {
-		return json.Marshal(value.String())
-	})))
+	data, err := json.Marshal(
+		keyed,
+		jsontext.WithIndent("  "),
+		json.Deterministic(true),
+		json.WithMarshalers(json.MarshalFunc(func(value time.Duration) ([]byte, error) {
+			return json.Marshal(value.String())
+		})),
+	)
 	if err != nil {
 		return nil, fmt.Errorf("json marshal: %w", err)
 	}

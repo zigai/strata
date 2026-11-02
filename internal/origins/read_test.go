@@ -9,7 +9,7 @@ import (
 	"github.com/zigai/strata/internal/origins"
 )
 
-func collect(t *testing.T, data, format string) map[jsontext.Pointer]origins.Record {
+func collect(t *testing.T, data string, format string) map[jsontext.Pointer]origins.Record {
 	t.Helper()
 
 	records := make(map[jsontext.Pointer]origins.Record)
@@ -122,7 +122,8 @@ func TestReadIdentifiesAnUnknownFormat(t *testing.T) {
 func TestReadAutodetectedJSONHasNoLine(t *testing.T) {
 	t.Parallel()
 
-	if record := collect(t, nested, ".custom")["/server/port"]; record.Line != 0 || record.RawValue != "8080" {
+	if record := collect(t, nested, ".custom")["/server/port"]; record.Line != 0 ||
+		record.RawValue != "8080" {
 		t.Fatalf("JSON origin = %+v, want value 8080 without a line", record)
 	}
 }
@@ -145,7 +146,11 @@ func TestReadReportsNothingForUnreadableInput(t *testing.T) {
 func TestReadMarksReusedYAMLAnchorsAsTemplates(t *testing.T) {
 	t.Parallel()
 
-	records := collect(t, "base: &b\n  host: h\nunused: &u\n  host: x\ndatabase:\n  <<: *b\n  port: 1\n", ".yaml")
+	records := collect(
+		t,
+		"base: &b\n  host: h\nunused: &u\n  host: x\ndatabase:\n  <<: *b\n  port: 1\n",
+		".yaml",
+	)
 
 	for key, want := range map[jsontext.Pointer]bool{
 		"/base/host":     true,
@@ -178,13 +183,33 @@ func TestReadKeepsEveryKeyAsOneToken(t *testing.T) {
 	t.Parallel()
 
 	for _, test := range []struct{ format, body string }{
-		{".json", `{"labels": {"a.b": "literal", "a": {"b": "nested"}, "c/d": "slash", "e~f": "tilde", "": "empty", " g ": "space", "0": "zero"}}`},
-		{".yaml", "labels:\n  a.b: literal\n  a:\n    b: nested\n  c/d: slash\n  e~f: tilde\n  \"\": empty\n  \" g \": space\n  \"0\": zero\n"},
-		{".toml", "[labels]\n\"a.b\" = \"literal\"\n\"c/d\" = \"slash\"\n\"e~f\" = \"tilde\"\n\"\" = \"empty\"\n\" g \" = \"space\"\n\"0\" = \"zero\"\n[labels.a]\nb = \"nested\"\n"},
+		{
+			".json",
+			`{"labels": {"a.b": "literal", "a": {"b": "nested"}, "c/d": "slash", ` +
+				`"e~f": "tilde", "": "empty", " g ": "space", "0": "zero"}}`,
+		},
+		{
+			".yaml",
+			"labels:\n  a.b: literal\n  a:\n    b: nested\n  c/d: slash\n  e~f: tilde\n" +
+				"  \"\": empty\n  \" g \": space\n  \"0\": zero\n",
+		},
+		{
+			".toml",
+			"[labels]\n\"a.b\" = \"literal\"\n\"c/d\" = \"slash\"\n\"e~f\" = \"tilde\"\n" +
+				"\"\" = \"empty\"\n\" g \" = \"space\"\n\"0\" = \"zero\"\n[labels.a]\nb = \"nested\"\n",
+		},
 	} {
 		records := collect(t, test.body, test.format)
 
-		want := []jsontext.Pointer{"/labels/", "/labels/ g ", "/labels/0", "/labels/a.b", "/labels/a/b", "/labels/c~1d", "/labels/e~0f"}
+		want := []jsontext.Pointer{
+			"/labels/",
+			"/labels/ g ",
+			"/labels/0",
+			"/labels/a.b",
+			"/labels/a/b",
+			"/labels/c~1d",
+			"/labels/e~0f",
+		}
 		if got := slices.Sorted(maps.Keys(records)); !slices.Equal(got, want) {
 			t.Errorf("%s keys = %q, want %q", test.format, got, want)
 		}

@@ -10,7 +10,7 @@ import (
 	"golang.org/x/sys/windows"
 )
 
-func replaceFile(from, to string) error {
+func replaceFile(from string, to string) error {
 	from16, err := windows.UTF16PtrFromString(from)
 	if err != nil {
 		return fmt.Errorf("convert from path %s to utf16: %w", from, err)
@@ -29,7 +29,7 @@ func replaceFile(from, to string) error {
 	return nil
 }
 
-func createFileNoOverwrite(from, to string) error {
+func createFileNoOverwrite(from string, to string) error {
 	from16, err := windows.UTF16PtrFromString(from)
 	if err != nil {
 		return fmt.Errorf("convert from path %s to utf16: %w", from, err)
@@ -42,7 +42,8 @@ func createFileNoOverwrite(from, to string) error {
 
 	flags := uint32(windows.MOVEFILE_WRITE_THROUGH)
 	if err := windows.MoveFileEx(from16, to16, flags); err != nil {
-		if errors.Is(err, windows.ERROR_ALREADY_EXISTS) || errors.Is(err, windows.ERROR_FILE_EXISTS) {
+		if errors.Is(err, windows.ERROR_ALREADY_EXISTS) ||
+			errors.Is(err, windows.ERROR_FILE_EXISTS) {
 			return fmt.Errorf("%w: %s", os.ErrExist, to)
 		}
 		return fmt.Errorf("MoveFileEx %s to %s: %w", from, to, err)
