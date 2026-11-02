@@ -82,7 +82,7 @@ func (b *Binding[T]) Flag(key string, usage string, aliases ...string) cli.Flag 
 	}
 
 	if target.IsSecret {
-		panic(fmt.Sprintf(`secret key "%s" cannot be a flag`, key))
+		panic(fmt.Sprintf(`secret key %q cannot be a flag`, key))
 	}
 
 	if len(aliases) > 0 {

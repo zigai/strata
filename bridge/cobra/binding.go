@@ -156,7 +156,7 @@ func (b *Binding[T]) FlagP(flagSet *pflag.FlagSet, key string, shorthand, usage 
 	}
 
 	if target.IsSecret {
-		panic(fmt.Sprintf(`secret key "%s" cannot be a flag`, key))
+		panic(fmt.Sprintf(`secret key %q cannot be a flag`, key))
 	}
 
 	target.Usage = usage

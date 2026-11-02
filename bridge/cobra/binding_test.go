@@ -349,3 +349,23 @@ func TestCobraDuplicateFlagNamePanics(t *testing.T) {
 
 	b.Flag(root.Flags(), "port", "port again")
 }
+
+func TestSecretFlagPanicQuotesKey(t *testing.T) {
+	t.Parallel()
+
+	type config struct {
+		Token string `strata:"api\"key,secret"`
+	}
+
+	defer func() {
+		if got, want := recover(), `secret key "api\"key" cannot be a flag`; got != want {
+			t.Errorf("panic = %v, want %s", got, want)
+		}
+	}()
+
+	var cfg config
+
+	root := &cobra.Command{Use: "test"}
+	binding := stratacobra.Bind(root, &cfg)
+	binding.Flag(root.Flags(), `api"key`, "secret")
+}

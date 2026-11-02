@@ -45,10 +45,10 @@ type keyTree struct {
 // String formats the unknown key and its did-you-mean suggestion, when present.
 func (k UnknownKey) String() string {
 	if k.Suggestion != "" {
-		return fmt.Sprintf(`unknown key "%s" (did you mean "%s"?)`, k.Key, k.Suggestion)
+		return fmt.Sprintf(`unknown key %q (did you mean %q?)`, k.Key, k.Suggestion)
 	}
 
-	return fmt.Sprintf(`unknown key "%s"`, k.Key)
+	return fmt.Sprintf(`unknown key %q`, k.Key)
 }
 
 // KeyName returns a field's strata key token for validator tag-name hooks.

@@ -264,3 +264,22 @@ func TestUrfaveShellCompletionSkipsLoad(t *testing.T) {
 		t.Fatal(err)
 	}
 }
+
+func TestSecretFlagPanicQuotesKey(t *testing.T) {
+	t.Parallel()
+
+	type config struct {
+		Token string `strata:"api\"key,secret"`
+	}
+
+	defer func() {
+		if got, want := recover(), `secret key "api\"key" cannot be a flag`; got != want {
+			t.Errorf("panic = %v, want %s", got, want)
+		}
+	}()
+
+	var cfg config
+
+	binding := strataurfave.Bind(&cfg)
+	binding.Flag(`api"key`, "secret")
+}

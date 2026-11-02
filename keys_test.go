@@ -227,3 +227,27 @@ func TestUnknownKeysAreListedInReadOrder(t *testing.T) {
 		t.Fatalf("UnknownKeys =\n%+v\nwant\n%+v", got, want)
 	}
 }
+
+func TestUnknownKeyStringQuotesValues(t *testing.T) {
+	t.Parallel()
+
+	for _, tc := range []struct {
+		key        string
+		suggestion string
+		want       string
+	}{
+		{key: "prot", want: `unknown key "prot"`},
+		{key: "prot", suggestion: "port", want: `unknown key "prot" (did you mean "port"?)`},
+		{key: "a\"b\\c\nd", want: `unknown key "a\"b\\c\nd"`},
+		{
+			key:        "a\"b",
+			suggestion: "a\\b\nc",
+			want:       `unknown key "a\"b" (did you mean "a\\b\nc"?)`,
+		},
+	} {
+		unknown := strata.UnknownKey{Origin: strata.Origin{Key: tc.key}, Suggestion: tc.suggestion}
+		if got := unknown.String(); got != tc.want {
+			t.Errorf("String() = %q, want %q", got, tc.want)
+		}
+	}
+}
