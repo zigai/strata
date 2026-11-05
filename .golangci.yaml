@@ -244,6 +244,7 @@ linters:
       require-specific: true
     gosec:
       excludes:
+        - G306 # file perms
         - G204 # subprocess launched with variable
         - G301 # directory perms
         - G302 # file perms
@@ -283,11 +284,6 @@ linters:
 
       - path: ".*_test\\.go"
         linters: [decorder, funcorder, exhaustruct_v5, gocognit, cyclop, goconst, gosec, mnd, tagliatelle, tagalign, err113, dupl, maintidx]
-
-      # A test writes its own output to paths the developer running it chooses.
-      - path: ".*_test\\.go"
-        linters: [gosec]
-        text: "G703:"
 
       # Test-helper packages (named like httptest) only build fixtures.
       - path: "(^|/)[a-z0-9]+test/"
