@@ -29,12 +29,6 @@ type Config struct {
 	Token   strata.Secret
 }
 
-func (c *Config) SetDefaults() {
-	c.Port = 8080
-	c.Timeout = strata.Duration(30 * time.Second)
-	c.DB.Port = 5432
-}
-
 type Flag struct {
 	Key   string
 	Short string
@@ -57,6 +51,12 @@ type Instance interface {
 }
 
 type Bridge func(t *testing.T, cfg *Config, app App) Instance
+
+func (c *Config) SetDefaults() {
+	c.Port = 8080
+	c.Timeout = strata.Duration(30 * time.Second)
+	c.DB.Port = 5432
+}
 
 func Run(t *testing.T, bridge Bridge) {
 	t.Helper()

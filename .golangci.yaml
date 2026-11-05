@@ -249,7 +249,6 @@ linters:
         - G301 # directory perms
         - G302 # file perms
         - G304 # file path from variable
-        - G703 # path traversal taint on paths from variables, same as G304
     exhaustruct_v5:
       allow-empty-returns: true
       # Types whose zero fields mean "use the default". Mark such types in
@@ -279,6 +278,12 @@ linters:
     warn-unused: false
     presets: []
     rules:
+      # Config discovery follows user-selected XDG directories and symlinks, not a confined root.
+      - path: '^internal/cascade/cascade\.go$'
+        linters: [gosec]
+        text: '^G703: Path traversal via taint analysis$'
+        source: '^\s*info, err := os\.Stat\(filepath\.Clean\(path\)\)$'
+
       - path: "main\\.go"
         linters: [mnd]
 
@@ -292,7 +297,7 @@ linters:
       # tests. Its scenarios are test bodies, not helpers, so a failure must point
       # at the scenario's own line rather than at the caller (thelper).
       - path: "internal/bridgetest/"
-        linters: [decorder, funcorder, gocognit, cyclop, gosec, mnd, tagliatelle, tagalign, err113, thelper]
+        linters: [gocognit, cyclop, gosec, mnd, tagliatelle, tagalign, err113, thelper]
 
 issues:
   max-issues-per-linter: 0
