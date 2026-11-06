@@ -1,6 +1,4 @@
-<a href="https://github.com/zigai/strata"><img src="assets/logo.svg" align="right" width="130" alt="Strata gopher holding a layered rock column"></a>
-
-# strata
+# <a href="https://github.com/zigai/strata"><img src="assets/logo.svg" align="right" width="130" alt="Strata gopher holding a layered rock column"></a> strata
 
 **Configuration for Go that remembers where every value came from.**
 
