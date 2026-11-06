@@ -45,14 +45,15 @@ coverage:
 
 # Format every supported first-party file type
 format:
-    @golangci-lint run --fix --enable-only whitespace --issues-exit-code=0
-    @cd bridge/cobra && golangci-lint run --fix --enable-only whitespace --issues-exit-code=0
-    @cd bridge/urfave && golangci-lint run --fix --enable-only whitespace --issues-exit-code=0
-    @cd examples/cli && golangci-lint run --fix --enable-only whitespace --issues-exit-code=0
+    @golangci-lint run --allow-parallel-runners --fix --enable-only whitespace --issues-exit-code=0
+    @cd bridge/cobra && golangci-lint run --allow-parallel-runners --fix --enable-only whitespace --issues-exit-code=0
+    @cd bridge/urfave && golangci-lint run --allow-parallel-runners --fix --enable-only whitespace --issues-exit-code=0
+    @cd examples/cli && golangci-lint run --allow-parallel-runners --fix --enable-only whitespace --issues-exit-code=0
     @golangci-lint fmt
     @cd bridge/cobra && golangci-lint fmt
     @cd bridge/urfave && golangci-lint fmt
     @cd examples/cli && golangci-lint fmt
+    @git ls-files -co --exclude-standard -z | while IFS= read -r -d '' file; do if [[ -f $file ]]; then printf '%s\0' "$file"; fi; done | xargs -0 -r oxfmt --no-error-on-unmatched-pattern '!**/*.md'
     @git ls-files -co --exclude-standard -z | while IFS= read -r -d '' file; do if [[ -f $file ]]; then printf '%s\0' "$file"; fi; done | xargs -0 -r shfmt -f | xargs -r -d '\n' shfmt -w
     @git ls-files -co --exclude-standard -- Justfile justfile "*.just" | while IFS= read -r file; do [[ ! -f "$file" ]] || just --justfile "$file" --fmt || exit $?; done
     @just markdown fmt
@@ -73,17 +74,19 @@ lint:
 
 # Check the same files and tools without writing
 formatcheck:
-    @golangci-lint run --enable-only whitespace
-    @cd bridge/cobra && golangci-lint run --enable-only whitespace
-    @cd bridge/urfave && golangci-lint run --enable-only whitespace
-    @cd examples/cli && golangci-lint run --enable-only whitespace
+    @golangci-lint run --allow-parallel-runners --enable-only whitespace
+    @cd bridge/cobra && golangci-lint run --allow-parallel-runners --enable-only whitespace
+    @cd bridge/urfave && golangci-lint run --allow-parallel-runners --enable-only whitespace
+    @cd examples/cli && golangci-lint run --allow-parallel-runners --enable-only whitespace
     @golangci-lint fmt --diff
     @cd bridge/cobra && golangci-lint fmt --diff
     @cd bridge/urfave && golangci-lint fmt --diff
     @cd examples/cli && golangci-lint fmt --diff
+    @git ls-files -co --exclude-standard -z | while IFS= read -r -d '' file; do if [[ -f $file ]]; then printf '%s\0' "$file"; fi; done | xargs -0 -r oxfmt --check --no-error-on-unmatched-pattern '!**/*.md'
     @git ls-files -co --exclude-standard -z | while IFS= read -r -d '' file; do if [[ -f $file ]]; then printf '%s\0' "$file"; fi; done | xargs -0 -r shfmt -f | xargs -r -d '\n' shfmt -d
     @git ls-files -co --exclude-standard -- Justfile justfile "*.just" | while IFS= read -r file; do [[ ! -f "$file" ]] || just --justfile "$file" --fmt --check || exit $?; done
     @just markdown check
+    @git ls-files -co --exclude-standard -z | while IFS= read -r -d '' file; do if [[ -f $file ]]; then printf '%s\0' "$file"; fi; done | xargs -0 -r editorconfig-checker -disable-indent-size -disable-indentation -disable-max-line-length -disable-charset
 
 # Verify all packages, bridges, and the example compile
 build:
