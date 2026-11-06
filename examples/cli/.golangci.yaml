@@ -17,6 +17,8 @@ formatters:
     goimports:
       local-prefixes:
         - github.com/zigai/strata
+  exclusions:
+    paths:
 
 linters:
   default: standard
@@ -32,6 +34,10 @@ linters:
       exclude-functions:
         - fmt.Fprintf
         - fmt.Fprintln
+  exclusions:
+    rules:
+      - path: "(?:(^|/)(node_modules|third_party|forks|vendor|testdata|fixtures|__fixtures__|snapshots|__snapshots__|__image_snapshots__|golden|corpus|fuzz_corpus|baselines|generated|\\.tmp|\\.gameops|\\.stryker-tmp|\\.cache)(/|$))"
+        linters: [whitespace]
 
 issues:
   max-issues-per-linter: 0
