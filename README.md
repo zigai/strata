@@ -292,17 +292,17 @@ type Config struct {
 
 ## All loading options
 
-| Option | What it does |
-| --- | --- |
-| `WithPath(path)` | Load this file on top of the system and user files. Use `-` for standard input. |
-| `WithOptionalPath(path)` | Same as `WithPath`, but a missing file is skipped. |
-| `WithAppName(name)` | Look for system and user config files under this name. |
+| Option                        | What it does                                                                                                   |
+| ----------------------------- | -------------------------------------------------------------------------------------------------------------- |
+| `WithPath(path)`              | Load this file on top of the system and user files. Use `-` for standard input.                                |
+| `WithOptionalPath(path)`      | Same as `WithPath`, but a missing file is skipped.                                                             |
+| `WithAppName(name)`           | Look for system and user config files under this name.                                                         |
 | `WithFormats("toml", "yaml")` | Read these formats, trying them in this order. Required to read any file. The first one parses standard input. |
-| `WithEnvPrefix(prefix)` | Read environment variables that start with this prefix. |
-| `WithStrict()` | Fail when a config file sets a key your struct doesn't have. |
-| `WithDefaults(value)` | Use this value as the defaults, in place of what `SetDefaults` set. |
-| `WithoutFileDiscovery()` | Skip system and user files. A `WithPath` file still loads. |
-| `WithMaxFileSize(bytes)` | Reject bigger files with `ErrFileTooLarge`. The default is 1 MiB. |
+| `WithEnvPrefix(prefix)`       | Read environment variables that start with this prefix.                                                        |
+| `WithStrict()`                | Fail when a config file sets a key your struct doesn't have.                                                   |
+| `WithDefaults(value)`         | Use this value as the defaults, in place of what `SetDefaults` set.                                            |
+| `WithoutFileDiscovery()`      | Skip system and user files. A `WithPath` file still loads.                                                     |
+| `WithMaxFileSize(bytes)`      | Reject bigger files with `ErrFileTooLarge`. The default is 1 MiB.                                              |
 
 ## Key names and secrets
 
@@ -337,13 +337,13 @@ For a format strata doesn't ship, pass a decoder such as `json5.Unmarshal` to `W
 
 A missing system or user file is skipped, and so is a missing `WithOptionalPath` file. Anything else that goes wrong is an error, and `Load` returns the zero value with it. Check for a specific failure with `errors.Is`:
 
-| Failure | Error |
-| --- | --- |
-| A `WithPath` file doesn't exist | `fs.ErrNotExist` |
-| A file can't be parsed | `strata.ErrMalformed` |
-| A file is bigger than `WithMaxFileSize` | `strata.ErrFileTooLarge` |
-| A file's format isn't in `WithFormats` | `strata.ErrUnsupportedFormat` |
-| Files are read without `WithFormats` | `strata.ErrNoFormats` |
+| Failure                                 | Error                         |
+| --------------------------------------- | ----------------------------- |
+| A `WithPath` file doesn't exist         | `fs.ErrNotExist`              |
+| A file can't be parsed                  | `strata.ErrMalformed`         |
+| A file is bigger than `WithMaxFileSize` | `strata.ErrFileTooLarge`      |
+| A file's format isn't in `WithFormats`  | `strata.ErrUnsupportedFormat` |
+| Files are read without `WithFormats`    | `strata.ErrNoFormats`         |
 
 Validation failures and unknown keys under `WithStrict` are a `*strata.ConfigError`. Use `errors.As` to get its key and origin.
 

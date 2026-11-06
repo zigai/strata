@@ -21,3 +21,4 @@ go.work.sum
 # Test binaries produced by `go test -c` or debugging
 *.test
 *.test.exe
+coverage/
