@@ -275,6 +275,8 @@ linters:
       # the bridge's public boundary instead of again at every call site.
       ignore-package-globs:
         - "github.com/zigai/strata/internal/*"
+      ignore-sig-regexps:
+        - '\.NewConfigError\('
 
   exclusions:
     warn-unused: false
