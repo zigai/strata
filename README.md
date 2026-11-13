@@ -4,11 +4,11 @@
 
 Put your settings in a struct with some defaults. strata fills it in from config files, environment variables, and CLI flags. If a value looks wrong, you can ask where it came from.
 
-[![tests](https://img.shields.io/github/actions/workflow/status/zigai/strata/test.yml?branch=master&label=tests&logo=githubactions&logoColor=white)](https://github.com/zigai/strata/actions/workflows/test.yml)
-[![release](https://img.shields.io/github/v/release/zigai/strata?label=release&color=blue&logo=github)](https://github.com/zigai/strata/releases/latest)
-[![reference](https://img.shields.io/badge/reference-pkg.go.dev-007d9c?logo=go&logoColor=white)](https://pkg.go.dev/github.com/zigai/strata)
-[![go](https://img.shields.io/github/go-mod/go-version/zigai/strata?label=go&logo=go&logoColor=white)](go.mod)
-[![license](https://img.shields.io/github/license/zigai/strata?label=license&logo=opensourceinitiative&logoColor=white)](LICENSE)
+[![tests](https://img.shields.io/github/actions/workflow/status/zigai/strata/test.yml?branch=master&label=tests&labelColor=30363d)](https://github.com/zigai/strata/actions/workflows/test.yml)
+[![release](https://img.shields.io/github/v/release/zigai/strata?label=release&color=blue&logo=github&labelColor=30363d)](https://github.com/zigai/strata/releases/latest)
+[![go](https://img.shields.io/github/go-mod/go-version/zigai/strata?label=&logo=go&logoColor=white&labelColor=30363d)](go.mod)
+[![reference](https://img.shields.io/badge/reference-007d9c?logo=go&logoColor=white&labelColor=30363d)](https://pkg.go.dev/github.com/zigai/strata)
+[![license](https://img.shields.io/github/license/zigai/strata?label=license&labelColor=30363d)](LICENSE)
 
 <br clear="right">
 
