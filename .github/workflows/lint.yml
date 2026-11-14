@@ -24,10 +24,11 @@ jobs:
 
       - uses: taiki-e/install-action@v2
         with:
-          tool: just,oxfmt@0.78.0,shfmt@3.14.1,editorconfig-checker@3.11.3,rumdl@0.3.0
+          tool: just,shfmt@3.14.1,editorconfig-checker@3.11.3,rumdl@0.3.0
 
-      - name: Install golangci-lint
+      - name: Install lint tools
         run: |
+          npm install --global oxfmt@0.78.0
           curl -sSfL https://raw.githubusercontent.com/golangci/golangci-lint/HEAD/install.sh \
             | sh -s -- -b "$(go env GOPATH)/bin" "$GOLANGCI_LINT_VERSION"
 
