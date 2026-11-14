@@ -1,3 +1,5 @@
+set shell := ["bash", "-euo", "pipefail", "-c"]
+
 # Run unit tests in every Go module
 [positional-arguments]
 test *args:

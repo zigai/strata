@@ -24,7 +24,7 @@ jobs:
 
       - uses: taiki-e/install-action@v2
         with:
-          tool: just
+          tool: just,oxfmt@0.78.0,shfmt@3.14.1,editorconfig-checker@3.11.3,rumdl@0.3.0
 
       - name: Install golangci-lint
         run: |
