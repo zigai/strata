@@ -14,8 +14,10 @@ Put your settings in a struct with some defaults. strata fills it in from config
 
 - **One struct is the whole config.** No string keys, no separate schema.
 - **Layers stack up.** Files, environment variables, and flags each override the one below.
-- **Every value has a source.** Ask strata which file set it.
+- **Every value has a source.** Ask strata which file, variable, or flag set it.
 - **Edits keep the user's formatting.** Change a key without losing their comments.
+
+Works with: TOML, YAML, and JSON files, and Cobra or `urfave/cli` flags.
 
 ## Installation
 
@@ -132,7 +134,7 @@ func (c *Config) Validate() error {
 `Set` changes one key and keeps the file's comments:
 
 ```go
-err := strata.Set[Config]("config.toml", "database.port", "5433")
+err := strata.Set[Config]("config.toml", "port", 8081)
 ```
 
 ### Keep secrets out of logs
@@ -144,6 +146,10 @@ type Config struct {
 	APIKey strata.Secret
 }
 ```
+
+## Documentation
+
+- [API reference](https://pkg.go.dev/github.com/zigai/strata)
 
 ## License
 
