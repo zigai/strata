@@ -178,7 +178,8 @@ var (
 
 func FuzzUpdateTOML(f *testing.F) {
 	for _, seed := range []struct {
-		doc, key string
+		doc string
+		key string
 	}{
 		{
 			"# top\n[server]\nhost = \"127.0.0.1\" # local\nport = 8080\n\n[database]\nport = 5432 # pg\n",

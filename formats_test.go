@@ -1068,7 +1068,8 @@ func TestWithCodecAppliesToOneLoadOnly(t *testing.T) {
 }
 
 type overlayEntry struct {
-	A, B int
+	A int
+	B int
 }
 
 type overlayConfig struct {
@@ -1173,8 +1174,9 @@ func TestFormatsRejectTheSameInvalidValues(t *testing.T) {
 	t.Parallel()
 
 	for _, test := range []struct {
-		name, document string
-		key            string
+		name     string
+		document string
+		key      string
 	}{
 		{name: "config.json", document: `{"pair": [1]}`, key: "pair"},
 		{name: "config.toml", document: "pair = [1]\n", key: "pair"},

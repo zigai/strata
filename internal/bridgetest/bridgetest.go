@@ -160,8 +160,9 @@ func unrelatedFlagWithTheSameName(t *testing.T, bridge Bridge) {
 	expectSource(t, app, "port", strata.SourceDefault)
 
 	for _, test := range []struct {
-		command, value string
-		want           int
+		command string
+		value   string
+		want    int
 	}{
 		{"check", "9000", 9000},
 		{"serve", "9100", 9100},

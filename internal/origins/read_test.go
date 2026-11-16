@@ -87,7 +87,10 @@ func TestReadKeepsExactNumberLiterals(t *testing.T) {
 func TestReadUnquotesStrings(t *testing.T) {
 	t.Parallel()
 
-	for _, tc := range []struct{ format, body string }{
+	for _, tc := range []struct {
+		format string
+		body   string
+	}{
 		{".json", `{"name": "app"}`},
 		{".yaml", "name: app\n"},
 		{".toml", "name = \"app\"\n"},
@@ -131,7 +134,10 @@ func TestReadAutodetectedJSONHasNoLine(t *testing.T) {
 func TestReadReportsNothingForUnreadableInput(t *testing.T) {
 	t.Parallel()
 
-	for _, tc := range []struct{ format, body string }{
+	for _, tc := range []struct {
+		format string
+		body   string
+	}{
 		{".json", "not json at all"},
 		{".yaml", "\t\t\t"},
 		{".toml", "= = ="},
@@ -182,7 +188,10 @@ func keysOf(records map[jsontext.Pointer]origins.Record) []jsontext.Pointer {
 func TestReadKeepsEveryKeyAsOneToken(t *testing.T) {
 	t.Parallel()
 
-	for _, test := range []struct{ format, body string }{
+	for _, test := range []struct {
+		format string
+		body   string
+	}{
 		{
 			".json",
 			`{"labels": {"a.b": "literal", "a": {"b": "nested"}, "c/d": "slash", ` +

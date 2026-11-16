@@ -35,7 +35,10 @@ type nestedPanicky struct {
 }
 
 func FuzzLoadConfiguration(f *testing.F) {
-	for _, seed := range []struct{ format, body string }{
+	for _, seed := range []struct {
+		format string
+		body   string
+	}{
 		{yamlFormat, "connection: {<<, [x]}\n"},
 		{yamlFormat, "connection: {host: localhost, port: 9001}\n"},
 		{yamlFormat, "base: &base {port: 9001}\nconnection: *base\n"},
@@ -531,7 +534,12 @@ func (c *layerConfig) SetDefaults() {
 }
 
 func TestLayerPrecedenceAcrossEveryLayerSubset(t *testing.T) {
-	type layers struct{ system, user, file, env bool }
+	type layers struct {
+		system bool
+		user   bool
+		file   bool
+		env    bool
+	}
 
 	for _, tc := range []struct {
 		layers   layers

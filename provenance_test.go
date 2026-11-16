@@ -158,7 +158,12 @@ func TestArrayReplacementRemovesDescendantOrigins(t *testing.T) {
 		Label     string
 	}
 
-	for _, test := range []struct{ format, lower, empty, shorter string }{
+	for _, test := range []struct {
+		format  string
+		lower   string
+		empty   string
+		shorter string
+	}{
 		{
 			"json",
 			`{"label":"retained","endpoints":[{"port":9000},{"port":9001}]}`,
@@ -194,8 +199,9 @@ func TestArrayReplacementRemovesDescendantOrigins(t *testing.T) {
 			}
 
 			for _, replacement := range []struct {
-				name, body string
-				ports      []int
+				name  string
+				body  string
+				ports []int
 			}{
 				{"empty", test.empty, nil},
 				{"shorter", test.shorter, []int{8000}},

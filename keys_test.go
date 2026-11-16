@@ -129,7 +129,9 @@ func TestStrictRejectsUnknownStructuredKeys(t *testing.T) {
 	}
 
 	for _, test := range []struct {
-		name, format, body string
+		name   string
+		format string
+		body   string
 	}{
 		{"empty JSON", jsonFormat, `{"typo":{}}`},
 		{"empty TOML", tomlFormat, "[typo]\n"},

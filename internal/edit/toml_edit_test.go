@@ -67,7 +67,10 @@ func TestUpdateTOMLCompositeSubtreesPreserveSiblings(t *testing.T) {
 		HTTPPort int `strata:"listen_port"`
 	}
 
-	for _, test := range []struct{ name, input string }{
+	for _, test := range []struct {
+		name  string
+		input string
+	}{
 		{
 			"inline",
 			"service = { ports = { old = { listen_port = 1 } }, keep = 7 } # service comment\n" +
@@ -169,7 +172,11 @@ other = "keep"
 func TestUpdateTOMLDecodesEscapedKeys(t *testing.T) {
 	t.Parallel()
 
-	for _, test := range []struct{ name, input, key string }{
+	for _, test := range []struct {
+		name  string
+		input string
+		key   string
+	}{
 		{"assignment", "\"\\u0061\" = 1\nkeep = 2\n", "a"},
 		{"table", "[\"\\u0061\"]\nx = 1\nkeep = 2\n", "a.x"},
 		{"long escape", "\"\\U00000061\" = 1\nkeep = 2\n", "a"},
@@ -489,7 +496,13 @@ func TestUpdateTOMLSliceOfMaps(t *testing.T) {
 func TestUpdateTOMLMultilineEdits(t *testing.T) {
 	t.Parallel()
 
-	cases := []struct{ name, input, key, literal, want string }{
+	cases := []struct {
+		name    string
+		input   string
+		key     string
+		literal string
+		want    string
+	}{
 		{
 			"unrelated_string",
 			"banner = \"\"\"\nport = 123\n\"\"\"\nport = 8080\n",

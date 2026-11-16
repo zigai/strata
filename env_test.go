@@ -356,7 +356,10 @@ func TestEnvDecodesByFieldType(t *testing.T) {
 
 func TestEnvErrorsNameTheKeyAndVariable(t *testing.T) {
 	for _, tc := range []struct {
-		name, variable, value, key string
+		name     string
+		variable string
+		value    string
+		key      string
 	}{
 		{"bool", "DEC_FLAG", "maybe", "flag"},
 		{"duration", "DEC_WAIT", "5x", "wait"},

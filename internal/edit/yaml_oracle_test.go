@@ -208,7 +208,8 @@ var bareYAMLKey = regexp.MustCompile(`^[A-Za-z_][A-Za-z0-9_-]*(\.[A-Za-z_][A-Za-
 // are excluded from the property that only the requested key changes.
 func FuzzUpdateYAML(f *testing.F) {
 	for _, seed := range []struct {
-		doc, key string
+		doc string
+		key string
 	}{
 		{
 			"# main\nserver:\n  # host\n  host: 127.0.0.1 # inline\n  port: 8080\n\ndatabase:\n  port: 5432\n",

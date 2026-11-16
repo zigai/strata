@@ -304,7 +304,10 @@ func TestMixedSecretCollectionsKeepPublicOrigins(t *testing.T) {
 		Nodes    []item
 	}
 
-	for _, test := range []struct{ format, body string }{
+	for _, test := range []struct {
+		format string
+		body   string
+	}{
 		{
 			"json",
 			`{"services":{"primary":{"token":"private-value","port":9001}},` +
@@ -579,8 +582,9 @@ func TestDecodeErrorsNameKeysWithoutSecretValues(t *testing.T) {
 	}
 
 	for _, test := range []struct {
-		name, document string
-		wantPort       string
+		name     string
+		document string
+		wantPort string
 	}{
 		{name: "config.yaml", document: "port: busy\npin: s3cr3t-pin\n", wantPort: `line 1: key "port"`},
 		{

@@ -538,7 +538,10 @@ func TestSetStringTextDecodedSlicesRoundTrip(t *testing.T) {
 		Levels []stringEditLevel
 	}
 
-	for _, test := range []struct{ format, initial string }{
+	for _, test := range []struct {
+		format  string
+		initial string
+	}{
 		{"json", `{"levels":["info"]}`},
 		{"yaml", "levels: [info]\n"},
 	} {
@@ -651,8 +654,9 @@ func TestSetPreservesNamedSliceSerialization(t *testing.T) {
 		"yaml": "values: 1,2\nkeep: 7\n",
 	} {
 		for _, test := range []struct {
-			name, raw string
-			want      csvEditValues
+			name string
+			raw  string
+			want csvEditValues
 		}{
 			{name: "values", raw: "3,4", want: csvEditValues{3, 4}},
 			{name: "empty", raw: "", want: csvEditValues{}},
@@ -844,7 +848,10 @@ func TestSetCompositeValuesRoundTrip(t *testing.T) {
 		Labels map[string]item
 	}
 
-	for name, initial := range map[string]struct{ format, data string }{
+	for name, initial := range map[string]struct {
+		format string
+		data   string
+	}{
 		"json":        {"json", `{"keep":7,"items":[],"labels":{}}`},
 		"yaml":        {"yaml", "keep: 7\nitems: []\nlabels: {}\n"},
 		"toml inline": {"toml", "keep = 7\nitems = []\nlabels = {}\n"},
@@ -1591,7 +1598,9 @@ func TestSetEditsInlineKeysAtTheTopLevel(t *testing.T) {
 	t.Parallel()
 
 	for _, test := range []struct {
-		name, document, want string
+		name     string
+		document string
+		want     string
 	}{
 		{"config.yaml", "port: 1\n", "port: 1\nhost: edited\n"},
 		{"config.json", "{\"port\": 1}\n", "{\"port\": 1, \"host\": \"edited\"}\n"},
@@ -1745,7 +1754,10 @@ func TestSetAllWritesEscapedKeysThatReloadExactly(t *testing.T) {
 	}
 	wantExtra := map[string]string{"x.y": "dotted", "HOST": "upper"}
 
-	for _, test := range []struct{ name, document string }{
+	for _, test := range []struct {
+		name     string
+		document string
+	}{
 		{"config.json", "{\"name\": \"n\"}\n"},
 		{"config.toml", "name = 'n'\n"},
 		{"config.yaml", "name: n\n"},
